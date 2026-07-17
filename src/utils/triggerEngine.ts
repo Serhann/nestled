@@ -13,7 +13,15 @@ export class TriggerEngine {
     }
 
     this.loadExecutedTriggers();
-    this.detectUserCountry();
+  }
+
+  /**
+   * Country is resolved server-side (GeoLite2) and injected by the widget via
+   * GET /api/geo — no client-side ipapi.co call (which leaked IPs and blew the
+   * free tier at one request per pageload).
+   */
+  setCountry(countryCode: string | null) {
+    this.userCountry = countryCode;
   }
 
   private loadExecutedTriggers() {
@@ -34,16 +42,6 @@ export class TriggerEngine {
       'chatbot_executed_triggers',
       JSON.stringify(Array.from(this.executedTriggers))
     );
-  }
-
-  private async detectUserCountry() {
-    try {
-      const response = await fetch('https://ipapi.co/json/');
-      const data = await response.json();
-      this.userCountry = data.country_code;
-    } catch (error) {
-      console.error('Failed to detect user country:', error);
-    }
   }
 
   setTriggers(triggers: Trigger[]) {

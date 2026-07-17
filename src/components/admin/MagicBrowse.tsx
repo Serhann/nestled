@@ -1,96 +1,84 @@
-import { useEffect, useRef, useState } from 'react';
-import * as rrweb from 'rrweb';
-import { supabase } from '../../lib/supabase';
-import { Eye, Loader2 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { Replayer } from 'rrweb';
+import { X, Eye } from 'lucide-react';
 import 'rrweb/dist/rrweb.min.css';
 
-interface MagicBrowseProps {
-  conversationId: string;
+export interface ReplayFeed {
+  visitorId: string;
+  events: unknown[];
+  reset: boolean;
+  nonce: number;
 }
 
-export function MagicBrowse({ conversationId }: MagicBrowseProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const replayerRef = useRef<any>(null);
-  const [hasEvents, setHasEvents] = useState(false);
-  const [status, setStatus] = useState<'connecting' | 'listening'>('connecting');
+/**
+ * Live session replay (MagicBrowse). The visitor's host page is recorded by
+ * rrweb and streamed to the server; this modal replays it live via
+ * rrweb.Replayer in liveMode. Events arrive as `feed` batches from the agent WS
+ * (a `reset` batch is the buffered snapshot when watching starts).
+ */
+export function MagicBrowse({ feed, onClose }: { feed: ReplayFeed | null; onClose: () => void }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const replayerRef = useRef<Replayer | null>(null);
+  const accRef = useRef<{ type: number }[]>([]);
 
   useEffect(() => {
-    if (!conversationId) return;
+    if (!feed || !rootRef.current) return;
+    const events = feed.events as { type: number }[];
 
-    setStatus('connecting');
-    const channel = supabase.channel(`messages:${conversationId}`);
+    if (feed.reset) {
+      accRef.current = [];
+      replayerRef.current = null;
+      rootRef.current.innerHTML = '';
+    }
+    accRef.current.push(...events);
 
-    channel.on('broadcast', { event: 'magic-browse' }, (payload) => {
-      const newEvents = payload.payload?.events || [];
-      if (newEvents.length === 0) return;
-
-      setStatus('listening');
-      if (!hasEvents) setHasEvents(true);
-
-      if (!replayerRef.current && containerRef.current) {
-        replayerRef.current = new rrweb.Replayer(newEvents, {
-          root: containerRef.current,
+    if (!replayerRef.current) {
+      // Can only start once we have a full snapshot (type 2) to build the DOM.
+      if (accRef.current.some((e) => e.type === 2)) {
+        const r = new Replayer(accRef.current as never[], {
+          root: rootRef.current,
           liveMode: true,
+          mouseTail: false,
+          // Recorded page is read-only here.
+          insertStyleRules: ['* { cursor: default !important; }'],
         });
-        replayerRef.current.startLive();
-      } else {
-        newEvents.forEach((event: any) => {
-          replayerRef.current?.addEvent(event);
-        });
+        r.startLive();
+        replayerRef.current = r;
       }
-    }).subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        setStatus('listening');
-      }
-    });
+    } else if (!feed.reset) {
+      for (const ev of events) replayerRef.current.addEvent(ev as never);
+    }
+  }, [feed]);
 
+  useEffect(() => {
     return () => {
-      channel.unsubscribe();
-      if (replayerRef.current) {
-        replayerRef.current.pause();
+      try {
+        replayerRef.current?.pause();
+      } catch {
+        /* ignore */
       }
     };
-  }, [conversationId, hasEvents]);
+  }, []);
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-lg overflow-hidden border border-gray-200">
-      <div className="bg-white px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Eye className="w-5 h-5 text-indigo-600" />
-          <h3 className="font-semibold text-gray-800">Magic Browse</h3>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-3 w-3">
-              {status === 'listening' ? (
-                <>
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
-                </>
-              ) : (
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
-              )}
-            </span>
-            <span className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
-              {status === 'connecting' ? 'Bağlanıyor...' : 'Canlı İzleme'}
-            </span>
-          </div>
-        </div>
+    <div className="fixed inset-0 bg-black/60 z-50 flex flex-col">
+      <div className="flex items-center gap-2 px-4 h-12 bg-white shrink-0">
+        <Eye className="w-5 h-5 text-blue-600" />
+        <span className="font-semibold text-gray-800">Live view</span>
+        <span className="text-xs text-gray-400">watching {feed?.visitorId?.slice(0, 12)}…</span>
+        <button onClick={onClose} className="ml-auto p-1.5 text-gray-600" aria-label="Stop watching">
+          <X className="w-5 h-5" />
+        </button>
       </div>
-      
-      <div className="flex-1 bg-gray-50 relative overflow-auto p-2">
-        {!hasEvents && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/90 z-10">
-            <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-4" />
-            <p className="text-gray-600 font-medium">Sinyal bekleniyor...</p>
-            <p className="text-gray-400 text-sm text-center max-w-xs mt-2">Kullanıcı fareyi hareket ettirdiğinde izleme başlayacak.</p>
-          </div>
-        )}
-        <div 
-          ref={containerRef} 
-          className="bg-white shadow-sm overflow-hidden border border-gray-200 w-full h-full rrweb-container"
-        />
+      <div className="flex-1 overflow-auto bg-gray-200 flex items-start justify-center p-4">
+        {/* rrweb renders the recorded page into an iframe inside this root. */}
+        <div ref={rootRef} className="bg-white shadow-lg" />
       </div>
+      {!replayerRef.current && (
+        <div className="absolute inset-0 flex items-center justify-center text-white pointer-events-none">
+          Waiting for the visitor's screen…
+        </div>
+      )}
     </div>
   );
 }

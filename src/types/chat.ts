@@ -86,6 +86,8 @@ export interface Trigger {
   identifier: string;
   is_active: boolean;
   priority: number;
+  fire_count?: number;
+  conversation_count?: number;
   created_at: string;
   updated_at: string;
   actions?: TriggerAction;
@@ -115,10 +117,6 @@ export interface TriggerEvent {
   page_urls: string[];
   on_url_parameters: boolean;
   url_parameters: Record<string, string>;
-  on_user_event: boolean;
-  user_event_name: string | null;
-  on_user_data: boolean;
-  user_data_conditions: Record<string, any>;
   after_delay: boolean;
   delay_seconds: number;
   created_at: string;

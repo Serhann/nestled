@@ -1,848 +1,627 @@
-import { useState, useEffect, useRef } from 'react';
-import * as rrweb from 'rrweb';
-import { MessageCircle, X, Send, Minimize2 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import { sendMessageToSW } from '../utils/registerSW';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { MessageCircle, X, Send, Minimize2, Paperclip, Volume2, VolumeX, FileText } from 'lucide-react';
+import {
+  apiBase,
+  attachmentUrl,
+  createConversation,
+  getAgentStatus,
+  getActiveTriggers,
+  getGeo,
+  getMessages,
+  getWidgetConfig,
+  fireTrigger,
+  openConversationWS,
+  sendMessage as apiSendMessage,
+  sendTyping,
+  uploadAttachment,
+  type WidgetConfig,
+  type WidgetMessage,
+  type PreChatField,
+} from '../lib/api';
+import { strings } from '../lib/strings';
 import { TriggerEngine } from '../utils/triggerEngine';
-import type { Message, ChatSettings, PreChatField, Trigger } from '../types/chat';
+import type { Trigger } from '../types/chat';
+
+function hostUrl(): string {
+  return new URLSearchParams(window.location.search).get('href') || document.referrer || window.location.href;
+}
+
+/** Visitor identity from embed params (ue/un/up/uid/oid) or direct URL params. */
+function readIdentity(): Record<string, string> {
+  const p = new URLSearchParams(window.location.search);
+  const id: Record<string, string> = {};
+  const map: Array<[string, string, string]> = [
+    ['ue', 'user_email', 'email'],
+    ['un', 'user_name', 'name'],
+    ['up', 'user_phone', 'phone'],
+    ['uid', 'user_id', 'user_id'],
+    ['oid', 'order_id', 'order_id'],
+  ];
+  for (const [short, long, key] of map) {
+    const v = p.get(short) || p.get(long);
+    if (v) id[key] = v;
+  }
+  return id;
+}
+
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const CONV_KEY = 'jetchat_conv';
+const MUTE_KEY = 'jetchat_muted';
+// Short notification blip.
+const BLIP =
+  'data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+
+interface StoredConversation {
+  id: string;
+  token: string;
+}
+
+function getVisitorId(): string {
+  const fromParam = new URLSearchParams(window.location.search).get('vid');
+  if (fromParam) return fromParam;
+  let id = localStorage.getItem('jetchat_visitor_id');
+  if (!id) {
+    id = `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem('jetchat_visitor_id', id);
+  }
+  return id;
+}
+
+function loadStoredConversation(): StoredConversation | null {
+  try {
+    const raw = localStorage.getItem(CONV_KEY);
+    return raw ? (JSON.parse(raw) as StoredConversation) : null;
+  } catch {
+    return null;
+  }
+}
 
 export function ChatWidget() {
-  const [isOpen, setIsOpen] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
-  const [showPreChat, setShowPreChat] = useState(false);
-  const [preChatData, setPreChatData] = useState<Record<string, string>>({});
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputValue, setInputValue] = useState('');
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [visitorId, setVisitorId] = useState<string>('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [settings, setSettings] = useState<ChatSettings | null>(null);
-  const urlParams = new URLSearchParams(window.location.search);
-  const targetDomain = urlParams.get('target_domain');
-  const initialUrl = targetDomain ? `https://${targetDomain}` : window.location.href;
-
-  const [currentPage, setCurrentPage] = useState<string>(initialUrl);
-  const [visitedPages, setVisitedPages] = useState<string[]>([initialUrl]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [config, setConfig] = useState<WidgetConfig | null>(null);
+  const [open, setOpen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const [messages, setMessages] = useState<WidgetMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [conversation, setConversation] = useState<StoredConversation | null>(loadStoredConversation);
+  const [agentOnline, setAgentOnline] = useState(false);
   const [agentTyping, setAgentTyping] = useState(false);
+  const [unread, setUnread] = useState(0);
+  const [muted, setMuted] = useState(() => localStorage.getItem(MUTE_KEY) === '1');
+  const [sending, setSending] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [triggerMessage, setTriggerMessage] = useState<string | null>(null);
+  const [activeTriggerId, setActiveTriggerId] = useState<string | null>(null);
+
+  // Pre-chat + offline-message forms.
+  const [showPreChat, setShowPreChat] = useState(false);
+  const [preChat, setPreChat] = useState<Record<string, string>>({});
+  const [preChatErrors, setPreChatErrors] = useState<Record<string, string>>({});
+  const [leaveEmail, setLeaveEmail] = useState('');
+  const [leaveMessage, setLeaveMessage] = useState('');
+  const [leaveErrors, setLeaveErrors] = useState<{ email?: string; message?: string }>({});
+  const [leaveSent, setLeaveSent] = useState(false);
+
+  const visitorId = useRef(getVisitorId());
+  const identity = useRef<Record<string, string>>(readIdentity());
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const lastMessageCountRef = useRef(0);
-  const notificationSoundRef = useRef<HTMLAudioElement | null>(null);
-  const triggerEngineRef = useRef<TriggerEngine | null>(null);
-  const autoWelcomeTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const hasShownAutoWelcome = useRef(false);
-  const hasTriggeredAction = useRef(false);
-  const channelRef = useRef<any>(null);
-  const rrwebBufferRef = useRef<any[]>([]);
-  const rrwebStopFnRef = useRef<(() => void) | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openRef = useRef(open);
+  openRef.current = open;
+  const engineRef = useRef<TriggerEngine | null>(null);
+  const triggersRan = useRef(false);
 
+  const primaryColor = config?.primary_color || '#3B82F6';
+
+  // ── Load config + agent status ──────────────────────────────────────────────
   useEffect(() => {
-    loadSettings();
-    initVisitor();
-    trackPageChanges();
-    requestNotificationPermission();
-
-    notificationSoundRef.current = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBjGJ0fPTgjMGHm7A7+OZSA0PVKzn7bNgGgU+ldz0zH4yBSF9y/DijkYIDFix5+6qWRUIQ5zg8sFuJAU1j9Tv1YU3Bhlsu+vjnUoLDlKq5O+1ZBkEPZPa88+CNAUie8nx4pFFBwxYr+ftrV0VCECa3vLBbyIFM43T8daINQYabrvv5JxKCw5Rq+Tvt2YbBD2T2vPPgjMFI3vJ8eKRRQcMWK/n7axdFQhAmN7ywW8iBTON0/HWiDUGGm678+ScSgsOUavk7rdmGwQ9k9rzz4IzBSN7yfHikUUHDFiv5+2sXRUIQJje8sFvIgUzjdPx1og1Bhpuu/PknEoLDlGr5O+3ZhsEPZPa88+CMwUje8nx4pFFBwxYr+ftrF0VCECY3vLBbyIFM43T8daINQYabrvz5JxKCw5Rq+Tvt2YbBD2T2vPPgjMFI3vJ8eKRRQcMWK/n7axdFQhAmN7ywW8iBTON0/HWiDUGGm678+ScSgsOUavk77dmGwQ9k9rzz4IzBSN7yfHikUUHDFiv5+2sXRUIQJje8sFvIgUzjdPx1og1Bhpuu/PknEoLDlGr5O+3ZhsEPZPa88+CMwUje8nx4pFFBwxYr+ftrF0VCECa3vLBbyIFM43T8daINQYabrvz5JxKCw5Rq+Tvt2YbBD2T2vPPgjMFI3vJ8eKRRQcMWK/n7axdFQ==');
+    getWidgetConfig()
+      .then((r) => setConfig(r.settings))
+      .catch(() => undefined);
+    getAgentStatus()
+      .then((r) => setAgentOnline(r.online))
+      .catch(() => undefined);
+    audioRef.current = new Audio(BLIP);
   }, []);
 
+  // ── Persist conversation ─────────────────────────────────────────────────────
   useEffect(() => {
-    if (conversationId) {
-      loadMessages();
-      const cleanup = subscribeToMessages();
-      return cleanup;
-    }
-  }, [conversationId]);
+    if (conversation) localStorage.setItem(CONV_KEY, JSON.stringify(conversation));
+  }, [conversation]);
 
+  // ── Load history + open realtime when a conversation exists ──────────────────
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  useEffect(() => {
-    if (conversationId && currentPage) {
-      updateVisitedPages();
-    }
-  }, [currentPage]);
-
-  useEffect(() => {
-    if (!isOpen && unreadCount > 0) {
-      document.title = `(${unreadCount}) New Messages`;
-    } else {
-      document.title = 'Chat';
-    }
-  }, [unreadCount, isOpen]);
-
-  useEffect(() => {
-    if (settings) {
-      initializeTriggers();
-      scheduleAutoWelcome();
-    }
-
-    return () => {
-      if (autoWelcomeTimerRef.current) {
-        clearTimeout(autoWelcomeTimerRef.current);
-      }
-    };
-  }, [settings]);
-
-  const requestNotificationPermission = () => {
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
-  };
-
-  const showNotification = (message: string, sender: string) => {
-    if ('Notification' in window && Notification.permission === 'granted' && !isOpen) {
-      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-        sendMessageToSW({
-          type: 'PLAY_SOUND',
-          title: sender,
-          message: message
-        });
-      } else {
-        new Notification(sender, {
-          body: message,
-          icon: '/icon.svg',
-          badge: '/icon.svg',
-          // @ts-ignore
-          vibrate: [200, 100, 200]
-        });
-      }
-    }
-  };
-
-  const playNotificationSound = () => {
-    if (notificationSoundRef.current && !isOpen && settings?.notification_sound_enabled !== false) {
-      notificationSoundRef.current.play().catch(() => {});
-    }
-  };
-
-  const loadSettings = async () => {
-    const { data } = await supabase
-      .from('chat_settings')
-      .select('*')
-      .maybeSingle();
-
-    if (data) {
-      setSettings(data);
-    }
-  };
-
-  const initVisitor = () => {
-    let id = localStorage.getItem('chatbot_visitor_id');
-    if (!id) {
-      id = `visitor_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      localStorage.setItem('chatbot_visitor_id', id);
-    }
-    setVisitorId(id);
-  };
-
-  const trackPageChanges = () => {
-    const observer = new MutationObserver(() => {
-      if (window.location.href !== currentPage) {
-        const newPage = window.location.href;
-        setCurrentPage(newPage);
-        setVisitedPages(prev => {
-          if (!prev.includes(newPage)) {
-            return [...prev, newPage];
-          }
-          return prev;
-        });
-      }
-    });
-
-    observer.observe(document, { subtree: true, childList: true });
-
-    window.addEventListener('popstate', () => {
-      const newPage = window.location.href;
-      setCurrentPage(newPage);
-      setVisitedPages(prev => {
-        if (!prev.includes(newPage)) {
-          return [...prev, newPage];
-        }
-        return prev;
-      });
-    });
-
-    return () => observer.disconnect();
-  };
-
-  const updateVisitedPages = async () => {
-    if (!conversationId) return;
-
-    await supabase
-      .from('conversations')
-      .update({
-        metadata: {
-          current_page: currentPage,
-          visited_pages: visitedPages,
-          last_page_update: new Date().toISOString()
-        }
+    if (!conversation) return;
+    let cancelled = false;
+    getMessages(conversation.id, conversation.token)
+      .then((r) => {
+        if (!cancelled) setMessages(r.messages);
       })
-      .eq('id', conversationId);
-  };
+      .catch(() => undefined);
 
-  const createConversation = async (preChatResponses?: Record<string, string>) => {
-    const metadata: Record<string, any> = {
-      user_agent: navigator.userAgent,
-      language: navigator.language,
-      referrer: document.referrer,
-      current_page: currentPage,
-      visited_pages: visitedPages,
-      screen_resolution: `${window.screen.width}x${window.screen.height}`,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-    };
-
-    if (preChatResponses) {
-      metadata.pre_chat_responses = preChatResponses;
-    }
-
-    const conversationData: any = {
-      visitor_id: visitorId,
-      status: 'active',
-      metadata
-    };
-
-    if (preChatResponses?.visitor_name) {
-      conversationData.visitor_name = preChatResponses.visitor_name;
-    }
-    if (preChatResponses?.visitor_email) {
-      conversationData.visitor_email = preChatResponses.visitor_email;
-    }
-
-    const { data, error } = await supabase
-      .from('conversations')
-      .insert(conversationData)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error creating conversation:', error);
-      return null;
-    }
-
-    try {
-      await Promise.all([
-        fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/track-visitor`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              conversation_id: data.id
-            })
-          }
-        ),
-        fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/discord-notify`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              conversation_id: data.id,
-              type: 'new_chat'
-            })
-          }
-        )
-      ]);
-    } catch (error) {
-      console.error('Error in post-conversation hooks:', error);
-    }
-
-    return data.id;
-  };
-
-  const loadMessages = async () => {
-    if (!conversationId) return;
-
-    const { data } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true });
-
-    if (data) {
-      setMessages(data);
-      lastMessageCountRef.current = data.length;
-    }
-  };
-
-  const subscribeToMessages = () => {
-    if (!conversationId) return () => {};
-
-    const channel = supabase
-      .channel(`messages:${conversationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `conversation_id=eq.${conversationId}`
-        },
-        (payload) => {
-          const newMessage = payload.new as Message;
-          setMessages(prev => [...prev, newMessage]);
-
-          if (newMessage.sender_type !== 'visitor') {
-            setUnreadCount(prev => prev + 1);
-            playNotificationSound();
-
-          const sender = newMessage.sender_type === 'ai' ? 'AI Assistant' : 'Support Agent';
-          showNotification(newMessage.content, sender);
+    const ws = openConversationWS(conversation.id, conversation.token, {
+      onMessage: (m) => {
+        setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+        if (m.sender_type !== 'visitor') {
+          if (!openRef.current) setUnread((u) => u + 1);
+          playBlip();
         }
-      }
-    )
-    .subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        startMagicBrowseRecording(channel);
-      }
-    });
-
-    channelRef.current = channel;
-
-    return () => {
-      if (rrwebStopFnRef.current) {
-        rrwebStopFnRef.current();
-        rrwebStopFnRef.current = null;
-      }
-      supabase.removeChannel(channel);
-    };
-  };
-
-  const startMagicBrowseRecording = (channel: any) => {
-    if (rrwebStopFnRef.current) return;
-    
-    const stopRecording = rrweb.record({
-      emit(event) {
-        rrwebBufferRef.current.push(event);
       },
+      onTyping: (t) => setAgentTyping(t),
+      onAgentStatus: (o) => setAgentOnline(o),
     });
+    wsRef.current = ws;
+    return () => {
+      cancelled = true;
+      ws.close();
+      wsRef.current = null;
+    };
+  }, [conversation]);
 
-    if (stopRecording) {
-      rrwebStopFnRef.current = stopRecording;
-
-      const flushInterval = setInterval(() => {
-        if (rrwebBufferRef.current.length > 0) {
-          channel.send({
-            type: 'broadcast',
-            event: 'magic-browse',
-            payload: { events: rrwebBufferRef.current }
-          }).catch(() => {
-            // Sessizce hatayı yut (Eğer bağlantı koparsa)
-          });
-          rrwebBufferRef.current = [];
-        }
-      }, 1000);
-
-      const originalStop = rrwebStopFnRef.current;
-      rrwebStopFnRef.current = () => {
-        if (originalStop) originalStop();
-        clearInterval(flushInterval);
-      };
-    }
-  };
-
-  const handlePreChatSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!settings?.pre_chat_fields) return;
-
-    const requiredFields = settings.pre_chat_fields.filter(f => f.required);
-    const missingFields = requiredFields.filter(f => !preChatData[f.name]?.trim());
-
-    if (missingFields.length > 0) {
-      alert('Lütfen tüm gerekli alanları doldurun');
-      return;
-    }
-
-    setShowPreChat(false);
-    const convId = await createConversation(preChatData);
-    if (convId) {
-      setConversationId(convId);
-    }
-  };
-
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputValue.trim() || isLoading) return;
-
-    const messageContent = inputValue.trim();
-    setInputValue('');
-    setIsLoading(true);
-
-    try {
-      let convId = conversationId;
-      if (!convId) {
-        convId = await createConversation();
-        if (!convId) {
-          throw new Error('Failed to create conversation');
-        }
-        setConversationId(convId);
-      }
-
-      const { data: messageData, error } = await supabase
-        .from('messages')
-        .insert({
-          conversation_id: convId,
-          content: messageContent,
-          sender_type: 'visitor',
-          sender_id: visitorId
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      try {
-        await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/discord-notify`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              conversation_id: convId,
-              message_id: messageData?.id,
-              type: 'new_message'
-            })
-          }
-        );
-      } catch (discordError) {
-        console.error('Error sending Discord notification:', discordError);
-      }
-
-      if (settings?.ai_enabled) {
-        setAgentTyping(true);
-        setTimeout(async () => {
-          try {
-            const response = await fetch(
-              `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chatbot-ai`,
-              {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  conversation_id: convId,
-                  message: messageContent,
-                  domain: targetDomain || new URL(window.location.href).hostname.replace('www.', '')
-                })
-              }
-            );
-
-            if (!response.ok) {
-              console.error('AI response failed');
-            }
-          } catch (error) {
-            console.error('Error getting AI response:', error);
-          } finally {
-            setAgentTyping(false);
-          }
-        }, 1000);
-      }
-    } catch (error) {
-      console.error('Error sending message:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const scrollToBottom = () => {
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  }, [messages, agentTyping]);
 
-  const initializeTriggers = async () => {
-    try {
-      const { data: triggersData } = await supabase
-        .from('triggers')
-        .select('*')
-        .eq('is_active', true)
-        .order('priority', { ascending: true });
+  // ── Tell the host embed how big to make the iframe ───────────────────────────
+  useEffect(() => {
+    const state = open ? (minimized ? 'minimized' : 'open') : 'closed';
+    const size =
+      state === 'closed'
+        ? { width: 76, height: 76 }
+        : state === 'minimized'
+          ? { width: 384, height: 68 }
+          : { width: 384, height: 640 };
+    window.parent.postMessage({ type: 'jetchat:resize', state, ...size }, '*');
+  }, [open, minimized]);
 
-      if (triggersData && triggersData.length > 0) {
-        const triggersWithDetails = await Promise.all(
-          triggersData.map(async (trigger) => {
-            const [actionsRes, eventsRes, behaviorsRes, platformsRes] = await Promise.all([
-              supabase.from('trigger_actions').select('*').eq('trigger_id', trigger.id).maybeSingle(),
-              supabase.from('trigger_events').select('*').eq('trigger_id', trigger.id).maybeSingle(),
-              supabase.from('trigger_behaviors').select('*').eq('trigger_id', trigger.id).maybeSingle(),
-              supabase.from('trigger_platforms').select('*').eq('trigger_id', trigger.id).maybeSingle()
-            ]);
+  // ── Proactive: the embed forwards an agent-initiated chat ────────────────────
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (data && data.type === 'jetchat:proactive' && data.conversation_id && data.visitor_token) {
+        setConversation({ id: data.conversation_id, token: data.visitor_token });
+        setShowPreChat(false);
+        setOpen(true);
+        setMinimized(false);
+        setUnread(0);
+      } else if (data && data.type === 'jetchat:identify' && data.traits) {
+        // Late identity (e.g. after the visitor logs in on the host site).
+        Object.assign(identity.current, data.traits);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
 
-            return {
-              ...trigger,
-              actions: actionsRes.data || undefined,
-              events: eventsRes.data || undefined,
-              behaviors: behaviorsRes.data || undefined,
-              platforms: platformsRes.data || undefined
-            };
-          })
-        );
+  const playBlip = useCallback(() => {
+    if (muted || openRef.current) return;
+    audioRef.current?.play().catch(() => undefined);
+  }, [muted]);
 
+  // Execute a matched trigger's actions. Proactive messages are shown locally
+  // (a website nudge); a conversation is created only when the visitor replies.
+  const executeTrigger = useCallback((t: Trigger) => {
+    if (!t.actions) return;
+    fireTrigger(t.id);
+    setActiveTriggerId(t.id);
+    if (t.actions.open_chatbox) {
+      setOpen(true);
+      setMinimized(false);
+      setUnread(0);
+    }
+    if (t.actions.show_message && t.actions.message_content) {
+      setTriggerMessage(t.actions.message_content);
+      if (!openRef.current) setUnread((u) => u + 1);
+    }
+    if (t.actions.play_sound && !muted) audioRef.current?.play().catch(() => undefined);
+    engineRef.current?.markTriggerExecuted(t.id);
+  }, [muted]);
+
+  // Load active triggers + server-side country, then evaluate once on load.
+  useEffect(() => {
+    if (!config || triggersRan.current) return;
+    triggersRan.current = true;
+    void (async () => {
+      try {
+        const [{ triggers }, geo] = await Promise.all([getActiveTriggers(), getGeo().catch(() => ({ country_code: null }))]);
+        if (!triggers || triggers.length === 0) return;
         const engine = new TriggerEngine();
-        engine.setTriggers(triggersWithDetails);
-        triggerEngineRef.current = engine;
-
-        const { data: agents } = await supabase
-          .from('agents')
-          .select('is_online')
-          .eq('is_online', true);
-
-        const isOnline = agents && agents.length > 0;
-
-        const matchedTriggers = await engine.evaluateTriggers({
-          isOnline: !!isOnline,
-          currentUrl: window.location.href
-        });
+        engine.setCountry(geo.country_code);
+        engine.setTriggers(triggers as Trigger[]);
+        engineRef.current = engine;
 
         engine.setupEventListeners({
-          onLeaveIntent: (trigger) => executeTrigger(trigger),
-          onClickLink: (trigger) => executeTrigger(trigger),
-          onDelay: (trigger) => executeTrigger(trigger)
+          onLeaveIntent: executeTrigger,
+          onClickLink: executeTrigger,
+          onDelay: executeTrigger,
         });
 
-        for (const trigger of matchedTriggers) {
-          if (trigger.events?.after_delay && !trigger.events.on_leave_intent && !trigger.events.on_click_link) {
-            continue;
-          }
-          executeTrigger(trigger);
+        const matched = await engine.evaluateTriggers({ isOnline: agentOnline, currentUrl: hostUrl() });
+        for (const t of matched) {
+          // Delay / leave-intent / click triggers fire via their listeners.
+          if (t.events?.after_delay || t.events?.on_leave_intent || t.events?.on_click_link) continue;
+          executeTrigger(t);
         }
+      } catch {
+        /* triggers are best-effort */
       }
-    } catch (error) {
-      console.error('Error initializing triggers:', error);
-    }
+    })();
+  }, [config, agentOnline, executeTrigger]);
+
+  const toggleMute = () => {
+    setMuted((m) => {
+      const next = !m;
+      localStorage.setItem(MUTE_KEY, next ? '1' : '0');
+      return next;
+    });
   };
 
-  const executeTrigger = async (trigger: Trigger) => {
-    if (!trigger.actions) return;
+  const conversationMetadata = () => ({
+    user_agent: navigator.userAgent,
+    language: navigator.language,
+    referrer: document.referrer || null,
+    current_page: hostUrl(),
+    screen_resolution: `${window.screen.width}x${window.screen.height}`,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    // Attribute the conversation to the trigger that produced it (analytics).
+    ...(activeTriggerId ? { trigger_id: activeTriggerId } : {}),
+    // Known visitor identity (user_id, order_id, and any custom traits).
+    ...identity.current,
+  });
 
-    hasTriggeredAction.current = true;
+  const ensureConversation = useCallback(
+    async (extra?: { visitor_name?: string; visitor_email?: string }): Promise<StoredConversation> => {
+      if (conversation) return conversation;
+      const created = await createConversation({
+        visitor_id: visitorId.current,
+        // Prefer explicit prechat/leave-form input, else known identity.
+        visitor_name: extra?.visitor_name ?? identity.current.name,
+        visitor_email: extra?.visitor_email ?? identity.current.email,
+        metadata: conversationMetadata(),
+      });
+      const conv = { id: created.conversation_id, token: created.visitor_token };
+      setConversation(conv);
+      return conv;
+    },
+    [conversation],
+  );
 
-    if (autoWelcomeTimerRef.current) {
-      clearTimeout(autoWelcomeTimerRef.current);
-    }
-
-    const { actions } = trigger;
-
-    if (actions.open_chatbox && !isOpen) {
-      setIsOpen(true);
-      setIsMinimized(false);
-      setUnreadCount(0);
-    }
-
-    if (actions.show_message && actions.message_content) {
-      if (!conversationId && !isOpen) {
-        const newConvId = await createConversation();
-        if (newConvId) {
-          setConversationId(newConvId);
-          await sendAutoMessage(newConvId, actions.message_content, trigger.behaviors?.show_as_website ? 'visitor' : 'ai');
-        }
-      } else if (conversationId) {
-        await sendAutoMessage(conversationId, actions.message_content, trigger.behaviors?.show_as_website ? 'visitor' : 'ai');
-      }
-    }
-
-    if (actions.play_sound) {
-      playNotificationSound();
-    }
-
-    if (triggerEngineRef.current) {
-      triggerEngineRef.current.markTriggerExecuted(trigger.id);
-    }
-  };
-
-  const scheduleAutoWelcome = () => {
-    if (
-      !settings?.auto_welcome_enabled ||
-      !settings?.auto_welcome_message ||
-      hasShownAutoWelcome.current ||
-      conversationId ||
-      isOpen
-    ) {
-      return;
-    }
-
-    if (autoWelcomeTimerRef.current) {
-      clearTimeout(autoWelcomeTimerRef.current);
-    }
-
-    autoWelcomeTimerRef.current = setTimeout(async () => {
-      if (hasTriggeredAction.current) {
-        return;
-      }
-
-      if (triggerEngineRef.current?.hasExecutedAnyTrigger()) {
-        return;
-      }
-
-      hasShownAutoWelcome.current = true;
-
-      const newConvId = await createConversation();
-      if (newConvId) {
-        setConversationId(newConvId);
-        await sendAutoMessage(newConvId, settings.auto_welcome_message || '', 'ai');
-
-        if (!isOpen) {
-          setUnreadCount(1);
-          playNotificationSound();
-          showNotification(settings.auto_welcome_message || '', 'Chatbot');
-        }
-      }
-    }, (settings?.auto_welcome_delay || 5) * 1000);
-  };
-
-  const sendAutoMessage = async (convId: string, content: string, senderType: 'visitor' | 'ai') => {
-    try {
-      await supabase
-        .from('messages')
-        .insert({
-          conversation_id: convId,
-          content,
-          sender_type: senderType,
-          sender_id: null,
-          metadata: { auto_generated: true }
-        });
-    } catch (error) {
-      console.error('Error sending auto message:', error);
-    }
-  };
-
+  // ── Open / close ─────────────────────────────────────────────────────────────
   const handleOpen = () => {
-    setIsOpen(true);
-    setIsMinimized(false);
-    setUnreadCount(0);
-
-    if (settings?.pre_chat_enabled && !conversationId) {
-      setShowPreChat(true);
+    setOpen(true);
+    setMinimized(false);
+    setUnread(0);
+    if (!conversation) {
+      if (config?.pre_chat_enabled) setShowPreChat(true);
     }
   };
-
   const handleClose = () => {
-    setIsOpen(false);
+    setOpen(false);
     setShowPreChat(false);
   };
 
-  const handleMinimize = () => {
-    setIsMinimized(!isMinimized);
+  // Offline fallback = no agent online AND AI disabled AND no conversation yet.
+  const showLeaveMessage =
+    open && !showPreChat && !conversation && !agentOnline && config != null && !config.ai_enabled;
+
+  // ── Send text ────────────────────────────────────────────────────────────────
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const content = input.trim();
+    if (!content || sending) return;
+    setInput('');
+    setSending(true);
+    try {
+      const conv = await ensureConversation();
+      const { message } = await apiSendMessage(conv.id, conv.token, content);
+      setMessages((prev) => (prev.some((x) => x.id === message.id) ? prev : [...prev, message]));
+    } catch {
+      setAttachError(strings.genericError);
+    } finally {
+      setSending(false);
+    }
   };
 
-  const primaryColor = settings?.primary_color || '#3B82F6';
-  const widgetPosition = settings?.widget_position || 'right';
-  const positionClasses = widgetPosition === 'left' ? 'left-6' : 'right-6';
+  const handleInputChange = (value: string) => {
+    setInput(value);
+    if (!conversation) return;
+    sendTyping(conversation.id, conversation.token, true);
+    if (typingTimer.current) clearTimeout(typingTimer.current);
+    typingTimer.current = setTimeout(() => {
+      if (conversation) sendTyping(conversation.id, conversation.token, false);
+    }, 2000);
+  };
 
-  if (!isOpen) {
+  // ── Attachments ──────────────────────────────────────────────────────────────
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setAttachError(null);
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setAttachError(strings.attachmentTooLarge);
+      return;
+    }
+    setSending(true);
+    try {
+      const conv = await ensureConversation();
+      const { message } = await uploadAttachment(conv.id, conv.token, file);
+      setMessages((prev) => (prev.some((x) => x.id === message.id) ? prev : [...prev, message]));
+    } catch (err) {
+      setAttachError((err as Error).message.includes('415') ? strings.attachmentRejected : strings.genericError);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // ── Pre-chat submit (inline validation, no alert) ────────────────────────────
+  const handlePreChatSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const fields = config?.pre_chat_fields ?? [];
+    const errors: Record<string, string> = {};
+    for (const f of fields) {
+      const val = (preChat[f.name] ?? '').trim();
+      if (f.required && !val) errors[f.name] = strings.requiredField;
+      else if (f.type === 'email' && val && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(val))
+        errors[f.name] = strings.invalidEmail;
+    }
+    setPreChatErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+    setShowPreChat(false);
+    await ensureConversation({
+      visitor_name: preChat.visitor_name,
+      visitor_email: preChat.visitor_email,
+    });
+  };
+
+  // ── Offline "leave a message" submit ─────────────────────────────────────────
+  const handleLeaveSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const errors: { email?: string; message?: string } = {};
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(leaveEmail)) errors.email = strings.invalidEmail;
+    if (!leaveMessage.trim()) errors.message = strings.requiredField;
+    setLeaveErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+    try {
+      const conv = await ensureConversation({ visitor_email: leaveEmail });
+      await apiSendMessage(conv.id, conv.token, leaveMessage.trim());
+      setLeaveSent(true);
+    } catch {
+      setLeaveErrors({ message: strings.genericError });
+    }
+  };
+
+  // ── Render: launcher (closed) ─────────────────────────────────────────────────
+  if (!open) {
     return (
       <button
         onClick={handleOpen}
-        className={`fixed bottom-6 ${positionClasses} w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white transition-transform hover:scale-110 z-50 relative`}
+        aria-label={strings.headerDefaultTitle}
+        className="fixed bottom-2 right-2 w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white transition-transform hover:scale-105"
         style={{ backgroundColor: primaryColor }}
       >
-        {settings?.widget_avatar_url ? (
-          <img
-            src={settings.widget_avatar_url}
-            alt="Chat"
-            className="w-full h-full rounded-full object-cover"
-          />
+        {config?.widget_avatar_url ? (
+          <img src={config.widget_avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
         ) : (
           <MessageCircle className="w-6 h-6" />
         )}
-        {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center animate-pulse">
-            {unreadCount}
+        {unread > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center">
+            {unread}
           </span>
         )}
       </button>
     );
   }
 
+  // ── Render: panel (open) ──────────────────────────────────────────────────────
   return (
-    <div className={`fixed bottom-6 ${positionClasses} z-50`}>
-      <div
-        className="bg-white rounded-lg shadow-2xl flex flex-col overflow-hidden"
-        style={{
-          width: '380px',
-          height: isMinimized ? '60px' : '600px',
-          maxHeight: '90vh',
-          transition: 'height 0.3s ease'
-        }}
-      >
-        <div
-          className="px-4 py-3 text-white flex items-center justify-between"
-          style={{ backgroundColor: primaryColor }}
-        >
-          <div className="flex items-center gap-3">
-            {settings?.widget_avatar_url && (
-              <img
-                src={settings.widget_avatar_url}
-                alt="Avatar"
-                className="w-8 h-8 rounded-full object-cover border-2 border-white"
-              />
-            )}
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <h3 className="font-semibold">{settings?.widget_title || 'Chat with us'}</h3>
+    <div className="fixed inset-0 bg-white rounded-lg shadow-2xl flex flex-col overflow-hidden">
+      <div className="px-4 py-3 text-white flex items-center justify-between" style={{ backgroundColor: primaryColor }}>
+        <div className="flex items-center gap-3 min-w-0">
+          {config?.widget_avatar_url && (
+            <img src={config.widget_avatar_url} alt="" className="w-8 h-8 rounded-full object-cover border-2 border-white/70" />
+          )}
+          <div className="min-w-0">
+            <h3 className="font-semibold truncate">{config?.widget_title || strings.headerDefaultTitle}</h3>
+            <div className="flex items-center gap-1.5 text-xs text-white/90">
+              <span className={`w-2 h-2 rounded-full ${agentOnline ? 'bg-green-400' : 'bg-gray-300'}`} />
+              {agentOnline ? strings.onlineStatus : strings.offlineStatus}
             </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={handleMinimize}
-              className="hover:bg-white/20 p-1 rounded transition-colors"
-            >
-              <Minimize2 className="w-4 h-4" />
-            </button>
-            <button
-              onClick={handleClose}
-              className="hover:bg-white/20 p-1 rounded transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
         </div>
+        <div className="flex gap-1">
+          <button onClick={toggleMute} aria-label={muted ? strings.muteOff : strings.muteOn} className="hover:bg-white/20 p-1.5 rounded">
+            {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+          <button onClick={() => setMinimized((m) => !m)} aria-label={strings.minimize} className="hover:bg-white/20 p-1.5 rounded">
+            <Minimize2 className="w-4 h-4" />
+          </button>
+          <button onClick={handleClose} aria-label={strings.close} className="hover:bg-white/20 p-1.5 rounded">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
 
-        {!isMinimized && (
-          <>
-            {showPreChat ? (
-              <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
-                <div className="bg-white p-6 rounded-lg shadow-sm">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-2">
-                    Başlamadan Önce
-                  </h3>
-                  <p className="text-sm text-gray-600 mb-6">
-                    Size daha iyi yardımcı olabilmemiz için lütfen aşağıdaki bilgileri doldurun.
-                  </p>
-
-                  <form onSubmit={handlePreChatSubmit} className="space-y-4">
-                    {settings?.pre_chat_fields?.map((field: PreChatField) => (
-                      <div key={field.name}>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          {field.label}
-                          {field.required && <span className="text-red-500 ml-1">*</span>}
-                        </label>
-                        <input
-                          type={field.type}
-                          value={preChatData[field.name] || ''}
-                          onChange={(e) => setPreChatData(prev => ({
-                            ...prev,
-                            [field.name]: e.target.value
-                          }))}
-                          placeholder={field.placeholder}
-                          required={field.required}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                        />
-                      </div>
-                    ))}
-
-                    <button
-                      type="submit"
-                      className="w-full py-2 text-white rounded-lg font-medium transition-colors hover:opacity-90"
-                      style={{ backgroundColor: primaryColor }}
-                    >
-                      Sohbete Başla
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowPreChat(false);
-                        createConversation().then(id => {
-                          if (id) setConversationId(id);
-                        });
-                      }}
-                      className="w-full py-2 text-gray-600 rounded-lg font-medium transition-colors hover:bg-gray-100 text-sm"
-                    >
-                      Atla
+      {!minimized && (
+        <>
+          {showPreChat ? (
+            <div className="flex-1 overflow-y-auto p-5 bg-gray-50">
+              <h4 className="text-base font-semibold text-gray-800 mb-1">{strings.preChatTitle}</h4>
+              <p className="text-sm text-gray-600 mb-4">{strings.preChatSubtitle}</p>
+              <form onSubmit={handlePreChatSubmit} className="space-y-3">
+                {(config?.pre_chat_fields ?? []).map((field: PreChatField) => (
+                  <div key={field.name}>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {field.label}
+                      {field.required && <span className="text-red-500 ml-1">*</span>}
+                    </label>
+                    <input
+                      type={field.type}
+                      value={preChat[field.name] || ''}
+                      onChange={(e) => setPreChat((p) => ({ ...p, [field.name]: e.target.value }))}
+                      placeholder={field.placeholder}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    {preChatErrors[field.name] && (
+                      <p className="text-xs text-red-500 mt-1">{preChatErrors[field.name]}</p>
+                    )}
+                  </div>
+                ))}
+                <button type="submit" className="w-full py-2 text-white rounded-lg font-medium hover:opacity-90" style={{ backgroundColor: primaryColor }}>
+                  {strings.preChatStart}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPreChat(false);
+                    void ensureConversation();
+                  }}
+                  className="w-full py-2 text-gray-600 rounded-lg text-sm hover:bg-gray-100"
+                >
+                  {strings.preChatSkip}
+                </button>
+              </form>
+            </div>
+          ) : showLeaveMessage ? (
+            <div className="flex-1 overflow-y-auto p-5 bg-gray-50">
+              {leaveSent ? (
+                <div className="text-center text-gray-700 py-10">{strings.leaveMessageThanks}</div>
+              ) : (
+                <>
+                  <h4 className="text-base font-semibold text-gray-800 mb-1">{strings.leaveMessageTitle}</h4>
+                  <p className="text-sm text-gray-600 mb-4">{strings.leaveMessageSubtitle}</p>
+                  <form onSubmit={handleLeaveSubmit} className="space-y-3">
+                    <div>
+                      <input
+                        type="email"
+                        value={leaveEmail}
+                        onChange={(e) => setLeaveEmail(e.target.value)}
+                        placeholder={strings.emailPlaceholder}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                      />
+                      {leaveErrors.email && <p className="text-xs text-red-500 mt-1">{leaveErrors.email}</p>}
+                    </div>
+                    <div>
+                      <textarea
+                        value={leaveMessage}
+                        onChange={(e) => setLeaveMessage(e.target.value)}
+                        placeholder={strings.messagePlaceholder}
+                        rows={4}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                      />
+                      {leaveErrors.message && <p className="text-xs text-red-500 mt-1">{leaveErrors.message}</p>}
+                    </div>
+                    <button type="submit" className="w-full py-2 text-white rounded-lg font-medium hover:opacity-90" style={{ backgroundColor: primaryColor }}>
+                      {strings.leaveMessageSubmit}
                     </button>
                   </form>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-                  {messages.length === 0 && (
-                    <div className="bg-white p-4 rounded-lg shadow-sm">
-                      <p className="text-gray-700">
-                        {settings?.welcome_message || 'Hi! How can we help you today?'}
-                      </p>
-                    </div>
-                  )}
-
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex ${
-                        message.sender_type === 'visitor' ? 'justify-end' : 'justify-start'
-                      }`}
-                    >
-                      <div
-                        className={`max-w-[75%] rounded-lg px-4 py-2 ${
-                          message.sender_type === 'visitor'
-                            ? 'text-white'
-                            : 'bg-white shadow-sm text-gray-800'
-                        }`}
-                        style={
-                          message.sender_type === 'visitor'
-                            ? { backgroundColor: primaryColor }
-                            : {}
-                        }
-                      >
-                        {message.sender_type === 'ai' && (
-                          <div className="text-xs text-gray-500 mb-1">🤖 AI Assistant</div>
-                        )}
-                        {message.sender_type === 'agent' && (
-                          <div className="text-xs text-gray-500 mb-1">👤 Agent</div>
-                        )}
-                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                      </div>
-                    </div>
-                  ))}
-
-                  {agentTyping && (
-                    <div className="flex justify-start">
-                      <div className="bg-white shadow-sm rounded-lg px-4 py-3">
-                        <div className="flex gap-1">
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div ref={messagesEndRef} />
-                </div>
-
-                <form onSubmit={sendMessage} className="p-4 bg-white border-t">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={inputValue}
-                      onChange={(e) => setInputValue(e.target.value)}
-                      placeholder="Type your message..."
-                      className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      disabled={isLoading}
-                    />
-                    <button
-                      type="submit"
-                      disabled={!inputValue.trim() || isLoading}
-                      className="px-4 py-2 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      style={{ backgroundColor: primaryColor }}
-                    >
-                      <Send className="w-5 h-5" />
-                    </button>
+                </>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+                {messages.length === 0 && (
+                  <div className="bg-white p-3 rounded-lg shadow-sm text-sm text-gray-700">
+                    {config?.welcome_message || strings.welcomeFallback}
                   </div>
-                </form>
-              </>
+                )}
+                {triggerMessage && (
+                  <div className="flex justify-start">
+                    <div className="max-w-[78%] bg-white shadow-sm rounded-lg px-3 py-2 text-sm text-gray-800">
+                      <p className="whitespace-pre-wrap break-words">{triggerMessage}</p>
+                    </div>
+                  </div>
+                )}
+                {messages.map((m) => (
+                  <MessageBubble key={m.id} message={m} primaryColor={primaryColor} token={conversation?.token ?? ''} />
+                ))}
+                {agentTyping && (
+                  <div className="flex justify-start">
+                    <div className="bg-white shadow-sm rounded-lg px-4 py-3">
+                      <div className="flex gap-1">
+                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
+                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {attachError && (
+                <div className="px-4 py-1.5 text-xs text-red-600 bg-red-50 border-t border-red-100">{attachError}</div>
+              )}
+
+              <form onSubmit={handleSend} className="p-3 bg-white border-t flex items-center gap-2">
+                <input ref={fileInputRef} type="file" onChange={handleFile} className="hidden"
+                  accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain" />
+                <button type="button" onClick={() => fileInputRef.current?.click()} aria-label={strings.attach}
+                  className="p-2 text-gray-500 hover:text-gray-700 rounded" disabled={sending}>
+                  <Paperclip className="w-5 h-5" />
+                </button>
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => handleInputChange(e.target.value)}
+                  placeholder={strings.inputPlaceholder}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button type="submit" disabled={!input.trim() || sending} aria-label={strings.send}
+                  className="p-2 text-white rounded-lg disabled:opacity-50" style={{ backgroundColor: primaryColor }}>
+                  <Send className="w-5 h-5" />
+                </button>
+              </form>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function MessageBubble({ message, primaryColor, token }: { message: WidgetMessage; primaryColor: string; token: string }) {
+  const isVisitor = message.sender_type === 'visitor';
+  const attachment = message.metadata?.attachment;
+  return (
+    <div className={`flex ${isVisitor ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className={`max-w-[78%] rounded-lg px-3 py-2 text-sm ${isVisitor ? 'text-white' : 'bg-white shadow-sm text-gray-800'}`}
+        style={isVisitor ? { backgroundColor: primaryColor } : undefined}
+      >
+        {message.sender_type === 'ai' && <div className="text-[11px] text-gray-500 mb-1">🤖 {strings.aiLabel}</div>}
+        {message.sender_type === 'agent' && (
+          <div className="flex items-center gap-1.5 mb-1">
+            {message.metadata?.agent?.avatar_url ? (
+              <img
+                src={`${apiBase()}${message.metadata.agent.avatar_url}`}
+                alt=""
+                className="w-4 h-4 rounded-full object-cover"
+              />
+            ) : (
+              <span className="text-[11px]">👤</span>
             )}
-          </>
+            <span className="text-[11px] text-gray-500">{message.metadata?.agent?.name || strings.agentLabel}</span>
+          </div>
+        )}
+        {attachment ? (
+          attachment.kind === 'image' ? (
+            <a href={attachmentUrl(attachment.url, token)} target="_blank" rel="noreferrer">
+              <img src={attachmentUrl(attachment.url, token)} alt={attachment.filename} className="rounded max-h-48 object-cover" />
+            </a>
+          ) : (
+            <a href={attachmentUrl(attachment.url, token)} target="_blank" rel="noreferrer"
+              className={`flex items-center gap-2 underline ${isVisitor ? 'text-white' : 'text-blue-600'}`}>
+              <FileText className="w-4 h-4 shrink-0" />
+              <span className="truncate">{attachment.filename}</span>
+            </a>
+          )
+        ) : (
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
         )}
       </div>
     </div>

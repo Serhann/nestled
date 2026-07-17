@@ -1,57 +1,202 @@
-(function() {
-  // Zaten yüklü mü kontrol et
-  if (document.getElementById('ai-chatbot-widget-iframe')) return;
+/*
+ * JetChat embed (Phase 4). Loads asynchronously and never blocks or style-leaks
+ * into the host page.
+ *
+ * THE FIX for the old click-swallowing bug: instead of a full-viewport
+ * transparent iframe with pointer-events hacks, the iframe is sized to exactly
+ * what's visible. Closed → a ~76×76 launcher that covers only the button; open →
+ * resized to the chat panel. The widget inside postMessages its desired size, so
+ * the rest of the host page's bottom-right corner is always clickable.
+ *
+ * Configure via the script tag:
+ *   <script src="https://widget.jetfood.com/embed.js"
+ *           data-api-base="https://api.jetfood.com"
+ *           data-position="right"></script>
+ * `data-api-base` is the backend (REST + WS). The widget app is served from the
+ * embed's own origin unless `data-widget-origin` overrides it.
+ */
+(function () {
+  'use strict';
+  if (window.__jetchatLoaded) return;
+  window.__jetchatLoaded = true;
 
-  // Kendi script'imizin URL'sini bularak anasayfamızı anlıyoruz (Örn: https://chatbot.vercel.app)
-  const scripts = document.getElementsByTagName('script');
-  let baseUrl = '';
-  for (let i = 0; i < scripts.length; i++) {
-    if (scripts[i].src && scripts[i].src.includes('embed.js')) {
-      const url = new URL(scripts[i].src);
-      baseUrl = url.origin;
-      break;
+  var self = document.currentScript;
+  var scriptOrigin = self ? new URL(self.src).origin : window.location.origin;
+  var apiBase = (self && self.getAttribute('data-api-base')) || scriptOrigin;
+  var widgetOrigin = (self && self.getAttribute('data-widget-origin')) || scriptOrigin;
+  var position = (self && self.getAttribute('data-position')) === 'left' ? 'left' : 'right';
+
+  var LAUNCHER = 76;
+
+  // Persistent, shared visitor id — the same id feeds presence (host page) and
+  // the widget (iframe), so identity is consistent across origins.
+  function getVisitorId() {
+    try {
+      var id = localStorage.getItem('jetchat_visitor_id');
+      if (!id) {
+        id = 'v_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+        localStorage.setItem('jetchat_visitor_id', id);
+      }
+      return id;
+    } catch (e) {
+      return 'v_ephemeral_' + Math.random().toString(36).slice(2, 12);
+    }
+  }
+  var visitorId = getVisitorId();
+
+  // Visitor identity (Crisp's user:email / user:nickname equivalent). Sources,
+  // in order: script data attributes, host URL params, and the JetChat() API.
+  function readIdentity() {
+    var id = {};
+    var params = new URLSearchParams(window.location.search);
+    var pick = function (attr, param) {
+      var v = (self && self.getAttribute(attr)) || params.get(param);
+      return v || null;
+    };
+    var email = pick('data-user-email', 'user_email');
+    var name = pick('data-user-name', 'user_name');
+    var phone = pick('data-user-phone', 'user_phone');
+    var userId = pick('data-user-id', 'user_id');
+    var orderId = pick('data-order-id', 'order_id');
+    if (email) id.email = email;
+    if (name) id.name = name;
+    if (phone) id.phone = phone;
+    if (userId) id.user_id = userId;
+    if (orderId) id.order_id = orderId;
+    return id;
+  }
+  var identity = readIdentity();
+
+  function identityParams() {
+    var p = '';
+    if (identity.email) p += '&ue=' + encodeURIComponent(identity.email);
+    if (identity.name) p += '&un=' + encodeURIComponent(identity.name);
+    if (identity.phone) p += '&up=' + encodeURIComponent(identity.phone);
+    if (identity.user_id) p += '&uid=' + encodeURIComponent(identity.user_id);
+    if (identity.order_id) p += '&oid=' + encodeURIComponent(identity.order_id);
+    return p;
+  }
+
+  function build() {
+    var container = document.createElement('div');
+    container.id = 'jetchat-container';
+    var s = container.style;
+    s.position = 'fixed';
+    s.bottom = '16px';
+    s[position] = '16px';
+    s.width = LAUNCHER + 'px';
+    s.height = LAUNCHER + 'px';
+    s.maxWidth = 'calc(100vw - 32px)';
+    s.maxHeight = 'calc(100vh - 32px)';
+    s.zIndex = '2147483647';
+    s.border = 'none';
+    s.background = 'transparent';
+    s.transition = 'width 0.25s ease, height 0.25s ease';
+    // No pointer-events hacks: the container only occupies the launcher when
+    // closed, so it can't swallow clicks elsewhere.
+
+    var iframe = document.createElement('iframe');
+    iframe.id = 'jetchat-iframe';
+    iframe.title = 'Chat';
+    iframe.setAttribute('allow', 'clipboard-write');
+    iframe.src =
+      widgetOrigin +
+      '/?view=widget&api=' +
+      encodeURIComponent(apiBase) +
+      '&vid=' +
+      encodeURIComponent(visitorId) +
+      '&pos=' +
+      position +
+      // Host page URL, so the widget can evaluate page-based triggers.
+      '&href=' +
+      encodeURIComponent(window.location.href) +
+      identityParams();
+    var is = iframe.style;
+    is.width = '100%';
+    is.height = '100%';
+    is.border = 'none';
+    is.background = 'transparent';
+    is.colorScheme = 'normal';
+
+    container.appendChild(iframe);
+    document.body.appendChild(container);
+    return { container: container, iframe: iframe };
+  }
+
+  function resize(container, msg) {
+    var mobileFull = window.innerWidth <= 480 && msg.state === 'open';
+    if (mobileFull) {
+      container.style.width = 'calc(100vw - 24px)';
+      container.style.height = 'calc(100vh - 24px)';
+    } else {
+      container.style.width = (msg.width || LAUNCHER) + 'px';
+      container.style.height = (msg.height || LAUNCHER) + 'px';
     }
   }
 
-  // Fallback (Bulunamazsa)
-  if (!baseUrl) {
-    console.error('AI Chatbot: embed.js origin bulunamadı.');
-    return;
+  function loadPresence(onProactive) {
+    var apply = function () {
+      if (window.JetChatPresence) {
+        window.JetChatPresence.init({
+          apiBase: apiBase,
+          visitorId: visitorId,
+          onProactive: onProactive,
+          // rrweb recorder is served from the widget origin (host-page context).
+          recordScriptUrl: widgetOrigin + '/vendor/rrweb-record.min.js',
+        });
+      }
+    };
+    if (window.JetChatPresence) return apply();
+    var ps = document.createElement('script');
+    ps.src = widgetOrigin + '/presence.js';
+    ps.async = true;
+    ps.onload = apply;
+    document.head.appendChild(ps);
   }
 
-  // İstemcisi verisi
-  const targetDomain = window.location.hostname;
-  
-  // Wrapper div oluştur
-  const container = document.createElement('div');
-  container.id = 'ai-chatbot-widget-container';
-  container.style.position = 'fixed';
-  container.style.bottom = '20px';
-  container.style.right = '20px';
-  container.style.width = '400px';
-  container.style.height = '600px';
-  container.style.maxWidth = 'calc(100vw - 40px)';
-  container.style.maxHeight = 'calc(100vh - 40px)';
-  container.style.zIndex = '2147483647';
-  container.style.pointerEvents = 'none'; // Iframe dışındaki tıklamaları engelleme (Sadece iframe içine tıklanabilsin)
-  container.style.transition = 'all 0.3s ease';
+  function start() {
+    var built = build();
 
-  // Yalnızca widget göründüğünde tıklamaları aktif et (css ile) - Başlangıçta sadece icon kadar pointer almalı.
-  // Bu yüzden iframe'i %100 yapıyoruz ama background transparan oluyor.
+    // The widget tells us how big it wants to be.
+    window.addEventListener('message', function (event) {
+      if (event.source !== built.iframe.contentWindow) return;
+      var data = event.data;
+      if (data && data.type === 'jetchat:resize') resize(built.container, data);
+    });
 
-  const iframe = document.createElement('iframe');
-  iframe.id = 'ai-chatbot-widget-iframe';
-  // ?view=widget parametresi göndererek App.tsx'i sadece widget moduna sokuyoruz
-  iframe.src = `${baseUrl}/?view=widget&target_domain=${targetDomain}`;
-  iframe.style.width = '100%';
-  iframe.style.height = '100%';
-  iframe.style.border = 'none';
-  iframe.style.background = 'transparent';
-  iframe.style.pointerEvents = 'auto'; // İçeriye tıklama serbest
+    // Public JS API: JetChat('identify', { email, name, user_id, order_id, ... })
+    // — the runtime equivalent of Crisp's user:email push, for post-login apps.
+    function handle(cmd, payload) {
+      if (cmd === 'identify' && payload && typeof payload === 'object') {
+        for (var k in payload) if (payload[k] != null) identity[k] = payload[k];
+        built.iframe.contentWindow.postMessage({ type: 'jetchat:identify', traits: payload }, '*');
+      }
+    }
+    var queued = window.JetChat && window.JetChat.q ? window.JetChat.q : [];
+    window.JetChat = function () {
+      handle.apply(null, arguments);
+    };
+    for (var i = 0; i < queued.length; i++) handle.apply(null, queued[i]);
 
-  container.appendChild(iframe);
-  document.body.appendChild(container);
+    // Presence (host page) → forward a proactive chat into the widget iframe so
+    // it can adopt the conversation (with its token) and open.
+    loadPresence(function (payload) {
+      built.iframe.contentWindow.postMessage(
+        {
+          type: 'jetchat:proactive',
+          conversation_id: payload.conversation_id,
+          visitor_token: payload.visitor_token,
+          message: payload.message,
+          agent_name: payload.agent_name,
+        },
+        '*',
+      );
+    });
+  }
 
-  // Widget kapandığında/açıldığında container boyutunu değiştirmek için postMessage dinleyicisi eklenebilir
-  // Şimdilik 400x600 sabit overlay ile (Veya arka plan şeffaf olduğu için tıklamaları pass-through bırakıyoruz)
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
 })();

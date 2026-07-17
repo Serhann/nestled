@@ -1,0 +1,2 @@
+# GeoLite2 databases are licensed + large; keep them out of git.
+*.mmdb
