@@ -1,4 +1,4 @@
-import { pool, queryOne } from './pool.js';
+import { prisma } from './prisma.js';
 import { hashPassword } from '../auth/password.js';
 
 /**
@@ -13,14 +13,13 @@ export async function ensureSeedAdmin(): Promise<void> {
   const name = process.env.SEED_ADMIN_NAME ?? 'Admin';
   if (!email || !password) return;
 
-  const existing = await queryOne<{ count: number }>('SELECT COUNT(*)::int AS count FROM agents');
-  if ((existing?.count ?? 0) > 0) return;
+  const count = await prisma.agents.count();
+  if (count > 0) return;
 
   const password_hash = await hashPassword(password);
-  await pool.query(
-    `INSERT INTO agents (name, email, password_hash, role) VALUES ($1, $2, $3, 'admin')`,
-    [name, email.toLowerCase(), password_hash],
-  );
+  await prisma.agents.create({
+    data: { name, email: email.toLowerCase(), password_hash, role: 'admin' },
+  });
   // eslint-disable-next-line no-console
   console.log(`[seed] created first admin ${email}`);
 }

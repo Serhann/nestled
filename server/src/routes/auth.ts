@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { queryOne, query, withTransaction } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import {
   signAccessToken,
@@ -29,10 +29,9 @@ const registerBody = credentials.extend({ name: z.string().min(1).max(120) });
 async function issueTokens(agent: { id: string; role: AgentRole; email: string }) {
   const accessToken = signAccessToken({ sub: agent.id, role: agent.role, email: agent.email });
   const { token: refreshToken, hash } = generateRefreshToken();
-  await query(
-    'INSERT INTO refresh_tokens (agent_id, token_hash, expires_at) VALUES ($1, $2, $3)',
-    [agent.id, hash, refreshExpiryDate()],
-  );
+  await prisma.refresh_tokens.create({
+    data: { agent_id: agent.id, token_hash: hash, expires_at: refreshExpiryDate() },
+  });
   return { accessToken, refreshToken };
 }
 
@@ -48,20 +47,18 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'Invalid request', details: body.error.issues });
     }
 
-    const existing = await queryOne<{ count: number }>('SELECT COUNT(*)::int AS count FROM agents');
-    if ((existing?.count ?? 0) > 0) {
+    const existing = await prisma.agents.count();
+    if (existing > 0) {
       return reply
         .code(403)
         .send({ error: 'Registration is closed. Ask an admin to create your account.' });
     }
 
     const password_hash = await hashPassword(body.data.password);
-    const created = await queryOne<AgentRow>(
-      `INSERT INTO agents (name, email, password_hash, role)
-       VALUES ($1, $2, $3, 'admin')
-       RETURNING id, name, email, password_hash, role`,
-      [body.data.name, body.data.email.toLowerCase(), password_hash],
-    );
+    const created = (await prisma.agents.create({
+      data: { name: body.data.name, email: body.data.email.toLowerCase(), password_hash, role: 'admin' },
+      select: { id: true, name: true, email: true, password_hash: true, role: true },
+    })) as AgentRow;
     if (!created) return reply.code(500).send({ error: 'Failed to create account' });
 
     const tokens = await issueTokens(created);
@@ -80,16 +77,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'Invalid request' });
     }
 
-    const agent = await queryOne<AgentRow>(
-      'SELECT id, name, email, password_hash, role FROM agents WHERE email = $1',
-      [body.data.email.toLowerCase()],
-    );
+    const agent = (await prisma.agents.findUnique({
+      where: { email: body.data.email.toLowerCase() },
+      select: { id: true, name: true, email: true, password_hash: true, role: true },
+    })) as AgentRow | null;
     // Generic error either way — don't reveal whether the email exists.
     if (!agent || !(await verifyPassword(body.data.password, agent.password_hash))) {
       return reply.code(401).send({ error: 'Invalid email or password' });
     }
 
-    await query('UPDATE agents SET last_seen = now() WHERE id = $1', [agent.id]);
+    await prisma.agents.update({ where: { id: agent.id }, data: { last_seen: new Date() } });
     const tokens = await issueTokens(agent);
     return reply.send({
       access_token: tokens.accessToken,
@@ -106,34 +103,31 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (!body.success) return reply.code(400).send({ error: 'Invalid request' });
 
     const presentedHash = hashToken(body.data.refresh_token);
-    const result = await withTransaction(async (client) => {
-      const row = (
-        await client.query<{ id: string; agent_id: string; expires_at: Date; revoked_at: Date | null }>(
-          'SELECT id, agent_id, expires_at, revoked_at FROM refresh_tokens WHERE token_hash = $1 FOR UPDATE',
-          [presentedHash],
-        )
-      ).rows[0];
-
+    const result = await prisma.$transaction(async (tx) => {
+      const row = await tx.refresh_tokens.findUnique({ where: { token_hash: presentedHash } });
       if (!row || row.revoked_at || row.expires_at.getTime() < Date.now()) {
         return null;
       }
-      // Revoke the old token (rotation) before issuing a replacement.
-      await client.query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1', [row.id]);
+      // Revoke the old token (rotation) before issuing a replacement. The
+      // revoked_at: null guard makes reuse of a token that a concurrent request
+      // already rotated a no-op (count 0) — single-use is preserved.
+      const revoked = await tx.refresh_tokens.updateMany({
+        where: { id: row.id, revoked_at: null },
+        data: { revoked_at: new Date() },
+      });
+      if (revoked.count === 0) return null;
 
-      const agent = (
-        await client.query<AgentRow>(
-          'SELECT id, name, email, password_hash, role FROM agents WHERE id = $1',
-          [row.agent_id],
-        )
-      ).rows[0];
+      const agent = (await tx.agents.findUnique({
+        where: { id: row.agent_id },
+        select: { id: true, name: true, email: true, password_hash: true, role: true },
+      })) as AgentRow | null;
       if (!agent) return null;
 
       const accessToken = signAccessToken({ sub: agent.id, role: agent.role, email: agent.email });
       const { token: refreshToken, hash } = generateRefreshToken();
-      await client.query(
-        'INSERT INTO refresh_tokens (agent_id, token_hash, expires_at) VALUES ($1, $2, $3)',
-        [agent.id, hash, refreshExpiryDate()],
-      );
+      await tx.refresh_tokens.create({
+        data: { agent_id: agent.id, token_hash: hash, expires_at: refreshExpiryDate() },
+      });
       return {
         access_token: accessToken,
         refresh_token: refreshToken,
@@ -148,18 +142,27 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/auth/logout', async (req, reply) => {
     const body = z.object({ refresh_token: z.string().min(1) }).safeParse(req.body);
     if (body.success) {
-      await query('UPDATE refresh_tokens SET revoked_at = now() WHERE token_hash = $1', [
-        hashToken(body.data.refresh_token),
-      ]);
+      await prisma.refresh_tokens.updateMany({
+        where: { token_hash: hashToken(body.data.refresh_token) },
+        data: { revoked_at: new Date() },
+      });
     }
     return reply.send({ ok: true });
   });
 
   app.get('/api/auth/me', { preHandler: requireAgent }, async (req, reply) => {
-    const agent = await queryOne(
-      'SELECT id, name, email, role, avatar_url, is_online, last_seen FROM agents WHERE id = $1',
-      [req.agent!.id],
-    );
+    const agent = await prisma.agents.findUnique({
+      where: { id: req.agent!.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        avatar_url: true,
+        is_online: true,
+        last_seen: true,
+      },
+    });
     if (!agent) return reply.code(404).send({ error: 'Agent not found' });
     return reply.send({ agent });
   });

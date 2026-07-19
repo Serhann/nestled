@@ -19,9 +19,11 @@ const PUSH_CONFIG_CACHE = 'jetchat-push-config';
 
 // Bump SHELL_VERSION on deploy to bust the app-shell cache. Hashed Vite asset
 // filenames change on their own; this version only gates the static shell.
-const SHELL_VERSION = 'v1';
+const SHELL_VERSION = 'v2';
 const SHELL_CACHE = `jetchat-shell-${SHELL_VERSION}`;
-const SHELL_URLS = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/icon-512.png'];
+// The installable PWA is the admin app at /admin — precache that shell (not the
+// marketing landing at /).
+const SHELL_URLS = ['/admin', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -56,7 +58,7 @@ self.addEventListener('fetch', (event) => {
 
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req).catch(() => caches.match('/index.html').then((r) => r || fetch(req))),
+      fetch(req).catch(() => caches.match('/admin').then((r) => r || fetch(req))),
     );
     return;
   }
@@ -92,7 +94,7 @@ self.addEventListener('push', (event) => {
     // One notification per conversation replaces the previous one for it.
     tag: data.conversationId ? `conv-${data.conversationId}` : 'jetchat',
     renotify: true,
-    data: { url: data.url || '/', conversationId: data.conversationId || null },
+    data: { url: data.url || '/admin', conversationId: data.conversationId || null },
   };
 
   event.waitUntil(
@@ -112,7 +114,7 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/';
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/admin';
   const conversationId = event.notification.data && event.notification.data.conversationId;
 
   event.waitUntil(

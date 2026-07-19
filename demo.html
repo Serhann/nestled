@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>JetFood — demo host page</title>
+    <meta name="robots" content="noindex" />
     <style>
       body { font-family: system-ui, sans-serif; margin: 0; background: #f8fafc; color: #0f172a; }
       header { background: #3B82F6; color: #fff; padding: 24px; }
@@ -11,27 +12,39 @@
       .card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); margin-bottom: 16px; }
       button { background: #3B82F6; color: #fff; border: 0; padding: 10px 16px; border-radius: 8px; cursor: pointer; }
       code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; }
+      a { color: #2563eb; }
     </style>
   </head>
   <body>
-    <header><h1>JetFood (demo host)</h1><p>This simulates a customer site with the JetChat widget embedded.</p></header>
+    <header>
+      <h1>JetFood (demo host)</h1>
+      <p>This simulates a customer site with the JetChat widget embedded via one script tag.</p>
+    </header>
     <main>
       <div class="card">
         <h2>Order online</h2>
-        <p>This is a fake host page. The real embed is loaded via one script tag (see bottom).
-           The chat launcher should appear in the bottom-right corner and must never block clicks here.</p>
-        <button onclick="alert('This button still works — the widget does not swallow clicks.')">A button near the corner</button>
+        <p>
+          This is a sample host page. The chat widget is loaded exactly the way a real customer
+          site would load it — a single <code>&lt;script src="/embed.js"&gt;</code> at the bottom,
+          which drops an <code>&lt;iframe src="/chat"&gt;</code> in the bottom-right corner and never
+          blocks clicks on the page.
+        </p>
+        <button onclick="alert('This button still works — the widget does not swallow clicks.')">
+          A button near the corner
+        </button>
       </div>
       <div class="card">
         <h2>How to test</h2>
         <ul>
-          <li>Click the chat bubble (bottom-right) → the panel opens without covering the whole page.</li>
-          <li>Open the admin (<code>/?view=admin</code>) in another tab → this visitor shows on <b>Live Visitors</b>.</li>
+          <li>Click the chat bubble (bottom-right) → the panel opens without covering the page.</li>
+          <li>Open the admin at <a href="/admin"><code>/admin</code></a> in another tab → this visitor
+              shows up on <b>Live Visitors</b>.</li>
           <li>From Live Visitors you can <b>Start chat</b> (proactive) — the widget pops open here.</li>
         </ul>
       </div>
     </main>
-    <!-- The one-line embed. Same-origin in dev; Vite proxies /api + /ws to the backend. -->
+    <!-- One-line embed. Same-origin in dev; Vite proxies /api + /ws to the backend.
+         embed.js loads /chat in a sized iframe and runs host-page presence. -->
     <script src="/embed.js" data-position="right"></script>
   </body>
 </html>

@@ -11,6 +11,7 @@ import {
   getWidgetConfig,
   fireTrigger,
   openConversationWS,
+  openPresenceWS,
   sendMessage as apiSendMessage,
   sendTyping,
   uploadAttachment,
@@ -24,6 +25,20 @@ import type { Trigger } from '../types/chat';
 
 function hostUrl(): string {
   return new URLSearchParams(window.location.search).get('href') || document.referrer || window.location.href;
+}
+
+/**
+ * True when the widget runs inside the embed iframe (the normal case): the host
+ * page sizes the iframe via the `jetchat:resize` messages, so the panel should
+ * fill it (inset-0). When rendered standalone (the /chat page opened directly)
+ * it must instead be a constrained floating card so it doesn't cover the page.
+ */
+function isEmbedded(): boolean {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true; // cross-origin parent access throws → we are embedded
+  }
 }
 
 /** Visitor identity from embed params (ue/un/up/uid/oid) or direct URL params. */
@@ -114,16 +129,39 @@ export function ChatWidget() {
   const triggersRan = useRef(false);
 
   const primaryColor = config?.primary_color || '#3B82F6';
+  const embedded = isEmbedded();
+  const side = config?.widget_position === 'left' ? 'left' : 'right';
 
   // ── Load config + agent status ──────────────────────────────────────────────
   useEffect(() => {
     getWidgetConfig()
       .then((r) => setConfig(r.settings))
       .catch(() => undefined);
-    getAgentStatus()
-      .then((r) => setAgentOnline(r.online))
-      .catch(() => undefined);
     audioRef.current = new Audio(BLIP);
+  }, []);
+
+  // ── Keep the online/offline indicator fresh ─────────────────────────────────
+  // Before a conversation exists there is no realtime channel, so a one-shot
+  // fetch would go stale (e.g. show "offline" after an agent connects). Poll the
+  // status endpoint on a short interval and whenever the tab regains focus. Once
+  // a conversation opens, its WS also pushes agent:status live (see below).
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () =>
+      getAgentStatus()
+        .then((r) => !cancelled && setAgentOnline(r.online))
+        .catch(() => undefined);
+    refresh();
+    const interval = setInterval(refresh, 15000);
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, []);
 
   // ── Persist conversation ─────────────────────────────────────────────────────
@@ -175,6 +213,25 @@ export function ChatWidget() {
           : { width: 384, height: 640 };
     window.parent.postMessage({ type: 'jetchat:resize', state, ...size }, '*');
   }, [open, minimized]);
+
+  // ── Standalone presence ──────────────────────────────────────────────────────
+  // When the widget runs on its own (demo / opened directly, not inside the embed
+  // iframe), open a presence connection so this visitor shows up on the admin's
+  // Live Visitors board. In the real embed the host page's presence.js does this
+  // (and reports the true host URL), so we skip it there to avoid double-tracking.
+  useEffect(() => {
+    if (embedded) return;
+    const p = openPresenceWS(visitorId.current, {
+      onProactive: (data) => {
+        setConversation({ id: data.conversation_id, token: data.visitor_token });
+        setShowPreChat(false);
+        setOpen(true);
+        setMinimized(false);
+        setUnread(0);
+      },
+    });
+    return () => p.stop();
+  }, [embedded]);
 
   // ── Proactive: the embed forwards an agent-initiated chat ────────────────────
   useEffect(() => {
@@ -395,11 +452,16 @@ export function ChatWidget() {
 
   // ── Render: launcher (closed) ─────────────────────────────────────────────────
   if (!open) {
+    // In the embed iframe the launcher sits flush (the iframe itself is small
+    // and positioned by the host); standalone it anchors to the configured side.
+    const launcherClass = embedded
+      ? 'fixed bottom-2 right-2'
+      : `fixed bottom-4 ${side === 'left' ? 'left-4' : 'right-4'}`;
     return (
       <button
         onClick={handleOpen}
         aria-label={strings.headerDefaultTitle}
-        className="fixed bottom-2 right-2 w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white transition-transform hover:scale-105"
+        className={`${launcherClass} z-[2147483000] w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white transition-transform hover:scale-105`}
         style={{ backgroundColor: primaryColor }}
       >
         {config?.widget_avatar_url ? (
@@ -417,9 +479,16 @@ export function ChatWidget() {
   }
 
   // ── Render: panel (open) ──────────────────────────────────────────────────────
+  // Embedded: fill the (host-sized) iframe. Standalone: a floating card that is
+  // full-screen on phones but a compact panel on ≥sm so it never covers the page.
+  const panelClass = embedded
+    ? 'fixed inset-0 bg-white flex flex-col overflow-hidden'
+    : `fixed z-[2147483000] inset-0 sm:inset-auto sm:bottom-4 ${
+        side === 'left' ? 'sm:left-4' : 'sm:right-4'
+      } sm:w-[384px] sm:h-[640px] sm:max-h-[calc(100dvh-2rem)] bg-white shadow-2xl sm:rounded-2xl flex flex-col overflow-hidden`;
   return (
-    <div className="fixed inset-0 bg-white rounded-lg shadow-2xl flex flex-col overflow-hidden">
-      <div className="px-4 py-3 text-white flex items-center justify-between" style={{ backgroundColor: primaryColor }}>
+    <div className={panelClass}>
+      <div className="px-4 py-3 text-white flex items-center justify-between shrink-0" style={{ backgroundColor: primaryColor }}>
         <div className="flex items-center gap-3 min-w-0">
           {config?.widget_avatar_url && (
             <img src={config.widget_avatar_url} alt="" className="w-8 h-8 rounded-full object-cover border-2 border-white/70" />

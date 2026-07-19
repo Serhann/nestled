@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { verifyAccessToken, tokenMatchesHash, type AgentRole } from '../auth/tokens.js';
-import { queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 
 export interface AuthedAgent {
   id: string;
@@ -69,10 +69,10 @@ export function requireVisitor(paramName = 'id') {
       return;
     }
 
-    const row = await queryOne<{ visitor_token_hash: string }>(
-      'SELECT visitor_token_hash FROM conversations WHERE id = $1',
-      [conversationId],
-    );
+    const row = await prisma.conversations.findUnique({
+      where: { id: conversationId },
+      select: { visitor_token_hash: true },
+    });
 
     // Do not distinguish "not found" from "wrong token" — both are 401 so an
     // attacker can't probe which conversation ids exist.

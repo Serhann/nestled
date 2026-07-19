@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { query, queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { generateVisitorToken } from '../auth/tokens.js';
 import { requireVisitor } from '../plugins/auth.js';
 import { parseBody } from '../lib/validate.js';
@@ -40,30 +40,31 @@ interface AIModeSettings {
  */
 async function maybeAIReply(conversationId: string): Promise<void> {
   try {
-    const pub = await queryOne<{ ai_enabled: boolean }>(
-      'SELECT ai_enabled FROM public_settings WHERE id = 1',
-    );
-    const priv = await queryOne<AIModeSettings>(
-      'SELECT ai_response_mode FROM private_settings WHERE id = 1',
-    );
+    const pub = await prisma.public_settings.findUnique({
+      where: { id: 1 },
+      select: { ai_enabled: true },
+    });
+    const priv = (await prisma.private_settings.findUnique({
+      where: { id: 1 },
+      select: { ai_response_mode: true },
+    })) as AIModeSettings | null;
     if (!pub?.ai_enabled || !priv) return;
     if (priv.ai_response_mode === 'off') return;
 
-    const conv = await queryOne<{ ai_greeted: boolean; needs_human: boolean }>(
-      'SELECT ai_greeted, needs_human FROM conversations WHERE id = $1',
-      [conversationId],
-    );
+    const conv = await prisma.conversations.findUnique({
+      where: { id: conversationId },
+      select: { ai_greeted: true, needs_human: true },
+    });
     if (conv?.needs_human) return; // already handed off — AI stays silent
     if (priv.ai_response_mode === 'first_message' && conv?.ai_greeted) return;
     if (priv.ai_response_mode === 'when_no_agent_online' && anyAgentOnline()) return; // a human is here
 
     // Reply to the latest visitor message in this conversation.
-    const last = await queryOne<{ content: string }>(
-      `SELECT content FROM messages
-        WHERE conversation_id = $1 AND sender_type = 'visitor'
-        ORDER BY created_at DESC LIMIT 1`,
-      [conversationId],
-    );
+    const last = await prisma.messages.findFirst({
+      where: { conversation_id: conversationId, sender_type: 'visitor' },
+      orderBy: { created_at: 'desc' },
+      select: { content: true },
+    });
     if (!last) return;
 
     const result = await generateAIReply(last.content, conversationId);
@@ -71,23 +72,26 @@ async function maybeAIReply(conversationId: string): Promise<void> {
 
     await insertMessage({ conversationId, content: result.reply, senderType: 'ai' });
     if (priv.ai_response_mode === 'first_message') {
-      await query('UPDATE conversations SET ai_greeted = true WHERE id = $1', [conversationId]);
+      await prisma.conversations.update({
+        where: { id: conversationId },
+        data: { ai_greeted: true },
+      });
     }
 
     // Handoff: flag the conversation, notify agents, and stop future AI replies.
     if (result.needsHuman) {
-      const updated = await queryOne(
-        `UPDATE conversations SET needs_human = true, status = 'open' WHERE id = $1
-         RETURNING id, needs_human, status`,
-        [conversationId],
-      );
+      const updated = await prisma.conversations.update({
+        where: { id: conversationId },
+        data: { needs_human: true, status: 'open' },
+        select: { id: true, needs_human: true, status: true },
+      });
       broadcastToAgents({ type: 'conversation:updated', conversation: updated });
       await pushToAgents({
         type: 'message',
         conversationId,
         title: 'Handoff requested',
         body: 'A visitor needs a human.',
-        url: `/?conversation=${conversationId}`,
+        url: `/admin?conversation=${conversationId}`,
       });
     }
   } catch (err) {
@@ -115,12 +119,16 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
       location: geo,
     };
 
-    const conv = await queryOne<{ id: string; created_at: string }>(
-      `INSERT INTO conversations (visitor_id, visitor_name, visitor_email, visitor_token_hash, metadata)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, created_at`,
-      [body.visitor_id, body.visitor_name ?? null, body.visitor_email ?? null, hash, metadata],
-    );
+    const conv = await prisma.conversations.create({
+      data: {
+        visitor_id: body.visitor_id,
+        visitor_name: body.visitor_name ?? null,
+        visitor_email: body.visitor_email ?? null,
+        visitor_token_hash: hash,
+        metadata: metadata as object,
+      },
+      select: { id: true, created_at: true },
+    });
     if (!conv) return reply.code(500).send({ error: 'Failed to create conversation' });
 
     broadcastToAgents({
@@ -135,9 +143,9 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     // Trigger conversion attribution: if this chat started from a trigger, count it.
     const triggerId = body.metadata?.trigger_id;
     if (typeof triggerId === 'string') {
-      void query('UPDATE triggers SET conversation_count = conversation_count + 1 WHERE id = $1', [
-        triggerId,
-      ]).catch(() => undefined);
+      void prisma.triggers
+        .updateMany({ where: { id: triggerId }, data: { conversation_count: { increment: 1 } } })
+        .catch(() => undefined);
     }
     // If this visitor is on the live board, link the conversation (green dot).
     attachConversationToVisitor(body.visitor_id, conv.id);
@@ -153,12 +161,20 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     preHandler: requireVisitor('id'),
   }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const messages = await query(
-      `SELECT id, conversation_id, content, sender_type, sender_id, metadata, created_at
-         FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC`,
-      [id],
-    );
-    return reply.send({ messages: messages.rows });
+    const messages = await prisma.messages.findMany({
+      where: { conversation_id: id },
+      orderBy: { created_at: 'asc' },
+      select: {
+        id: true,
+        conversation_id: true,
+        content: true,
+        sender_type: true,
+        sender_id: true,
+        metadata: true,
+        created_at: true,
+      },
+    });
+    return reply.send({ messages });
   });
 
   // Post a visitor message (visitor-scoped), then maybe trigger an AI reply.
@@ -178,14 +194,16 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     if (!message) return reply.code(500).send({ error: 'Failed to post message' });
 
     // A resolved conversation re-opens when the visitor writes again.
-    void query(`UPDATE conversations SET status = 'open' WHERE id = $1 AND status = 'resolved'`, [id]);
+    void prisma.conversations
+      .updateMany({ where: { id, status: 'resolved' }, data: { status: 'open' } })
+      .catch(() => undefined);
     void notifyNewMessage(id, body.content, 'visitor');
     // Push to agents (except any actively viewing this conversation).
     void (async () => {
-      const conv = await queryOne<{ visitor_name: string | null }>(
-        'SELECT visitor_name FROM conversations WHERE id = $1',
-        [id],
-      );
+      const conv = await prisma.conversations.findUnique({
+        where: { id },
+        select: { visitor_name: true },
+      });
       await pushVisitorMessage(id, conv?.visitor_name ?? null, body.content);
     })();
     void maybeAIReply(id);

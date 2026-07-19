@@ -1,4 +1,4 @@
-import { queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { publishMessage, broadcastToAgents } from '../realtime/hub.js';
 
 export interface MessageRow {
@@ -8,7 +8,7 @@ export interface MessageRow {
   sender_type: 'visitor' | 'agent' | 'ai';
   sender_id: string | null;
   metadata: Record<string, unknown>;
-  created_at: string;
+  created_at: Date;
 }
 
 /**
@@ -23,18 +23,25 @@ export async function insertMessage(params: {
   senderId?: string | null;
   metadata?: Record<string, unknown>;
 }): Promise<MessageRow | null> {
-  const row = await queryOne<MessageRow>(
-    `INSERT INTO messages (conversation_id, content, sender_type, sender_id, metadata)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, conversation_id, content, sender_type, sender_id, metadata, created_at`,
-    [
-      params.conversationId,
-      params.content,
-      params.senderType,
-      params.senderId ?? null,
-      params.metadata ?? {},
-    ],
-  );
+  const row = (await prisma.messages.create({
+    data: {
+      conversation_id: params.conversationId,
+      content: params.content,
+      sender_type: params.senderType,
+      sender_id: params.senderId ?? null,
+      metadata: (params.metadata ?? {}) as object,
+    },
+    select: {
+      id: true,
+      conversation_id: true,
+      content: true,
+      sender_type: true,
+      sender_id: true,
+      metadata: true,
+      created_at: true,
+    },
+  })) as unknown as MessageRow;
+
   if (row) {
     publishMessage(params.conversationId, row);
     // Nudge the agent conversation list so ordering/preview refreshes.

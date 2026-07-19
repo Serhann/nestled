@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { requireAgent } from '../plugins/auth.js';
 import { parseBody } from '../lib/validate.js';
 import { generateVisitorToken } from '../auth/tokens.js';
@@ -35,21 +35,26 @@ export async function presenceRoutes(app: FastifyInstance): Promise<void> {
     if (!body) return;
 
     const present = getVisitor(visitorId);
-    const agent = await queryOne<{ name: string }>('SELECT name FROM agents WHERE id = $1', [
-      req.agent!.id,
-    ]);
+    const agent = await prisma.agents.findUnique({
+      where: { id: req.agent!.id },
+      select: { name: true },
+    });
 
     const { token, hash } = generateVisitorToken();
-    const conv = await queryOne<{ id: string; created_at: string }>(
-      `INSERT INTO conversations (visitor_id, visitor_token_hash, status, metadata)
-       VALUES ($1, $2, 'active', $3)
-       RETURNING id, created_at`,
-      [
-        visitorId,
-        hash,
-        { proactive: true, current_page: present?.url ?? null, location: present?.geo ?? null },
-      ],
-    );
+    // status 'open' — the current conversation state set (was 'active' pre-0004).
+    const conv = await prisma.conversations.create({
+      data: {
+        visitor_id: visitorId,
+        visitor_token_hash: hash,
+        status: 'open',
+        metadata: {
+          proactive: true,
+          current_page: present?.url ?? null,
+          location: present?.geo ?? null,
+        } as object,
+      },
+      select: { id: true, created_at: true },
+    });
     if (!conv) return reply.code(500).send({ error: 'Failed to create conversation' });
 
     // Seed the agent's opening line.

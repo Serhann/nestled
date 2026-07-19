@@ -4,7 +4,7 @@ import { dirname, extname, join } from 'node:path';
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
-import { query, queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { requireVisitor, requireAgent } from '../plugins/auth.js';
 import { verifyAccessToken, tokenMatchesHash } from '../auth/tokens.js';
 import { insertMessage } from '../lib/messages.js';
@@ -53,11 +53,16 @@ async function handleUpload(
   await mkdir(dirname(storagePath), { recursive: true });
   await writeFile(storagePath, file.buffer);
 
-  const attachment = await queryOne<AttachmentRow>(
-    `INSERT INTO attachments (id, conversation_id, filename, mime, size_bytes, storage_path)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [id, conversationId, file.filename, file.mimetype, file.buffer.length, storagePath],
-  );
+  const attachment = await prisma.attachments.create({
+    data: {
+      id,
+      conversation_id: conversationId,
+      filename: file.filename,
+      mime: file.mimetype,
+      size_bytes: file.buffer.length,
+      storage_path: storagePath,
+    },
+  });
   if (!attachment) return { error: 'store_failed' as const };
 
   const meta: Record<string, unknown> = {
@@ -79,7 +84,7 @@ async function handleUpload(
     metadata: meta,
   });
   if (message) {
-    await query('UPDATE attachments SET message_id = $1 WHERE id = $2', [message.id, id]);
+    await prisma.attachments.update({ where: { id }, data: { message_id: message.id } });
   }
   return { message };
 }
@@ -111,10 +116,10 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
     }
     void notifyNewMessage(id, `[attachment] ${file.filename}`, 'visitor');
     void (async () => {
-      const conv = await queryOne<{ visitor_name: string | null }>(
-        'SELECT visitor_name FROM conversations WHERE id = $1',
-        [id],
-      );
+      const conv = await prisma.conversations.findUnique({
+        where: { id },
+        select: { visitor_name: true },
+      });
       await pushVisitorMessage(id, conv?.visitor_name ?? null, `📎 ${file.filename}`);
     })();
     return reply.code(201).send({ message: result.message });
@@ -125,16 +130,16 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
     preHandler: requireAgent,
   }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const exists = await queryOne('SELECT id FROM conversations WHERE id = $1', [id]);
+    const exists = await prisma.conversations.findUnique({ where: { id }, select: { id: true } });
     if (!exists) return reply.code(404).send({ error: 'Conversation not found' });
 
     const file = await readFilePart(req);
     if (!file) return reply.code(400).send({ error: 'No file' });
 
-    const me = await queryOne<{ name: string; avatar_url: string | null }>(
-      'SELECT name, avatar_url FROM agents WHERE id = $1',
-      [req.agent!.id],
-    );
+    const me = await prisma.agents.findUnique({
+      where: { id: req.agent!.id },
+      select: { name: true, avatar_url: true },
+    });
     const result = await handleUpload(id, file, {
       type: 'agent',
       id: req.agent!.id,
@@ -152,16 +157,14 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     const q = req.query as { token?: string; jwt?: string };
 
-    const att = await queryOne<AttachmentRow & { visitor_token_hash: string }>(
-      `SELECT a.*, c.visitor_token_hash
-         FROM attachments a JOIN conversations c ON c.id = a.conversation_id
-        WHERE a.id = $1`,
-      [id],
-    );
+    const att = await prisma.attachments.findUnique({
+      where: { id },
+      include: { conversation: { select: { visitor_token_hash: true } } },
+    });
     if (!att) return reply.code(404).send({ error: 'Not found' });
 
     let authorized = false;
-    if (q.token && tokenMatchesHash(q.token, att.visitor_token_hash)) {
+    if (q.token && tokenMatchesHash(q.token, att.conversation.visitor_token_hash)) {
       authorized = true;
     } else {
       const header = req.headers.authorization;

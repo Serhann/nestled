@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { verifyAccessToken, tokenMatchesHash } from '../auth/tokens.js';
-import { queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { registerAgentSocket, registerVisitorSocket } from './hub.js';
 import { registerPresenceSocket, updatePresence } from './presence.js';
 import { ingestReplayEvents, clearReplay } from './replay.js';
@@ -38,10 +38,10 @@ export async function registerRealtime(app: FastifyInstance): Promise<void> {
       socket.close(1008, 'token required');
       return;
     }
-    const row = await queryOne<{ visitor_token_hash: string }>(
-      'SELECT visitor_token_hash FROM conversations WHERE id = $1',
-      [id],
-    );
+    const row = await prisma.conversations.findUnique({
+      where: { id },
+      select: { visitor_token_hash: true },
+    });
     if (!row || !tokenMatchesHash(token, row.visitor_token_hash)) {
       socket.close(1008, 'invalid token');
       return;

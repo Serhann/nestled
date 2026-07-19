@@ -1,5 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageSquare, Users, User, ArrowLeft, LogOut, Bell, BellOff } from 'lucide-react';
+import {
+  MessageSquare,
+  Users,
+  User,
+  ArrowLeft,
+  LogOut,
+  Bell,
+  BellOff,
+  LayoutDashboard,
+  Users2,
+  MessageSquareText,
+  Settings,
+  Zap,
+  BookOpen,
+  ChevronRight,
+} from 'lucide-react';
 import { LoginPanel } from './admin/LoginPanel';
 import { ConversationsList } from './admin/ConversationsList';
 import { ChatPanel } from './admin/ChatPanel';
@@ -10,11 +25,12 @@ import { SettingsPanel } from './admin/SettingsPanel';
 import { TriggersPanel } from './admin/TriggersPanel';
 import { MagicBrowse, type ReplayFeed } from './admin/MagicBrowse';
 import { KnowledgeBasePanel } from './admin/KnowledgeBasePanel';
-import { Users2, MessageSquareText, Settings, Zap, BookOpen, ChevronRight } from 'lucide-react';
+import { Dashboard } from './admin/Dashboard';
 import {
   tokens,
   logout,
   openAgentWS,
+  getPresence,
   apiBase,
   type AdminAgent,
   type AdminMessage,
@@ -23,14 +39,41 @@ import {
 } from '../lib/adminApi';
 import { enablePush, disablePush, isPushSupported } from '../lib/push';
 
-type Tab = 'chats' | 'visitors' | 'account';
+type Section =
+  | 'dashboard'
+  | 'chats'
+  | 'visitors'
+  | 'agents'
+  | 'kb'
+  | 'canned'
+  | 'triggers'
+  | 'settings'
+  | 'account';
+
+interface NavItem {
+  id: Section;
+  label: string;
+  icon: typeof MessageSquare;
+  adminOnly?: boolean;
+  group: 'main' | 'manage';
+}
+
+const NAV: NavItem[] = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, group: 'main' },
+  { id: 'chats', label: 'Chats', icon: MessageSquare, group: 'main' },
+  { id: 'visitors', label: 'Live visitors', icon: Users, group: 'main' },
+  { id: 'agents', label: 'Agents & users', icon: Users2, adminOnly: true, group: 'manage' },
+  { id: 'kb', label: 'Knowledge base', icon: BookOpen, adminOnly: true, group: 'manage' },
+  { id: 'canned', label: 'Canned responses', icon: MessageSquareText, adminOnly: true, group: 'manage' },
+  { id: 'triggers', label: 'Triggers', icon: Zap, adminOnly: true, group: 'manage' },
+  { id: 'settings', label: 'Settings & AI', icon: Settings, adminOnly: true, group: 'manage' },
+];
 
 export function AdminPanel() {
   const [agent, setAgent] = useState<AdminAgent | null>(() => tokens.agent());
-  const [tab, setTab] = useState<Tab>('chats');
-  const [manage, setManage] = useState<'agents' | 'canned' | 'settings' | 'triggers' | 'kb' | null>(null);
+  const [section, setSection] = useState<Section>('dashboard');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [listNonce, setListNonce] = useState(0); // bump → conversations list refetches
+  const [listNonce, setListNonce] = useState(0); // bump → lists refetch
   const [presence, setPresence] = useState<LiveVisitor[]>([]);
   const [liveMessage, setLiveMessage] = useState<{ conversationId: string; message: AdminMessage } | null>(null);
   const [typing, setTyping] = useState<{ conversationId: string; isTyping: boolean } | null>(null);
@@ -68,6 +111,23 @@ export function AdminPanel() {
     });
     socketRef.current = sock;
     return () => sock.close();
+  }, [agent]);
+
+  // Seed + refresh the live-visitor board. The agent WS only pushes
+  // presence:list when presence *changes*, so a fresh login (or a visitor who
+  // arrived before we connected) would otherwise show an empty board. A REST
+  // snapshot on mount + a light poll keeps it reliable; WS still gives instant
+  // updates in between.
+  useEffect(() => {
+    if (!agent) return;
+    let cancelled = false;
+    const load = () => getPresence().then((v) => !cancelled && setPresence(v)).catch(() => undefined);
+    load();
+    const interval = setInterval(load, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [agent]);
 
   // Is live session replay enabled for this site?
@@ -122,32 +182,40 @@ export function AdminPanel() {
     }
   };
 
+  const go = (s: Section) => {
+    setSection(s);
+    if (s !== 'chats') setSelectedId(null);
+  };
+
   const startChatWith = (conversationId: string) => {
     setSelectedId(conversationId);
-    setTab('chats');
+    setSection('chats');
     setListNonce((n) => n + 1);
   };
 
   if (!agent) return <LoginPanel onLogin={handleLogin} />;
 
-  return (
-    <div className="flex flex-col h-[100dvh] bg-gray-100">
-      {/* Top bar */}
-      <header className="flex items-center gap-3 px-4 h-14 bg-white border-b border-gray-200 shrink-0">
-        {selectedId && tab === 'chats' && (
-          <button onClick={() => setSelectedId(null)} className="md:hidden -ml-1 p-1 text-gray-600" aria-label="Back">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-        )}
-        <img src="/icon-192.png" alt="" className="w-8 h-8 rounded-lg" />
-        <h1 className="font-bold text-gray-800">JetChat</h1>
-        <span className="ml-auto text-sm text-gray-500 truncate max-w-[40%]">{agent.name}</span>
-      </header>
+  const totalUnread = Object.values(unread).reduce((a, b) => a + b, 0);
+  const visibleNav = NAV.filter((n) => !n.adminOnly || agent.role === 'admin');
+  const current = NAV.find((n) => n.id === section);
+  const sectionTitle = section === 'account' ? 'Account' : current?.label ?? 'Dashboard';
 
-      {/* Content */}
-      <main className="flex-1 flex overflow-hidden">
-        {tab === 'chats' && (
-          <>
+  const renderContent = () => {
+    switch (section) {
+      case 'dashboard':
+        return (
+          <Dashboard
+            agentName={agent.name}
+            role={agent.role}
+            presence={presence}
+            reloadNonce={listNonce}
+            onOpenConversation={startChatWith}
+            onNavigate={(s) => go(s as Section)}
+          />
+        );
+      case 'chats':
+        return (
+          <div className="flex-1 flex overflow-hidden">
             <div className={`${selectedId ? 'hidden md:flex' : 'flex'} flex-col w-full md:w-80 md:border-r border-gray-200 bg-white`}>
               <ConversationsList
                 selectedId={selectedId}
@@ -165,6 +233,7 @@ export function AdminPanel() {
                   meId={agent.id}
                   liveMessage={liveMessage}
                   typing={typing}
+                  presence={presence}
                   onChanged={() => setListNonce((n) => n + 1)}
                 />
               ) : (
@@ -173,123 +242,248 @@ export function AdminPanel() {
                 </div>
               )}
             </div>
-          </>
-        )}
-
-        {tab === 'visitors' && (
-          <LiveVisitors
-            visitors={presence}
-            onStarted={startChatWith}
-            magicBrowse={magicBrowse}
-            onWatch={startWatch}
-          />
-        )}
-
-        {tab === 'account' && manage === 'agents' && (
-          <AgentsManager meId={agent.id} onBack={() => setManage(null)} />
-        )}
-        {tab === 'account' && manage === 'canned' && <CannedManager onBack={() => setManage(null)} />}
-        {tab === 'account' && manage === 'settings' && <SettingsPanel onBack={() => setManage(null)} />}
-        {tab === 'account' && manage === 'triggers' && <TriggersPanel onBack={() => setManage(null)} />}
-        {tab === 'account' && manage === 'kb' && <KnowledgeBasePanel onBack={() => setManage(null)} />}
-        {tab === 'account' && manage === null && (
-          <div className="flex-1 overflow-y-auto p-5 space-y-4">
-            <div className="bg-white rounded-xl p-4 shadow-sm">
-              <p className="text-sm text-gray-500">Signed in as</p>
-              <p className="font-medium text-gray-800">{agent.name}</p>
-              <p className="text-sm text-gray-500">{agent.email} · {agent.role}</p>
-            </div>
-
-            {/* Admin-only management (role reflected in the UI). */}
-            {agent.role === 'admin' && (
-              <div className="bg-white rounded-xl shadow-sm divide-y divide-gray-50">
-                <button onClick={() => setManage('agents')} className="w-full flex items-center gap-3 p-4 text-left">
-                  <Users2 className="w-5 h-5 text-gray-500" />
-                  <span className="flex-1 font-medium text-gray-800">Manage agents</span>
-                  <ChevronRight className="w-4 h-4 text-gray-400" />
-                </button>
-                <button onClick={() => setManage('kb')} className="w-full flex items-center gap-3 p-4 text-left">
-                  <BookOpen className="w-5 h-5 text-gray-500" />
-                  <span className="flex-1 font-medium text-gray-800">Knowledge base</span>
-                  <ChevronRight className="w-4 h-4 text-gray-400" />
-                </button>
-                <button onClick={() => setManage('canned')} className="w-full flex items-center gap-3 p-4 text-left">
-                  <MessageSquareText className="w-5 h-5 text-gray-500" />
-                  <span className="flex-1 font-medium text-gray-800">Canned responses</span>
-                  <ChevronRight className="w-4 h-4 text-gray-400" />
-                </button>
-                <button onClick={() => setManage('triggers')} className="w-full flex items-center gap-3 p-4 text-left">
-                  <Zap className="w-5 h-5 text-gray-500" />
-                  <span className="flex-1 font-medium text-gray-800">Triggers</span>
-                  <ChevronRight className="w-4 h-4 text-gray-400" />
-                </button>
-                <button onClick={() => setManage('settings')} className="w-full flex items-center gap-3 p-4 text-left">
-                  <Settings className="w-5 h-5 text-gray-500" />
-                  <span className="flex-1 font-medium text-gray-800">Settings &amp; AI</span>
-                  <ChevronRight className="w-4 h-4 text-gray-400" />
-                </button>
-              </div>
-            )}
-            <button
-              onClick={togglePush}
-              disabled={!isPushSupported()}
-              className="w-full bg-white rounded-xl p-4 shadow-sm flex items-center gap-3 text-left disabled:opacity-60"
-            >
-              {pushState === 'on' ? <Bell className="w-5 h-5 text-blue-600" /> : <BellOff className="w-5 h-5 text-gray-500" />}
-              <div>
-                <p className="font-medium text-gray-800">
-                  {pushState === 'on' ? 'Push notifications on' : 'Enable push notifications'}
-                </p>
-                <p className="text-sm text-gray-500">
-                  {isPushSupported() ? 'Get alerted on new chats even when the app is closed.' : 'Not supported on this device.'}
-                </p>
-              </div>
-            </button>
-            <button
-              onClick={handleLogout}
-              className="w-full bg-white rounded-xl p-4 shadow-sm flex items-center gap-3 text-red-600"
-            >
-              <LogOut className="w-5 h-5" />
-              <span className="font-medium">Sign out</span>
-            </button>
           </div>
+        );
+      case 'visitors':
+        return <LiveVisitors visitors={presence} onStarted={startChatWith} magicBrowse={magicBrowse} onWatch={startWatch} />;
+      case 'agents':
+        return <AgentsManager meId={agent.id} onBack={() => go('dashboard')} />;
+      case 'canned':
+        return <CannedManager onBack={() => go('dashboard')} />;
+      case 'settings':
+        return <SettingsPanel onBack={() => go('dashboard')} />;
+      case 'triggers':
+        return <TriggersPanel onBack={() => go('dashboard')} />;
+      case 'kb':
+        return <KnowledgeBasePanel onBack={() => go('dashboard')} />;
+      case 'account':
+        return (
+          <AccountView
+            agent={agent}
+            pushState={pushState}
+            onTogglePush={togglePush}
+            onLogout={handleLogout}
+            onNavigate={go}
+          />
+        );
+    }
+  };
+
+  const showMobileHeader = !(section === 'chats' && selectedId);
+
+  return (
+    <div className="flex h-[100dvh] bg-gray-100">
+      {/* ── Desktop sidebar ─────────────────────────────────────────────── */}
+      <aside className="hidden md:flex md:flex-col w-60 bg-white border-r border-gray-200 shrink-0">
+        <div className="flex items-center gap-2.5 px-4 h-16 border-b border-gray-100">
+          <img src="/icon-192.png" alt="" className="w-8 h-8 rounded-lg" />
+          <span className="font-bold text-gray-800 text-lg">JetChat</span>
+        </div>
+        <nav className="flex-1 overflow-y-auto py-3">
+          <SidebarGroup
+            items={visibleNav.filter((n) => n.group === 'main')}
+            section={section}
+            onGo={go}
+            unreadTotal={totalUnread}
+          />
+          {visibleNav.some((n) => n.group === 'manage') && (
+            <>
+              <p className="px-4 pt-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Manage</p>
+              <SidebarGroup
+                items={visibleNav.filter((n) => n.group === 'manage')}
+                section={section}
+                onGo={go}
+                unreadTotal={totalUnread}
+              />
+            </>
+          )}
+        </nav>
+        {/* Sidebar footer: identity + push + logout */}
+        <div className="border-t border-gray-100 p-3 space-y-1">
+          <button
+            onClick={() => go('account')}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left ${section === 'account' ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+          >
+            <span className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white flex items-center justify-center text-sm font-semibold shrink-0">
+              {agent.name.charAt(0).toUpperCase()}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium text-gray-800 truncate">{agent.name}</span>
+              <span className="flex items-center gap-1 text-xs text-gray-500">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> Online · {agent.role}
+              </span>
+            </span>
+          </button>
+          <button
+            onClick={togglePush}
+            disabled={!isPushSupported()}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {pushState === 'on' ? <Bell className="w-4 h-4 text-blue-600" /> : <BellOff className="w-4 h-4" />}
+            {pushState === 'on' ? 'Notifications on' : 'Enable notifications'}
+          </button>
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm text-red-600 hover:bg-red-50"
+          >
+            <LogOut className="w-4 h-4" /> Sign out
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Main column ─────────────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Mobile top bar */}
+        {showMobileHeader && (
+          <header className="md:hidden flex items-center gap-3 px-4 h-14 bg-white border-b border-gray-200 shrink-0">
+            <img src="/icon-192.png" alt="" className="w-8 h-8 rounded-lg" />
+            <h1 className="font-bold text-gray-800">{sectionTitle}</h1>
+            <span className="ml-auto text-sm text-gray-500 truncate max-w-[40%]">{agent.name}</span>
+          </header>
         )}
-      </main>
+        {/* Desktop content top bar (with mobile back button for chats) */}
+        {section === 'chats' && selectedId && (
+          <header className="md:hidden flex items-center gap-3 px-4 h-14 bg-white border-b border-gray-200 shrink-0">
+            <button onClick={() => setSelectedId(null)} className="-ml-1 p-1 text-gray-600" aria-label="Back">
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <h1 className="font-bold text-gray-800">Conversation</h1>
+          </header>
+        )}
 
-      {/* Live session replay overlay */}
-      {watching && <MagicBrowse feed={replayFeed} onClose={stopWatch} />}
+        <main className="flex-1 flex flex-col overflow-hidden">{renderContent()}</main>
 
-      {/* Bottom navigation (mobile-first; persistent) */}
-      <nav className="flex shrink-0 bg-white border-t border-gray-200">
-        {[
-          { id: 'chats' as const, label: 'Chats', icon: MessageSquare },
-          { id: 'visitors' as const, label: 'Visitors', icon: Users },
-          { id: 'account' as const, label: 'Account', icon: User },
-        ].map(({ id, label, icon: Icon }) => {
-          const totalUnread = id === 'chats' ? Object.values(unread).reduce((a, b) => a + b, 0) : 0;
-          return (
+        {/* Mobile bottom navigation */}
+        <nav className="md:hidden flex shrink-0 bg-white border-t border-gray-200">
+          {(
+            [
+              { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
+              { id: 'chats', label: 'Chats', icon: MessageSquare },
+              { id: 'visitors', label: 'Visitors', icon: Users },
+              { id: 'account', label: 'Account', icon: User },
+            ] as const
+          ).map(({ id, label, icon: Icon }) => (
             <button
               key={id}
-              onClick={() => {
-                setTab(id);
-                setManage(null);
-                if (id !== 'chats') setSelectedId(null);
-              }}
+              onClick={() => go(id)}
               className={`relative flex-1 flex flex-col items-center gap-0.5 py-2 text-xs ${
-                tab === id ? 'text-blue-600' : 'text-gray-500'
+                section === id ? 'text-blue-600' : 'text-gray-500'
               }`}
             >
               <Icon className="w-5 h-5" />
               {label}
-              {totalUnread > 0 && (
+              {id === 'chats' && totalUnread > 0 && (
                 <span className="absolute top-1 right-1/2 translate-x-4 bg-red-500 text-white text-[10px] rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
                   {totalUnread}
                 </span>
               )}
             </button>
-          );
-        })}
-      </nav>
+          ))}
+        </nav>
+      </div>
+
+      {/* Live session replay overlay */}
+      {watching && <MagicBrowse feed={replayFeed} onClose={stopWatch} />}
+    </div>
+  );
+}
+
+function SidebarGroup({
+  items,
+  section,
+  onGo,
+  unreadTotal,
+}: {
+  items: NavItem[];
+  section: Section;
+  onGo: (s: Section) => void;
+  unreadTotal: number;
+}) {
+  return (
+    <div className="px-2 space-y-0.5">
+      {items.map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          onClick={() => onGo(id)}
+          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium ${
+            section === id ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          <Icon className="w-5 h-5 shrink-0" />
+          <span className="flex-1 text-left">{label}</span>
+          {id === 'chats' && unreadTotal > 0 && (
+            <span className="bg-red-500 text-white text-[10px] rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
+              {unreadTotal}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AccountView({
+  agent,
+  pushState,
+  onTogglePush,
+  onLogout,
+  onNavigate,
+}: {
+  agent: AdminAgent;
+  pushState: 'unknown' | 'on' | 'off';
+  onTogglePush: () => void;
+  onLogout: () => void;
+  onNavigate: (s: Section) => void;
+}) {
+  const manage: { id: Section; label: string; icon: typeof Users2 }[] = [
+    { id: 'agents', label: 'Agents & users', icon: Users2 },
+    { id: 'kb', label: 'Knowledge base', icon: BookOpen },
+    { id: 'canned', label: 'Canned responses', icon: MessageSquareText },
+    { id: 'triggers', label: 'Triggers', icon: Zap },
+    { id: 'settings', label: 'Settings & AI', icon: Settings },
+  ];
+  return (
+    <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50">
+      <div className="bg-white rounded-xl p-4 shadow-sm">
+        <p className="text-sm text-gray-500">Signed in as</p>
+        <p className="font-medium text-gray-800">{agent.name}</p>
+        <p className="text-sm text-gray-500">
+          {agent.email} · {agent.role}
+        </p>
+      </div>
+
+      {/* Management links — mobile only (desktop has these in the sidebar). */}
+      {agent.role === 'admin' && (
+        <div className="md:hidden bg-white rounded-xl shadow-sm divide-y divide-gray-50">
+          {manage.map(({ id, label, icon: Icon }) => (
+            <button key={id} onClick={() => onNavigate(id)} className="w-full flex items-center gap-3 p-4 text-left">
+              <Icon className="w-5 h-5 text-gray-500" />
+              <span className="flex-1 font-medium text-gray-800">{label}</span>
+              <ChevronRight className="w-4 h-4 text-gray-400" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      <button
+        onClick={onTogglePush}
+        disabled={!isPushSupported()}
+        className="w-full bg-white rounded-xl p-4 shadow-sm flex items-center gap-3 text-left disabled:opacity-60"
+      >
+        {pushState === 'on' ? <Bell className="w-5 h-5 text-blue-600" /> : <BellOff className="w-5 h-5 text-gray-500" />}
+        <div>
+          <p className="font-medium text-gray-800">
+            {pushState === 'on' ? 'Push notifications on' : 'Enable push notifications'}
+          </p>
+          <p className="text-sm text-gray-500">
+            {isPushSupported() ? 'Get alerted on new chats even when the app is closed.' : 'Not supported on this device.'}
+          </p>
+        </div>
+      </button>
+      <button onClick={onLogout} className="w-full bg-white rounded-xl p-4 shadow-sm flex items-center gap-3 text-red-600">
+        <LogOut className="w-5 h-5" />
+        <span className="font-medium">Sign out</span>
+      </button>
     </div>
   );
 }

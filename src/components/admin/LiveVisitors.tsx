@@ -61,16 +61,23 @@ export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch }: Prop
                 <div className="flex items-center gap-2 text-sm">
                   <Globe className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                   <span className="text-gray-700 truncate">
-                    {v.geo ? [v.geo.city, v.geo.country].filter(Boolean).join(', ') || 'Unknown' : 'Unknown'}
+                    {v.geo
+                      ? [v.geo.city, v.geo.region, v.geo.country].filter(Boolean).join(', ') || 'Unknown location'
+                      : 'Unknown location'}
                   </span>
                   <span className="text-gray-400">·</span>
                   <span className="text-gray-500">{v.returning ? 'returning' : 'new'}</span>
                   <span className="ml-auto text-xs text-gray-400 shrink-0">{duration(v.timeOnSite)}</span>
                 </div>
-                <p className="text-xs text-gray-500 truncate">
-                  {v.url || 'unknown page'}
-                  {v.conversationId ? ' · in chat' : ''}
-                </p>
+                <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
+                  {v.ip && (
+                    <span className="font-mono bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 shrink-0">{v.ip}</span>
+                  )}
+                  <span className="truncate">
+                    {v.url || 'unknown page'}
+                    {v.conversationId ? ' · in chat' : ''}
+                  </span>
+                </div>
               </div>
               {/* Page-history toggle */}
               <button

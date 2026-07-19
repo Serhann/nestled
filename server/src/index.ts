@@ -4,7 +4,7 @@ import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import multipart from '@fastify/multipart';
 import { env, allowedOrigins, isProd } from './env.js';
-import { pool } from './db/pool.js';
+import { prisma } from './db/prisma.js';
 import { runMigrations } from './db/migrate.js';
 import { ensureSeedAdmin } from './db/seedAdmin.js';
 import { startRetentionJob } from './lib/retention.js';
@@ -57,7 +57,7 @@ export async function buildServer() {
   // Health check for load balancers / compose healthchecks.
   app.get('/healthz', async (_req, reply) => {
     try {
-      await pool.query('SELECT 1');
+      await prisma.$queryRaw`SELECT 1`;
       return reply.send({ status: 'ok', db: 'up' });
     } catch {
       return reply.code(503).send({ status: 'degraded', db: 'down' });
@@ -108,7 +108,7 @@ async function main() {
 
   const shutdown = async () => {
     await app.close();
-    await pool.end();
+    await prisma.$disconnect();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);

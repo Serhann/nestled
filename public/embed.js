@@ -101,7 +101,7 @@
     iframe.setAttribute('allow', 'clipboard-write');
     iframe.src =
       widgetOrigin +
-      '/?view=widget&api=' +
+      '/chat?api=' +
       encodeURIComponent(apiBase) +
       '&vid=' +
       encodeURIComponent(visitorId) +

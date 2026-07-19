@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises';
 import { env } from '../env.js';
-import { query } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 
 /**
  * Optional data-retention sweep (Phase 10). When RETENTION_DAYS > 0, resolved
@@ -13,26 +13,24 @@ async function sweep(): Promise<void> {
   const days = env.RETENTION_DAYS;
   if (days <= 0) return;
 
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
   // Delete attachment files for conversations about to be purged.
-  const stale = await query<{ storage_path: string }>(
-    `SELECT a.storage_path
-       FROM attachments a JOIN conversations c ON c.id = a.conversation_id
-      WHERE c.status = 'resolved' AND c.updated_at < now() - ($1 || ' days')::interval`,
-    [String(days)],
-  );
-  for (const row of stale.rows) {
+  const stale = await prisma.attachments.findMany({
+    where: { conversation: { status: 'resolved', updated_at: { lt: cutoff } } },
+    select: { storage_path: true },
+  });
+  for (const row of stale) {
     await rm(row.storage_path, { force: true }).catch(() => undefined);
   }
 
   // Cascades to messages / attachments / notes via FK ON DELETE CASCADE.
-  const res = await query(
-    `DELETE FROM conversations
-      WHERE status = 'resolved' AND updated_at < now() - ($1 || ' days')::interval`,
-    [String(days)],
-  );
-  if (res.rowCount && res.rowCount > 0) {
+  const res = await prisma.conversations.deleteMany({
+    where: { status: 'resolved', updated_at: { lt: cutoff } },
+  });
+  if (res.count > 0) {
     // eslint-disable-next-line no-console
-    console.log(`[retention] purged ${res.rowCount} resolved conversations > ${days}d`);
+    console.log(`[retention] purged ${res.count} resolved conversations > ${days}d`);
   }
 }
 

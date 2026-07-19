@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { query, queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { requireAgent } from '../plugins/auth.js';
 import { parseBody } from '../lib/validate.js';
 import { insertMessage } from '../lib/messages.js';
@@ -11,43 +11,70 @@ const statusBody = z.object({ status: z.enum(['open', 'pending', 'resolved']) })
 const assignBody = z.object({ agent_id: z.string().uuid().nullable().optional() });
 const noteBody = z.object({ content: z.string().min(1).max(4000) });
 
+// Columns safe to expose to agents — never visitor_token_hash.
+const conversationSelect = {
+  id: true,
+  visitor_id: true,
+  visitor_name: true,
+  visitor_email: true,
+  status: true,
+  assigned_agent_id: true,
+  needs_human: true,
+  message_count: true,
+  ai_greeted: true,
+  metadata: true,
+  created_at: true,
+  updated_at: true,
+} as const;
+
 /** Agent-facing conversation endpoints. Any authenticated agent may access. */
 export async function agentConversationRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/agent/conversations', { preHandler: requireAgent }, async (req, reply) => {
     const status = (req.query as { status?: string }).status;
-    // Include a last-message preview (content + sender) for the list UI.
-    // Never expose visitor_token_hash to clients — select explicit columns.
-    const base = `
-      SELECT c.id, c.visitor_id, c.visitor_name, c.visitor_email, c.status,
-             c.assigned_agent_id, c.needs_human, c.message_count, c.ai_greeted,
-             c.metadata, c.created_at, c.updated_at,
-             m.content AS last_message, m.sender_type AS last_sender
-        FROM conversations c
-        LEFT JOIN LATERAL (
-          SELECT content, sender_type FROM messages
-           WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1
-        ) m ON true`;
-    const rows = status
-      ? await query(`${base} WHERE c.status = $1 ORDER BY c.updated_at DESC LIMIT 200`, [status])
-      : await query(`${base} ORDER BY c.updated_at DESC LIMIT 200`);
-    return reply.send({ conversations: rows.rows });
+    // Include a last-message preview (content + sender) for the list UI via the
+    // messages relation (take 1, newest first). Never expose visitor_token_hash.
+    const rows = await prisma.conversations.findMany({
+      where: status ? { status } : {},
+      orderBy: { updated_at: 'desc' },
+      take: 200,
+      select: {
+        ...conversationSelect,
+        messages: {
+          orderBy: { created_at: 'desc' },
+          take: 1,
+          select: { content: true, sender_type: true },
+        },
+      },
+    });
+    const conversations = rows.map(({ messages, ...c }) => ({
+      ...c,
+      last_message: messages[0]?.content ?? null,
+      last_sender: messages[0]?.sender_type ?? null,
+    }));
+    return reply.send({ conversations });
   });
 
   app.get('/api/agent/conversations/:id', { preHandler: requireAgent }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const conversation = await queryOne(
-      `SELECT id, visitor_id, visitor_name, visitor_email, status, assigned_agent_id,
-              needs_human, message_count, ai_greeted, metadata, created_at, updated_at
-         FROM conversations WHERE id = $1`,
-      [id],
-    );
+    const conversation = await prisma.conversations.findUnique({
+      where: { id },
+      select: conversationSelect,
+    });
     if (!conversation) return reply.code(404).send({ error: 'Conversation not found' });
-    const messages = await query(
-      `SELECT id, conversation_id, content, sender_type, sender_id, metadata, created_at
-         FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC`,
-      [id],
-    );
-    return reply.send({ conversation, messages: messages.rows });
+    const messages = await prisma.messages.findMany({
+      where: { conversation_id: id },
+      orderBy: { created_at: 'asc' },
+      select: {
+        id: true,
+        conversation_id: true,
+        content: true,
+        sender_type: true,
+        sender_id: true,
+        metadata: true,
+        created_at: true,
+      },
+    });
+    return reply.send({ conversation, messages });
   });
 
   app.post('/api/agent/conversations/:id/messages', {
@@ -57,15 +84,15 @@ export async function agentConversationRoutes(app: FastifyInstance): Promise<voi
     const body = parseBody(replyBody, req.body, reply);
     if (!body) return;
 
-    const exists = await queryOne(`SELECT id FROM conversations WHERE id = $1`, [id]);
+    const exists = await prisma.conversations.findUnique({ where: { id }, select: { id: true } });
     if (!exists) return reply.code(404).send({ error: 'Conversation not found' });
 
     // Stamp the agent's identity onto the message so the widget can show their
     // name + avatar (persisted, no lookup needed later).
-    const me = await queryOne<{ name: string; avatar_url: string | null }>(
-      'SELECT name, avatar_url FROM agents WHERE id = $1',
-      [req.agent!.id],
-    );
+    const me = await prisma.agents.findUnique({
+      where: { id: req.agent!.id },
+      select: { name: true, avatar_url: true },
+    });
     const message = await insertMessage({
       conversationId: id,
       content: body.content,
@@ -74,7 +101,10 @@ export async function agentConversationRoutes(app: FastifyInstance): Promise<voi
       metadata: { agent: { name: me?.name ?? 'Agent', avatar_url: me?.avatar_url ?? null } },
     });
     // A human replied: reopen if resolved.
-    await query(`UPDATE conversations SET status = 'open' WHERE id = $1 AND status = 'resolved'`, [id]);
+    await prisma.conversations.updateMany({
+      where: { id, status: 'resolved' },
+      data: { status: 'open' },
+    });
     return reply.code(201).send({ message });
   });
 
@@ -84,10 +114,12 @@ export async function agentConversationRoutes(app: FastifyInstance): Promise<voi
     const { id } = req.params as { id: string };
     const body = parseBody(statusBody, req.body, reply);
     if (!body) return;
-    const updated = await queryOne(
-      `UPDATE conversations SET status = $1 WHERE id = $2 RETURNING id, status`,
-      [body.status, id],
-    );
+    const updated = await prisma.conversations
+      .update({ where: { id }, data: { status: body.status }, select: { id: true, status: true } })
+      .catch((e: unknown) => {
+        if ((e as { code?: string }).code === 'P2025') return null;
+        throw e;
+      });
     if (!updated) return reply.code(404).send({ error: 'Conversation not found' });
     broadcastToAgents({ type: 'conversation:updated', conversation: updated });
     return reply.send({ conversation: updated });
@@ -112,14 +144,19 @@ export async function agentConversationRoutes(app: FastifyInstance): Promise<voi
     const target = body.agent_id === undefined ? req.agent!.id : body.agent_id;
 
     if (target) {
-      const exists = await queryOne('SELECT id FROM agents WHERE id = $1', [target]);
+      const exists = await prisma.agents.findUnique({ where: { id: target }, select: { id: true } });
       if (!exists) return reply.code(404).send({ error: 'Agent not found' });
     }
-    const updated = await queryOne(
-      `UPDATE conversations SET assigned_agent_id = $1 WHERE id = $2
-       RETURNING id, assigned_agent_id, status`,
-      [target, id],
-    );
+    const updated = await prisma.conversations
+      .update({
+        where: { id },
+        data: { assigned_agent_id: target },
+        select: { id: true, assigned_agent_id: true, status: true },
+      })
+      .catch((e: unknown) => {
+        if ((e as { code?: string }).code === 'P2025') return null;
+        throw e;
+      });
     if (!updated) return reply.code(404).send({ error: 'Conversation not found' });
     broadcastToAgents({ type: 'conversation:updated', conversation: updated });
     return reply.send({ conversation: updated });
@@ -128,24 +165,45 @@ export async function agentConversationRoutes(app: FastifyInstance): Promise<voi
   // Internal notes (agent-only; never sent to the visitor).
   app.get('/api/agent/conversations/:id/notes', { preHandler: requireAgent }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const notes = await query(
-      `SELECT id, conversation_id, agent_id, agent_name, content, created_at
-         FROM conversation_notes WHERE conversation_id = $1 ORDER BY created_at ASC`,
-      [id],
-    );
-    return reply.send({ notes: notes.rows });
+    const notes = await prisma.conversation_notes.findMany({
+      where: { conversation_id: id },
+      orderBy: { created_at: 'asc' },
+      select: {
+        id: true,
+        conversation_id: true,
+        agent_id: true,
+        agent_name: true,
+        content: true,
+        created_at: true,
+      },
+    });
+    return reply.send({ notes });
   });
 
   app.post('/api/agent/conversations/:id/notes', { preHandler: requireAgent }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parseBody(noteBody, req.body, reply);
     if (!body) return;
-    const agent = await queryOne<{ name: string }>('SELECT name FROM agents WHERE id = $1', [req.agent!.id]);
-    const note = await queryOne(
-      `INSERT INTO conversation_notes (conversation_id, agent_id, agent_name, content)
-       VALUES ($1, $2, $3, $4) RETURNING id, conversation_id, agent_id, agent_name, content, created_at`,
-      [id, req.agent!.id, agent?.name ?? null, body.content],
-    );
+    const agent = await prisma.agents.findUnique({
+      where: { id: req.agent!.id },
+      select: { name: true },
+    });
+    const note = await prisma.conversation_notes.create({
+      data: {
+        conversation_id: id,
+        agent_id: req.agent!.id,
+        agent_name: agent?.name ?? null,
+        content: body.content,
+      },
+      select: {
+        id: true,
+        conversation_id: true,
+        agent_id: true,
+        agent_name: true,
+        content: true,
+        created_at: true,
+      },
+    });
     return reply.code(201).send({ note });
   });
 }

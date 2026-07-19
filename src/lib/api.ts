@@ -153,6 +153,90 @@ export interface WSHandlers {
   onAgentStatus?: (online: boolean) => void;
 }
 
+export interface PresenceProactive {
+  conversation_id: string;
+  visitor_token: string;
+  message: string;
+  agent_name: string;
+}
+
+/**
+ * Open a host-page presence connection from the widget itself. Used only when
+ * the widget runs standalone (demo / opened directly) — in the real embed the
+ * host page's presence.js is authoritative and reports the true host URL, so the
+ * widget must NOT double-report there. Announces the visitor, heartbeats, and
+ * forwards any proactive "open the chat" push. Returns a stop() handle.
+ */
+export function openPresenceWS(
+  visitorId: string,
+  handlers: { onProactive?: (p: PresenceProactive) => void } = {},
+): { stop: () => void } {
+  let ws: WebSocket | null = null;
+  let hb: ReturnType<typeof setInterval> | null = null;
+  let closed = false;
+  let delay = 1000;
+
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const returning = (() => {
+    try {
+      const was = localStorage.getItem('jetchat_returning') === '1';
+      localStorage.setItem('jetchat_returning', '1');
+      return was;
+    } catch {
+      return false;
+    }
+  })();
+  const sessionStart = Date.now();
+
+  const hello = () =>
+    JSON.stringify({
+      type: 'hello',
+      url: param('href') || document.referrer || window.location.href,
+      referrer: document.referrer || null,
+      device: isMobile ? 'mobile' : 'desktop',
+      screen: { w: window.screen.width, h: window.screen.height },
+      returning,
+      sessionStart,
+    });
+
+  const connect = () => {
+    if (closed) return;
+    ws = new WebSocket(`${wsBase()}/ws/presence?visitor_id=${encodeURIComponent(visitorId)}`);
+    ws.onopen = () => {
+      delay = 1000;
+      ws?.send(hello());
+      hb = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+      }, 25000);
+    };
+    ws.onmessage = (event) => {
+      let e: { type?: string; [k: string]: unknown };
+      try {
+        e = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (e.type === 'proactive') handlers.onProactive?.(e as unknown as PresenceProactive);
+    };
+    ws.onclose = () => {
+      if (hb) clearInterval(hb);
+      if (closed) return;
+      setTimeout(connect, delay);
+      delay = Math.min(delay * 2, 30000);
+    };
+    ws.onerror = () => ws?.close();
+  };
+  connect();
+
+  return {
+    stop() {
+      closed = true;
+      if (hb) clearInterval(hb);
+      ws?.close();
+    },
+  };
+}
+
 /** Open the visitor conversation WebSocket. Returns the socket for cleanup. */
 export function openConversationWS(convId: string, token: string, handlers: WSHandlers): WebSocket {
   const ws = new WebSocket(`${wsBase()}/ws/visitor/${convId}?token=${encodeURIComponent(token)}`);

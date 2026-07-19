@@ -1,6 +1,6 @@
 import webpush from 'web-push';
 import { env } from '../env.js';
-import { query, queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { agentsViewing } from '../realtime/hub.js';
 
 let configured = false;
@@ -46,21 +46,21 @@ export async function pushToAgents(payload: PushPayload): Promise<void> {
   const viewers = agentsViewing(payload.conversationId);
   // If the conversation is assigned, only its owner is pushed; otherwise the
   // whole team (the unassigned pool) is notified.
-  const conv = await queryOne<{ assigned_agent_id: string | null }>(
-    'SELECT assigned_agent_id FROM conversations WHERE id = $1',
-    [payload.conversationId],
-  );
+  const conv = await prisma.conversations.findUnique({
+    where: { id: payload.conversationId },
+    select: { assigned_agent_id: true },
+  });
   const assignedTo = conv?.assigned_agent_id ?? null;
 
-  const subs = await query<SubscriptionRow>(
-    'SELECT id, agent_id, endpoint, p256dh, auth FROM push_subscriptions',
-  );
+  const subs = await prisma.push_subscriptions.findMany({
+    select: { id: true, agent_id: true, endpoint: true, p256dh: true, auth: true },
+  });
 
   const body = JSON.stringify(payload);
   const stale: string[] = [];
 
   await Promise.all(
-    subs.rows.map(async (sub) => {
+    subs.map(async (sub: SubscriptionRow) => {
       if (assignedTo && sub.agent_id !== assignedTo) return; // assigned elsewhere
       if (viewers.has(sub.agent_id)) return; // actively viewing — skip
       try {
@@ -81,7 +81,7 @@ export async function pushToAgents(payload: PushPayload): Promise<void> {
   );
 
   if (stale.length > 0) {
-    await query('DELETE FROM push_subscriptions WHERE id = ANY($1)', [stale]);
+    await prisma.push_subscriptions.deleteMany({ where: { id: { in: stale } } });
   }
 }
 
@@ -97,7 +97,7 @@ export async function pushNewConversation(
     conversationId,
     title: 'New chat started',
     body: page ? `${who} on ${page}` : `${who} started a chat`,
-    url: `/?conversation=${conversationId}`,
+    url: `/admin?conversation=${conversationId}`,
   });
 }
 
@@ -114,6 +114,6 @@ export async function pushVisitorMessage(
     conversationId,
     title: who,
     body: short,
-    url: `/?conversation=${conversationId}`,
+    url: `/admin?conversation=${conversationId}`,
   });
 }

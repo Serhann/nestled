@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { query, queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { requireAdmin } from '../plugins/auth.js';
 import { parseBody } from '../lib/validate.js';
 import { audit } from '../lib/audit.js';
@@ -81,33 +82,34 @@ function maskSecret(value: string | null): string | null {
   return `••••${tail}`;
 }
 
+/**
+ * Build a Prisma update payload from a validated body, restricted to `allowed`
+ * columns. For secrets, an empty string means "leave unchanged" (skipped).
+ * Returns null when there is nothing to update.
+ */
 function buildUpdate(
-  table: string,
   data: Record<string, unknown>,
   allowed: readonly string[],
-): { sql: string; params: unknown[] } | null {
-  const sets: string[] = [];
-  const params: unknown[] = [];
-  let i = 1;
+): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {};
   for (const key of allowed) {
     if (!(key in data)) continue;
-    // For secrets, an empty string means "leave unchanged".
     if ((SECRET_COLUMNS as readonly string[]).includes(key) && data[key] === '') continue;
-    sets.push(`${key} = $${i++}`);
-    params.push(data[key]);
+    out[key] = data[key];
   }
-  if (sets.length === 0) return null;
-  return {
-    sql: `UPDATE ${table} SET ${sets.join(', ')}, updated_at = now() WHERE id = 1`,
-    params,
-  };
+  if (Object.keys(out).length === 0) return null;
+  out.updated_at = new Date();
+  return out;
 }
 
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
   // Admin view: full config with secrets masked (booleans indicate presence).
   app.get('/api/settings', { preHandler: requireAdmin }, async (_req, reply) => {
-    const publicSettings = await queryOne(`SELECT * FROM public_settings WHERE id = 1`);
-    const priv = await queryOne<Record<string, unknown>>(`SELECT * FROM private_settings WHERE id = 1`);
+    const publicSettings = await prisma.public_settings.findUnique({ where: { id: 1 } });
+    const priv = (await prisma.private_settings.findUnique({ where: { id: 1 } })) as Record<
+      string,
+      unknown
+    > | null;
 
     const privateSettings: Record<string, unknown> = { ...priv };
     for (const col of SECRET_COLUMNS) {
@@ -121,10 +123,15 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
   app.put('/api/settings/public', { preHandler: requireAdmin }, async (req, reply) => {
     const body = parseBody(publicUpdate, req.body, reply);
     if (!body) return;
-    const update = buildUpdate('public_settings', body, PUBLIC_COLUMNS);
-    if (update) await query(update.sql, update.params as never[]);
+    const data = buildUpdate(body, PUBLIC_COLUMNS);
+    if (data) {
+      await prisma.public_settings.update({
+        where: { id: 1 },
+        data: data as unknown as Prisma.public_settingsUpdateInput,
+      });
+    }
     await audit(req, { action: 'settings.public.update', targetType: 'public_settings' });
-    const settings = await queryOne(`SELECT * FROM public_settings WHERE id = 1`);
+    const settings = await prisma.public_settings.findUnique({ where: { id: 1 } });
     return reply.send({ public: settings });
   });
 
@@ -132,8 +139,13 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     const body = parseBody(privateUpdate, req.body, reply);
     if (!body) return;
     const allowed = [...PRIVATE_NONSECRET_COLUMNS, ...SECRET_COLUMNS];
-    const update = buildUpdate('private_settings', body, allowed);
-    if (update) await query(update.sql, update.params as never[]);
+    const data = buildUpdate(body, allowed);
+    if (data) {
+      await prisma.private_settings.update({
+        where: { id: 1 },
+        data: data as unknown as Prisma.private_settingsUpdateInput,
+      });
+    }
     // Record which fields changed WITHOUT recording secret values.
     const changedKeys = Object.keys(body).filter((k) => k in body);
     await audit(req, {
@@ -146,13 +158,19 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
 
   // AI token usage — current calendar month total, for cost monitoring.
   app.get('/api/ai/usage', { preHandler: requireAdmin }, async (_req, reply) => {
-    const row = await queryOne<{ replies: number; input_tokens: number; output_tokens: number }>(
-      `SELECT COUNT(*)::int AS replies,
-              COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
-              COALESCE(SUM(output_tokens), 0)::int AS output_tokens
-         FROM ai_usage
-        WHERE created_at >= date_trunc('month', now())`,
-    );
-    return reply.send({ month: row });
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const agg = await prisma.ai_usage.aggregate({
+      where: { created_at: { gte: monthStart } },
+      _count: { _all: true },
+      _sum: { input_tokens: true, output_tokens: true },
+    });
+    const month = {
+      replies: agg._count._all,
+      input_tokens: agg._sum.input_tokens ?? 0,
+      output_tokens: agg._sum.output_tokens ?? 0,
+    };
+    return reply.send({ month });
   });
 }

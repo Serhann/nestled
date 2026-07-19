@@ -1,0 +1,345 @@
+// ============================================================================
+// JetChat Prisma schema — self-hosted PostgreSQL (replaces the raw-pg layer).
+//
+// Fields are kept snake_case so the Prisma Client returns objects identical in
+// shape to the previous raw-pg rows (the REST API and frontend expect
+// snake_case keys). CHECK constraints, the message-count trigger, and the
+// singleton settings seed rows live in the initial migration SQL — Prisma's
+// schema language can't express them, so they are appended there by hand.
+// ============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgcrypto]
+}
+
+// ---------------------------------------------------------------------------
+// Agents (support staff). First registered agent becomes admin.
+// ---------------------------------------------------------------------------
+model agents {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String
+  email         String   @unique
+  password_hash String
+  role          String   @default("agent") // CHECK (role IN ('admin','agent'))
+  avatar_url    String?
+  avatar_mime   String?
+  is_online     Boolean  @default(false)
+  last_seen     DateTime @default(now()) @db.Timestamptz(6)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  refresh_tokens     refresh_tokens[]
+  push_subscriptions push_subscriptions[]
+  conversations      conversations[]
+  conversation_notes conversation_notes[]
+  audit_log          audit_log[]
+}
+
+// Refresh tokens: only a SHA-256 hash is stored.
+model refresh_tokens {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agent_id   String    @db.Uuid
+  token_hash String    @unique
+  expires_at DateTime  @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  revoked_at DateTime? @db.Timestamptz(6)
+
+  agent agents @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  @@index([agent_id], map: "idx_refresh_tokens_agent")
+}
+
+// ---------------------------------------------------------------------------
+// Conversations. visitor_token_hash scopes anonymous access to this one row.
+// ---------------------------------------------------------------------------
+model conversations {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  visitor_id         String
+  visitor_name       String?
+  visitor_email      String?
+  visitor_token_hash String
+  status             String   @default("open") // CHECK (status IN ('open','pending','resolved'))
+  assigned_agent_id  String?  @db.Uuid
+  needs_human        Boolean  @default(false)
+  message_count      Int      @default(0)
+  ai_greeted         Boolean  @default(false)
+  metadata           Json     @default(dbgenerated("'{}'::jsonb"))
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  assigned_agent     agents?              @relation(fields: [assigned_agent_id], references: [id], onDelete: SetNull)
+  messages           messages[]
+  attachments        attachments[]
+  conversation_notes conversation_notes[]
+  ai_usage           ai_usage[]
+
+  @@index([status], map: "idx_conversations_status")
+  @@index([updated_at(sort: Desc)], map: "idx_conversations_updated_at")
+  @@index([visitor_id], map: "idx_conversations_visitor_id")
+  @@index([assigned_agent_id], map: "idx_conversations_assigned")
+}
+
+// ---------------------------------------------------------------------------
+// Messages.
+// ---------------------------------------------------------------------------
+model messages {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversation_id String   @db.Uuid
+  content         String
+  sender_type     String // CHECK (sender_type IN ('visitor','agent','ai'))
+  sender_id       String?
+  metadata        Json     @default(dbgenerated("'{}'::jsonb"))
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  conversation conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  attachments  attachments[]
+
+  @@index([conversation_id, created_at], map: "idx_messages_conversation")
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge base.
+// ---------------------------------------------------------------------------
+model knowledge_base {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  question   String
+  answer     String
+  category   String   @default("general")
+  keywords   String[] @default([])
+  priority   Int      @default(0)
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([is_active], map: "idx_kb_active")
+  @@index([category], map: "idx_kb_category")
+}
+
+// ---------------------------------------------------------------------------
+// Settings, split by trust boundary. Single-row tables (id = 1 enforced by a
+// CHECK constraint added in the migration SQL).
+// ---------------------------------------------------------------------------
+model public_settings {
+  id                         Int      @id @default(1)
+  widget_title               String   @default("Chat with us")
+  welcome_message            String   @default("Hi! How can we help you today?")
+  primary_color              String   @default("#3B82F6")
+  widget_position            String   @default("right") // CHECK (IN ('left','right'))
+  widget_avatar_url          String?
+  ai_enabled                 Boolean  @default(true)
+  pre_chat_enabled           Boolean  @default(false)
+  pre_chat_fields            Json     @default(dbgenerated("'[]'::jsonb"))
+  auto_welcome_enabled       Boolean  @default(false)
+  auto_welcome_message       String?
+  auto_welcome_delay         Int      @default(5)
+  notification_sound_enabled Boolean  @default(true)
+  magic_browse_enabled       Boolean  @default(false)
+  updated_at                 DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model private_settings {
+  id                         Int      @id @default(1)
+  ai_provider                String   @default("anthropic") // CHECK (IN ('knowledge_base','anthropic','openai','ollama'))
+  ai_model                   String   @default("claude-opus-4-8")
+  ai_response_mode           String   @default("first_message") // CHECK (IN ('off','first_message','when_no_agent_online','always'))
+  system_prompt              String   @default("You are a helpful customer support assistant for JetFood, a food-ordering platform. Answer only about JetFood and its services. Never invent order statuses or refunds — direct those to a human. Reply in English, concisely and professionally.")
+  anthropic_api_key          String?
+  openai_api_key             String?
+  openai_model               String   @default("gpt-4o-mini")
+  ollama_url                 String?
+  ollama_model               String   @default("llama2")
+  discord_webhook_url        String?
+  discord_webhook_enabled    Boolean  @default(false)
+  discord_notify_new_chat    Boolean  @default(true)
+  discord_notify_new_message Boolean  @default(false)
+  updated_at                 DateTime @default(now()) @db.Timestamptz(6)
+}
+
+// ---------------------------------------------------------------------------
+// Triggers system.
+// ---------------------------------------------------------------------------
+model triggers {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name               String
+  identifier         String   @unique
+  is_active          Boolean  @default(true)
+  priority           Int      @default(0)
+  fire_count         Int      @default(0)
+  conversation_count Int      @default(0)
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  trigger_actions   trigger_actions[]
+  trigger_events    trigger_events[]
+  trigger_behaviors trigger_behaviors[]
+  trigger_platforms trigger_platforms[]
+
+  @@index([is_active, priority], map: "idx_triggers_active")
+}
+
+model trigger_actions {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  trigger_id         String   @db.Uuid
+  show_message       Boolean  @default(false)
+  message_content    String?
+  localized_messages Json     @default(dbgenerated("'{}'::jsonb"))
+  open_chatbox       Boolean  @default(false)
+  play_sound         Boolean  @default(false)
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  trigger triggers @relation(fields: [trigger_id], references: [id], onDelete: Cascade)
+
+  @@index([trigger_id], map: "idx_trigger_actions_trigger")
+}
+
+model trigger_events {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  trigger_id        String   @db.Uuid
+  on_leave_intent   Boolean  @default(false)
+  on_click_link     Boolean  @default(false)
+  click_selectors   String[] @default([])
+  on_pages          Boolean  @default(false)
+  page_urls         String[] @default([])
+  on_url_parameters Boolean  @default(false)
+  url_parameters    Json     @default(dbgenerated("'{}'::jsonb"))
+  after_delay       Boolean  @default(false)
+  delay_seconds     Int      @default(0)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  trigger triggers @relation(fields: [trigger_id], references: [id], onDelete: Cascade)
+
+  @@index([trigger_id], map: "idx_trigger_events_trigger")
+}
+
+model trigger_behaviors {
+  id                          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  trigger_id                  String   @db.Uuid
+  show_as_website             Boolean  @default(false)
+  execute_if_online           Boolean  @default(false)
+  execute_on_first_visit      Boolean  @default(false)
+  execute_if_no_other_trigger Boolean  @default(false)
+  country_restriction         String[] @default([])
+  created_at                  DateTime @default(now()) @db.Timestamptz(6)
+
+  trigger triggers @relation(fields: [trigger_id], references: [id], onDelete: Cascade)
+
+  @@index([trigger_id], map: "idx_trigger_behaviors_trigger")
+}
+
+model trigger_platforms {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  trigger_id      String   @db.Uuid
+  desktop_enabled Boolean  @default(true)
+  mobile_enabled  Boolean  @default(true)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  trigger triggers @relation(fields: [trigger_id], references: [id], onDelete: Cascade)
+
+  @@index([trigger_id], map: "idx_trigger_platforms_trigger")
+}
+
+// ---------------------------------------------------------------------------
+// Audit log for admin actions.
+// ---------------------------------------------------------------------------
+model audit_log {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agent_id    String?  @db.Uuid
+  agent_email String?
+  action      String
+  target_type String?
+  target_id   String?
+  details     Json     @default(dbgenerated("'{}'::jsonb"))
+  ip_address  String?
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  agent agents? @relation(fields: [agent_id], references: [id], onDelete: SetNull)
+
+  @@index([created_at(sort: Desc)], map: "idx_audit_log_created")
+  @@index([agent_id], map: "idx_audit_log_agent")
+}
+
+// ---------------------------------------------------------------------------
+// Web Push subscriptions (Phase 2).
+// ---------------------------------------------------------------------------
+model push_subscriptions {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agent_id   String   @db.Uuid
+  endpoint   String   @unique
+  p256dh     String
+  auth       String
+  user_agent String?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  last_seen  DateTime @default(now()) @db.Timestamptz(6)
+
+  agent agents @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  @@index([agent_id], map: "idx_push_subscriptions_agent")
+}
+
+// ---------------------------------------------------------------------------
+// Attachments (Phase 4).
+// ---------------------------------------------------------------------------
+model attachments {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversation_id String   @db.Uuid
+  message_id      String?  @db.Uuid
+  filename        String
+  mime            String
+  size_bytes      Int
+  storage_path    String
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  conversation conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  message      messages?     @relation(fields: [message_id], references: [id], onDelete: Cascade)
+
+  @@index([conversation_id], map: "idx_attachments_conversation")
+}
+
+// ---------------------------------------------------------------------------
+// Canned responses + internal notes (Phase 6).
+// ---------------------------------------------------------------------------
+model canned_responses {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shortcut   String   @unique
+  title      String
+  content    String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model conversation_notes {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversation_id String   @db.Uuid
+  agent_id        String?  @db.Uuid
+  agent_name      String?
+  content         String
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  conversation conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  agent        agents?       @relation(fields: [agent_id], references: [id], onDelete: SetNull)
+
+  @@index([conversation_id, created_at], map: "idx_conversation_notes_conversation")
+}
+
+// ---------------------------------------------------------------------------
+// AI usage accounting (Phase 7).
+// ---------------------------------------------------------------------------
+model ai_usage {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversation_id String?  @db.Uuid
+  provider        String
+  model           String
+  input_tokens    Int      @default(0)
+  output_tokens   Int      @default(0)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  conversation conversations? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
+
+  @@index([created_at], map: "idx_ai_usage_created")
+}

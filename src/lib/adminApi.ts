@@ -52,14 +52,23 @@ export interface AdminAttachment {
   url: string;
 }
 
+export interface VisitorGeo {
+  country: string | null;
+  country_code: string | null;
+  city: string | null;
+  region: string | null;
+}
+
 export interface LiveVisitor {
   visitorId: string;
   url: string | null;
+  referrer: string | null;
   device: 'mobile' | 'desktop';
   returning: boolean;
   pagesViewed: number;
   pages: { url: string; at: number }[];
-  geo: { country: string | null; city: string | null } | null;
+  ip: string;
+  geo: VisitorGeo | null;
   conversationId: string | null;
   online: boolean;
   timeOnSite: number;

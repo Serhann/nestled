@@ -1,4 +1,4 @@
-import { pool } from './pool.js';
+import { prisma } from './prisma.js';
 import { runMigrations } from './migrate.js';
 import { ensureSeedAdmin } from './seedAdmin.js';
 
@@ -25,7 +25,7 @@ async function seed() {
 }
 
 seed()
-  .then(() => pool.end())
+  .then(() => prisma.$disconnect())
   .catch((err) => {
     // eslint-disable-next-line no-console
     console.error('[seed] failed', err);

@@ -1,63 +1,29 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pool } from './pool.js';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const migrationsDir = join(here, 'migrations');
 
 /**
- * Minimal forward-only SQL migration runner. Each .sql file in db/migrations
- * runs once, in filename order, inside a transaction. Applied filenames are
- * recorded in schema_migrations. Boring on purpose — no external dep.
+ * Apply pending Prisma migrations. Runs `prisma migrate deploy` against
+ * DATABASE_URL — forward-only, safe to run on every boot (already-applied
+ * migrations are skipped). Works from both `src` (tsx dev) and `dist` (prod):
+ * the server root is two levels up, where prisma/schema.prisma lives.
  */
 export async function runMigrations(): Promise<void> {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      filename text PRIMARY KEY,
-      applied_at timestamptz NOT NULL DEFAULT now()
-    );
-  `);
-
-  const files = (await readdir(migrationsDir))
-    .filter((f) => f.endsWith('.sql'))
-    .sort();
-
-  const applied = new Set(
-    (await pool.query<{ filename: string }>('SELECT filename FROM schema_migrations')).rows.map(
-      (r) => r.filename,
-    ),
-  );
-
-  for (const file of files) {
-    if (applied.has(file)) continue;
-    const sql = await readFile(join(migrationsDir, file), 'utf8');
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(sql);
-      await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file]);
-      await client.query('COMMIT');
-      // eslint-disable-next-line no-console
-      console.log(`[migrate] applied ${file}`);
-    } catch (err) {
-      await client.query('ROLLBACK');
-      // eslint-disable-next-line no-console
-      console.error(`[migrate] failed ${file}`);
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
+  const here = dirname(fileURLToPath(import.meta.url)); // .../{src,dist}/db
+  const serverRoot = join(here, '..', '..'); // .../server or /app
+  execFileSync('npx', ['prisma', 'migrate', 'deploy'], {
+    cwd: serverRoot,
+    stdio: 'inherit',
+    env: process.env,
+  });
 }
 
-// Allow running standalone: `npm run migrate`.
+// Allow running standalone with `tsx src/db/migrate.ts`.
 if (import.meta.url === `file://${process.argv[1]}`) {
   runMigrations()
     .then(() => {
       // eslint-disable-next-line no-console
       console.log('[migrate] done');
-      return pool.end();
     })
     .catch((err) => {
       // eslint-disable-next-line no-console

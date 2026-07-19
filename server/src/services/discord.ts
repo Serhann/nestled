@@ -1,5 +1,5 @@
 import { env } from '../env.js';
-import { queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 
 interface DiscordSettings {
   discord_webhook_url: string | null;
@@ -12,14 +12,28 @@ interface ConversationRow {
   visitor_name: string | null;
   visitor_email: string | null;
   metadata: Record<string, unknown>;
-  created_at: string;
+  created_at: Date;
 }
 
 async function loadSettings(): Promise<DiscordSettings | null> {
-  return queryOne<DiscordSettings>(
-    `SELECT discord_webhook_url, discord_webhook_enabled, discord_notify_new_chat, discord_notify_new_message
-       FROM private_settings WHERE id = 1`,
-  );
+  const row = await prisma.private_settings.findUnique({
+    where: { id: 1 },
+    select: {
+      discord_webhook_url: true,
+      discord_webhook_enabled: true,
+      discord_notify_new_chat: true,
+      discord_notify_new_message: true,
+    },
+  });
+  return (row as DiscordSettings | null) ?? null;
+}
+
+async function loadConversation(conversationId: string): Promise<ConversationRow | null> {
+  const row = await prisma.conversations.findUnique({
+    where: { id: conversationId },
+    select: { visitor_name: true, visitor_email: true, metadata: true, created_at: true },
+  });
+  return (row as ConversationRow | null) ?? null;
 }
 
 /** Webhook URL comes from private_settings, falling back to the server .env. */
@@ -50,10 +64,7 @@ export async function notifyNewChat(conversationId: string): Promise<void> {
   const url = resolveWebhook(settings);
   if (!url) return;
 
-  const conv = await queryOne<ConversationRow>(
-    `SELECT visitor_name, visitor_email, metadata, created_at FROM conversations WHERE id = $1`,
-    [conversationId],
-  );
+  const conv = await loadConversation(conversationId);
   if (!conv) return;
 
   const location = (conv.metadata?.location ?? null) as { city?: string; country?: string } | null;
@@ -92,10 +103,7 @@ export async function notifyNewMessage(
   const url = resolveWebhook(settings);
   if (!url) return;
 
-  const conv = await queryOne<ConversationRow>(
-    `SELECT visitor_name, visitor_email, metadata, created_at FROM conversations WHERE id = $1`,
-    [conversationId],
-  );
+  const conv = await loadConversation(conversationId);
   const visitorName = conv?.visitor_name || 'Anonymous';
   const preview = content.length > 200 ? `${content.slice(0, 200)}...` : content;
 

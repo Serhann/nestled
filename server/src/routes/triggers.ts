@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { query, queryOne, withTransaction } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { requireAdmin } from '../plugins/auth.js';
 import { parseBody } from '../lib/validate.js';
 import { audit } from '../lib/audit.js';
@@ -42,66 +43,106 @@ const triggerBody = z.object({
 });
 
 type TriggerInput = z.infer<typeof triggerBody>;
-type PgClient = Parameters<Parameters<typeof withTransaction>[0]>[0];
 
-async function writeChildren(client: PgClient, triggerId: string, body: TriggerInput): Promise<void> {
-  // One row per child table; replace on update.
-  await client.query('DELETE FROM trigger_actions WHERE trigger_id = $1', [triggerId]);
-  await client.query('DELETE FROM trigger_events WHERE trigger_id = $1', [triggerId]);
-  await client.query('DELETE FROM trigger_behaviors WHERE trigger_id = $1', [triggerId]);
-  await client.query('DELETE FROM trigger_platforms WHERE trigger_id = $1', [triggerId]);
+// Include all four child tables so a trigger can be assembled in one query.
+const withChildren = {
+  trigger_actions: true,
+  trigger_events: true,
+  trigger_behaviors: true,
+  trigger_platforms: true,
+} as const;
 
-  const a = body.actions;
-  await client.query(
-    `INSERT INTO trigger_actions (trigger_id, show_message, message_content, localized_messages, open_chatbox, play_sound)
-     VALUES ($1,$2,$3,$4,$5,$6)`,
-    [triggerId, a.show_message, a.message_content, a.localized_messages, a.open_chatbox, a.play_sound],
-  );
-  const e = body.events;
-  await client.query(
-    `INSERT INTO trigger_events (trigger_id, on_leave_intent, on_click_link, click_selectors, on_pages, page_urls, on_url_parameters, url_parameters, after_delay, delay_seconds)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [triggerId, e.on_leave_intent, e.on_click_link, e.click_selectors, e.on_pages, e.page_urls, e.on_url_parameters, e.url_parameters, e.after_delay, e.delay_seconds],
-  );
-  const b = body.behaviors;
-  await client.query(
-    `INSERT INTO trigger_behaviors (trigger_id, show_as_website, execute_if_online, execute_on_first_visit, execute_if_no_other_trigger, country_restriction)
-     VALUES ($1,$2,$3,$4,$5,$6)`,
-    [triggerId, b.show_as_website, b.execute_if_online, b.execute_on_first_visit, b.execute_if_no_other_trigger, b.country_restriction],
-  );
-  const p = body.platforms;
-  await client.query(
-    `INSERT INTO trigger_platforms (trigger_id, desktop_enabled, mobile_enabled) VALUES ($1,$2,$3)`,
-    [triggerId, p.desktop_enabled, p.mobile_enabled],
-  );
+// Each trigger has exactly one row per child table (writeChildren replaces on
+// every write), so we surface the first (or null) under the legacy key names.
+function assemble(t: Record<string, unknown>): Record<string, unknown> {
+  const {
+    trigger_actions,
+    trigger_events,
+    trigger_behaviors,
+    trigger_platforms,
+    ...rest
+  } = t as {
+    trigger_actions: unknown[];
+    trigger_events: unknown[];
+    trigger_behaviors: unknown[];
+    trigger_platforms: unknown[];
+  } & Record<string, unknown>;
+  return {
+    ...rest,
+    actions: trigger_actions[0] ?? null,
+    events: trigger_events[0] ?? null,
+    behaviors: trigger_behaviors[0] ?? null,
+    platforms: trigger_platforms[0] ?? null,
+  };
 }
 
-async function assemble(rows: { id: string }[]): Promise<unknown[]> {
-  if (rows.length === 0) return [];
-  const ids = rows.map((t) => t.id);
-  const [actions, events, behaviors, platforms] = await Promise.all([
-    query(`SELECT * FROM trigger_actions WHERE trigger_id = ANY($1)`, [ids]),
-    query(`SELECT * FROM trigger_events WHERE trigger_id = ANY($1)`, [ids]),
-    query(`SELECT * FROM trigger_behaviors WHERE trigger_id = ANY($1)`, [ids]),
-    query(`SELECT * FROM trigger_platforms WHERE trigger_id = ANY($1)`, [ids]),
-  ]);
-  const by = <T extends { trigger_id: string }>(r: T[], id: string) => r.find((x) => x.trigger_id === id) ?? null;
-  return rows.map((t) => ({
-    ...t,
-    actions: by(actions.rows as { trigger_id: string }[], t.id),
-    events: by(events.rows as { trigger_id: string }[], t.id),
-    behaviors: by(behaviors.rows as { trigger_id: string }[], t.id),
-    platforms: by(platforms.rows as { trigger_id: string }[], t.id),
-  }));
+async function writeChildren(
+  tx: Prisma.TransactionClient,
+  triggerId: string,
+  body: TriggerInput,
+): Promise<void> {
+  // One row per child table; replace on update.
+  await tx.trigger_actions.deleteMany({ where: { trigger_id: triggerId } });
+  await tx.trigger_events.deleteMany({ where: { trigger_id: triggerId } });
+  await tx.trigger_behaviors.deleteMany({ where: { trigger_id: triggerId } });
+  await tx.trigger_platforms.deleteMany({ where: { trigger_id: triggerId } });
+
+  const a = body.actions;
+  await tx.trigger_actions.create({
+    data: {
+      trigger_id: triggerId,
+      show_message: a.show_message,
+      message_content: a.message_content,
+      localized_messages: a.localized_messages as object,
+      open_chatbox: a.open_chatbox,
+      play_sound: a.play_sound,
+    },
+  });
+  const e = body.events;
+  await tx.trigger_events.create({
+    data: {
+      trigger_id: triggerId,
+      on_leave_intent: e.on_leave_intent,
+      on_click_link: e.on_click_link,
+      click_selectors: e.click_selectors,
+      on_pages: e.on_pages,
+      page_urls: e.page_urls,
+      on_url_parameters: e.on_url_parameters,
+      url_parameters: e.url_parameters as object,
+      after_delay: e.after_delay,
+      delay_seconds: e.delay_seconds,
+    },
+  });
+  const b = body.behaviors;
+  await tx.trigger_behaviors.create({
+    data: {
+      trigger_id: triggerId,
+      show_as_website: b.show_as_website,
+      execute_if_online: b.execute_if_online,
+      execute_on_first_visit: b.execute_on_first_visit,
+      execute_if_no_other_trigger: b.execute_if_no_other_trigger,
+      country_restriction: b.country_restriction,
+    },
+  });
+  const p = body.platforms;
+  await tx.trigger_platforms.create({
+    data: {
+      trigger_id: triggerId,
+      desktop_enabled: p.desktop_enabled,
+      mobile_enabled: p.mobile_enabled,
+    },
+  });
 }
 
 export async function triggerRoutes(app: FastifyInstance): Promise<void> {
   // Public: active triggers for the embed/widget to evaluate.
   app.get('/api/triggers/active', async (_req, reply) => {
-    const triggers = await query<{ id: string }>(
-      `SELECT id, name, identifier, priority FROM triggers WHERE is_active = true ORDER BY priority ASC`,
-    );
-    return reply.send({ triggers: await assemble(triggers.rows) });
+    const triggers = await prisma.triggers.findMany({
+      where: { is_active: true },
+      orderBy: { priority: 'asc' },
+      select: { id: true, name: true, identifier: true, priority: true, ...withChildren },
+    });
+    return reply.send({ triggers: triggers.map((t) => assemble(t as Record<string, unknown>)) });
   });
 
   // Public: record that a trigger fired (analytics). Rate-limited.
@@ -109,33 +150,50 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
   }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    await query('UPDATE triggers SET fire_count = fire_count + 1 WHERE id = $1', [id]);
+    await prisma.triggers.updateMany({ where: { id }, data: { fire_count: { increment: 1 } } });
     return reply.send({ ok: true });
   });
 
   // Admin: full list with children + analytics counters.
   app.get('/api/triggers', { preHandler: requireAdmin }, async (_req, reply) => {
-    const triggers = await query<{ id: string }>(
-      `SELECT id, name, identifier, is_active, priority, fire_count, conversation_count, created_at, updated_at
-         FROM triggers ORDER BY priority ASC, created_at DESC`,
-    );
-    return reply.send({ triggers: await assemble(triggers.rows) });
+    const triggers = await prisma.triggers.findMany({
+      orderBy: [{ priority: 'asc' }, { created_at: 'desc' }],
+      select: {
+        id: true,
+        name: true,
+        identifier: true,
+        is_active: true,
+        priority: true,
+        fire_count: true,
+        conversation_count: true,
+        created_at: true,
+        updated_at: true,
+        ...withChildren,
+      },
+    });
+    return reply.send({ triggers: triggers.map((t) => assemble(t as Record<string, unknown>)) });
   });
 
   app.post('/api/triggers', { preHandler: requireAdmin }, async (req, reply) => {
     const body = parseBody(triggerBody, req.body, reply);
     if (!body) return;
-    const dupe = await queryOne('SELECT id FROM triggers WHERE identifier = $1', [body.identifier]);
+    const dupe = await prisma.triggers.findUnique({
+      where: { identifier: body.identifier },
+      select: { id: true },
+    });
     if (dupe) return reply.code(409).send({ error: 'That identifier already exists' });
 
-    const id = await withTransaction(async (client) => {
-      const t = (
-        await client.query<{ id: string }>(
-          `INSERT INTO triggers (name, identifier, is_active, priority) VALUES ($1,$2,$3,$4) RETURNING id`,
-          [body.name, body.identifier, body.is_active, body.priority],
-        )
-      ).rows[0]!;
-      await writeChildren(client, t.id, body);
+    const id = await prisma.$transaction(async (tx) => {
+      const t = await tx.triggers.create({
+        data: {
+          name: body.name,
+          identifier: body.identifier,
+          is_active: body.is_active,
+          priority: body.priority,
+        },
+        select: { id: true },
+      });
+      await writeChildren(tx, t.id, body);
       return t.id;
     });
     await audit(req, { action: 'trigger.create', targetType: 'trigger', targetId: id });
@@ -146,15 +204,21 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     const body = parseBody(triggerBody, req.body, reply);
     if (!body) return;
-    const exists = await queryOne('SELECT id FROM triggers WHERE id = $1', [id]);
+    const exists = await prisma.triggers.findUnique({ where: { id }, select: { id: true } });
     if (!exists) return reply.code(404).send({ error: 'Not found' });
 
-    await withTransaction(async (client) => {
-      await client.query(
-        `UPDATE triggers SET name=$1, identifier=$2, is_active=$3, priority=$4, updated_at=now() WHERE id=$5`,
-        [body.name, body.identifier, body.is_active, body.priority, id],
-      );
-      await writeChildren(client, id, body);
+    await prisma.$transaction(async (tx) => {
+      await tx.triggers.update({
+        where: { id },
+        data: {
+          name: body.name,
+          identifier: body.identifier,
+          is_active: body.is_active,
+          priority: body.priority,
+          updated_at: new Date(),
+        },
+      });
+      await writeChildren(tx, id, body);
     });
     await audit(req, { action: 'trigger.update', targetType: 'trigger', targetId: id });
     return reply.send({ ok: true });
@@ -162,8 +226,8 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete('/api/triggers/:id', { preHandler: requireAdmin }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const deleted = await queryOne('DELETE FROM triggers WHERE id = $1 RETURNING id', [id]);
-    if (!deleted) return reply.code(404).send({ error: 'Not found' });
+    const deleted = await prisma.triggers.deleteMany({ where: { id } });
+    if (deleted.count === 0) return reply.code(404).send({ error: 'Not found' });
     await audit(req, { action: 'trigger.delete', targetType: 'trigger', targetId: id });
     return reply.send({ ok: true });
   });

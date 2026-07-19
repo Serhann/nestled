@@ -1,9 +1,9 @@
 {
-  "id": "/?view=admin",
+  "id": "/admin",
   "name": "JetChat Admin",
   "short_name": "JetChat",
   "description": "Handle live chats and visitors from your phone.",
-  "start_url": "/?view=admin",
+  "start_url": "/admin",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0f172a",

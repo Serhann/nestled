@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import { query } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { startWatch, stopWatch } from './replay.js';
 
 /**
@@ -34,9 +34,9 @@ const visitorSockets = new Map<string, Set<WebSocket>>();
 const agentSocketCounts = new Map<string, number>();
 
 function setAgentOnline(agentId: string, online: boolean): void {
-  void query('UPDATE agents SET is_online = $1, last_seen = now() WHERE id = $2', [online, agentId]).catch(
-    () => undefined,
-  );
+  void prisma.agents
+    .updateMany({ where: { id: agentId }, data: { is_online: online, last_seen: new Date() } })
+    .catch(() => undefined);
 }
 
 function send(ws: WebSocket, event: RealtimeEvent): void {

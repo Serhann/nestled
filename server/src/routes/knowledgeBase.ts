@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { query, queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { requireAgent, requireAdmin } from '../plugins/auth.js';
 import { parseBody } from '../lib/validate.js';
 import { audit } from '../lib/audit.js';
@@ -16,19 +16,26 @@ const kbBody = z.object({
 
 export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/knowledge-base', { preHandler: requireAgent }, async (_req, reply) => {
-    const rows = await query(`SELECT * FROM knowledge_base ORDER BY priority DESC, created_at DESC`);
-    return reply.send({ items: rows.rows });
+    const items = await prisma.knowledge_base.findMany({
+      orderBy: [{ priority: 'desc' }, { created_at: 'desc' }],
+    });
+    return reply.send({ items });
   });
 
   app.post('/api/knowledge-base', { preHandler: requireAdmin }, async (req, reply) => {
     const body = parseBody(kbBody, req.body, reply);
     if (!body) return;
-    const created = await queryOne(
-      `INSERT INTO knowledge_base (question, answer, category, keywords, priority, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [body.question, body.answer, body.category, body.keywords, body.priority, body.is_active],
-    );
-    await audit(req, { action: 'kb.create', targetType: 'knowledge_base', targetId: created?.id as string });
+    const created = await prisma.knowledge_base.create({
+      data: {
+        question: body.question,
+        answer: body.answer,
+        category: body.category,
+        keywords: body.keywords,
+        priority: body.priority,
+        is_active: body.is_active,
+      },
+    });
+    await audit(req, { action: 'kb.create', targetType: 'knowledge_base', targetId: created.id });
     return reply.code(201).send({ item: created });
   });
 
@@ -36,13 +43,23 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     const body = parseBody(kbBody, req.body, reply);
     if (!body) return;
-    const updated = await queryOne(
-      `UPDATE knowledge_base
-          SET question = $1, answer = $2, category = $3, keywords = $4,
-              priority = $5, is_active = $6, updated_at = now()
-        WHERE id = $7 RETURNING *`,
-      [body.question, body.answer, body.category, body.keywords, body.priority, body.is_active, id],
-    );
+    const updated = await prisma.knowledge_base
+      .update({
+        where: { id },
+        data: {
+          question: body.question,
+          answer: body.answer,
+          category: body.category,
+          keywords: body.keywords,
+          priority: body.priority,
+          is_active: body.is_active,
+          updated_at: new Date(),
+        },
+      })
+      .catch((e: unknown) => {
+        if ((e as { code?: string }).code === 'P2025') return null;
+        throw e;
+      });
     if (!updated) return reply.code(404).send({ error: 'Item not found' });
     await audit(req, { action: 'kb.update', targetType: 'knowledge_base', targetId: id });
     return reply.send({ item: updated });
@@ -50,8 +67,8 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete('/api/knowledge-base/:id', { preHandler: requireAdmin }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const deleted = await queryOne(`DELETE FROM knowledge_base WHERE id = $1 RETURNING id`, [id]);
-    if (!deleted) return reply.code(404).send({ error: 'Item not found' });
+    const deleted = await prisma.knowledge_base.deleteMany({ where: { id } });
+    if (deleted.count === 0) return reply.code(404).send({ error: 'Item not found' });
     await audit(req, { action: 'kb.delete', targetType: 'knowledge_base', targetId: id });
     return reply.send({ ok: true });
   });

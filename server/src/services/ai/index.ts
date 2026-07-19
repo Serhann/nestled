@@ -1,4 +1,4 @@
-import { query, queryOne } from '../../db/pool.js';
+import { prisma } from '../../db/prisma.js';
 import type { AIProvider, AISettings, KnowledgeItem } from './types.js';
 import {
   anthropicProvider,
@@ -22,19 +22,27 @@ export interface AIReplyResult {
 }
 
 async function loadSettings(): Promise<AISettings | null> {
-  return queryOne<AISettings>(
-    `SELECT ai_provider, ai_model, system_prompt, anthropic_api_key,
-            openai_api_key, openai_model, ollama_url, ollama_model
-       FROM private_settings WHERE id = 1`,
-  );
+  const row = await prisma.private_settings.findUnique({
+    where: { id: 1 },
+    select: {
+      ai_provider: true,
+      ai_model: true,
+      system_prompt: true,
+      anthropic_api_key: true,
+      openai_api_key: true,
+      openai_model: true,
+      ollama_url: true,
+      ollama_model: true,
+    },
+  });
+  return (row as AISettings | null) ?? null;
 }
 
 async function loadKnowledge(): Promise<KnowledgeItem[]> {
-  const res = await query<KnowledgeItem>(
-    `SELECT question, answer, category, keywords, priority
-       FROM knowledge_base WHERE is_active = true`,
-  );
-  return res.rows;
+  return prisma.knowledge_base.findMany({
+    where: { is_active: true },
+    select: { question: true, answer: true, category: true, keywords: true, priority: true },
+  });
 }
 
 /**
@@ -63,11 +71,17 @@ export async function generateAIReply(
   }
 
   if (result.usage) {
-    void query(
-      `INSERT INTO ai_usage (conversation_id, provider, model, input_tokens, output_tokens)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [conversationId, settings.ai_provider, settings.ai_model, result.usage.input, result.usage.output],
-    ).catch(() => undefined);
+    void prisma.ai_usage
+      .create({
+        data: {
+          conversation_id: conversationId,
+          provider: settings.ai_provider,
+          model: settings.ai_model,
+          input_tokens: result.usage.input,
+          output_tokens: result.usage.output,
+        },
+      })
+      .catch(() => undefined);
   }
 
   const needsHuman = result.text.includes(HANDOFF);

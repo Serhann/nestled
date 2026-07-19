@@ -2,24 +2,79 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Back-compat: old links / installed PWA used /?view=admin|demo|widget.
+         Redirect them to the real routes before anything else renders. -->
+    <script>
+      (function () {
+        var v = new URLSearchParams(location.search).get('view');
+        if (v === 'admin') location.replace('/admin');
+        else if (v === 'demo') location.replace('/demo');
+        else if (v === 'widget') location.replace('/chat');
+      })();
+    </script>
     <link rel="icon" type="image/png" href="/icon-192.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JetChat — self-hosted live chat & AI support</title>
     <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0"
+      name="description"
+      content="JetChat is a self-hosted live-chat and AI support platform: live visitor board, proactive chat, real push notifications, and AI auto-replies."
     />
-    <title>JetChat Admin</title>
-    <meta name="description" content="Handle live chats and visitors from your phone." />
     <meta name="theme-color" content="#3B82F6" />
-    <link rel="manifest" href="/manifest.json" />
-    <!-- iOS installed-PWA support (required for Home Screen + Web Push on 16.4+) -->
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="JetChat" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        color: #0f172a;
+        background: linear-gradient(135deg, #2563eb 0%, #06b6d4 60%, #14b8a6 100%);
+        min-height: 100vh;
+      }
+      .wrap { max-width: 900px; margin: 0 auto; padding: 80px 24px; }
+      .badge {
+        display: inline-flex; align-items: center; gap: 8px;
+        background: rgba(255, 255, 255, 0.15); color: #fff;
+        padding: 8px 14px; border-radius: 999px; font-size: 14px; backdrop-filter: blur(6px);
+      }
+      h1 { color: #fff; font-size: 48px; line-height: 1.1; margin: 24px 0 12px; }
+      .lead { color: rgba(255, 255, 255, 0.9); font-size: 20px; max-width: 620px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 40px; }
+      .feature { background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12); }
+      .feature h3 { margin: 0 0 6px; font-size: 17px; }
+      .feature p { margin: 0; color: #475569; font-size: 14px; line-height: 1.5; }
+      .dot { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; display: inline-block; }
+      footer { color: rgba(255, 255, 255, 0.75); font-size: 13px; margin-top: 48px; }
+      code { background: rgba(255,255,255,0.15); color: #fff; padding: 2px 6px; border-radius: 4px; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <div class="wrap">
+      <span class="badge"><span class="dot"></span> Self-hosted · no third-party data sharing</span>
+      <h1>JetChat</h1>
+      <p class="lead">
+        A self-hosted live-chat and AI support platform — a live visitor board, proactive chat,
+        real Web Push, and AI auto-replies with a knowledge base, all on your own infrastructure.
+      </p>
+
+      <div class="grid">
+        <div class="feature">
+          <h3>Live visitor board</h3>
+          <p>See everyone browsing your site in real time — location, IP, pages — and start a chat proactively.</p>
+        </div>
+        <div class="feature">
+          <h3>AI auto-replies</h3>
+          <p>Answer from your knowledge base and hand off cleanly to a human when needed.</p>
+        </div>
+        <div class="feature">
+          <h3>Real push notifications</h3>
+          <p>Installable PWA with background Web Push, so new chats reach you even when the app is closed.</p>
+        </div>
+        <div class="feature">
+          <h3>One-line embed</h3>
+          <p>Drop a single script tag on any site to add the chat widget — it never blocks clicks.</p>
+        </div>
+      </div>
+
+      <footer>© JetChat — embed the widget with <code>&lt;script src="/embed.js"&gt;&lt;/script&gt;</code></footer>
+    </div>
   </body>
 </html>

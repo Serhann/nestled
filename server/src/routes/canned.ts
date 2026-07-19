@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { query, queryOne } from '../db/pool.js';
+import { prisma } from '../db/prisma.js';
 import { requireAgent, requireAdmin } from '../plugins/auth.js';
 import { parseBody } from '../lib/validate.js';
 import { audit } from '../lib/audit.js';
@@ -18,20 +18,19 @@ const cannedBody = z.object({
 /** Canned responses: agents read (for `/` autocomplete); admins manage. */
 export async function cannedRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/canned-responses', { preHandler: requireAgent }, async (_req, reply) => {
-    const rows = await query(`SELECT * FROM canned_responses ORDER BY shortcut ASC`);
-    return reply.send({ items: rows.rows });
+    const items = await prisma.canned_responses.findMany({ orderBy: { shortcut: 'asc' } });
+    return reply.send({ items });
   });
 
   app.post('/api/canned-responses', { preHandler: requireAdmin }, async (req, reply) => {
     const body = parseBody(cannedBody, req.body, reply);
     if (!body) return;
-    const existing = await queryOne('SELECT id FROM canned_responses WHERE shortcut = $1', [body.shortcut]);
+    const existing = await prisma.canned_responses.findUnique({ where: { shortcut: body.shortcut } });
     if (existing) return reply.code(409).send({ error: 'That shortcut already exists' });
-    const created = await queryOne(
-      `INSERT INTO canned_responses (shortcut, title, content) VALUES ($1, $2, $3) RETURNING *`,
-      [body.shortcut, body.title, body.content],
-    );
-    await audit(req, { action: 'canned.create', targetType: 'canned_response', targetId: created?.id as string });
+    const created = await prisma.canned_responses.create({
+      data: { shortcut: body.shortcut, title: body.title, content: body.content },
+    });
+    await audit(req, { action: 'canned.create', targetType: 'canned_response', targetId: created.id });
     return reply.code(201).send({ item: created });
   });
 
@@ -39,11 +38,15 @@ export async function cannedRoutes(app: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     const body = parseBody(cannedBody, req.body, reply);
     if (!body) return;
-    const updated = await queryOne(
-      `UPDATE canned_responses SET shortcut = $1, title = $2, content = $3, updated_at = now()
-        WHERE id = $4 RETURNING *`,
-      [body.shortcut, body.title, body.content, id],
-    );
+    const updated = await prisma.canned_responses
+      .update({
+        where: { id },
+        data: { shortcut: body.shortcut, title: body.title, content: body.content, updated_at: new Date() },
+      })
+      .catch((e: unknown) => {
+        if ((e as { code?: string }).code === 'P2025') return null;
+        throw e;
+      });
     if (!updated) return reply.code(404).send({ error: 'Not found' });
     await audit(req, { action: 'canned.update', targetType: 'canned_response', targetId: id });
     return reply.send({ item: updated });
@@ -51,8 +54,8 @@ export async function cannedRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete('/api/canned-responses/:id', { preHandler: requireAdmin }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const deleted = await queryOne('DELETE FROM canned_responses WHERE id = $1 RETURNING id', [id]);
-    if (!deleted) return reply.code(404).send({ error: 'Not found' });
+    const deleted = await prisma.canned_responses.deleteMany({ where: { id } });
+    if (deleted.count === 0) return reply.code(404).send({ error: 'Not found' });
     await audit(req, { action: 'canned.delete', targetType: 'canned_response', targetId: id });
     return reply.send({ ok: true });
   });

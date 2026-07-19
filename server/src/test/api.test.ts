@@ -37,7 +37,7 @@ process.env.DATABASE_URL ??= 'postgres://jetchat:jetchat@localhost:55432/jetchat
 
 const { buildServer } = await import('../index.js');
 const { runMigrations } = await import('../db/migrate.js');
-const { pool } = await import('../db/pool.js');
+const { prisma } = await import('../db/prisma.js');
 const { topRelevant, keywordAnswer } = await import('../services/ai/knowledge.js');
 
 type App = Awaited<ReturnType<typeof buildServer>>;
@@ -46,7 +46,7 @@ let app: App;
 before(async () => {
   await runMigrations();
   // Fresh data; keep the singleton settings rows.
-  await pool.query(`TRUNCATE agents, conversations, messages, refresh_tokens,
+  await prisma.$executeRawUnsafe(`TRUNCATE agents, conversations, messages, refresh_tokens,
     push_subscriptions, attachments, canned_responses, conversation_notes,
     triggers, trigger_actions, trigger_events, trigger_behaviors,
     trigger_platforms, ai_usage, audit_log RESTART IDENTITY CASCADE`);
@@ -56,7 +56,7 @@ before(async () => {
 
 after(async () => {
   await app.close();
-  await pool.end();
+  await prisma.$disconnect();
 });
 
 // ── Visitor scope (Phase 1 vulnerability regression) ─────────────────────────
