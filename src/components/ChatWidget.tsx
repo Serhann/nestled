@@ -91,6 +91,17 @@ function loadStoredConversation(): StoredConversation | null {
   }
 }
 
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** A header background gradient derived from the configured primary color. */
+function headerGradient(color: string): string {
+  return `linear-gradient(135deg, ${color} 0%, color-mix(in srgb, ${color} 75%, #000) 100%)`;
+}
+
 export function ChatWidget() {
   const [config, setConfig] = useState<WidgetConfig | null>(null);
   const [open, setOpen] = useState(false);
@@ -461,16 +472,16 @@ export function ChatWidget() {
       <button
         onClick={handleOpen}
         aria-label={strings.headerDefaultTitle}
-        className={`${launcherClass} z-[2147483000] w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white transition-transform hover:scale-105`}
+        className={`${launcherClass} group z-[2147483000] w-16 h-16 rounded-full shadow-xl flex items-center justify-center text-white transition-transform duration-200 hover:scale-110 active:scale-95`}
         style={{ backgroundColor: primaryColor }}
       >
         {config?.widget_avatar_url ? (
           <img src={config.widget_avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
         ) : (
-          <MessageCircle className="w-6 h-6" />
+          <MessageCircle className="w-7 h-7 transition-transform duration-200 group-hover:rotate-[8deg]" />
         )}
         {unread > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 px-1 flex items-center justify-center">
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[22px] h-[22px] px-1 flex items-center justify-center ring-2 ring-white">
             {unread}
           </span>
         )}
@@ -488,27 +499,31 @@ export function ChatWidget() {
       } sm:w-[384px] sm:h-[640px] sm:max-h-[calc(100dvh-2rem)] bg-white shadow-2xl sm:rounded-2xl flex flex-col overflow-hidden`;
   return (
     <div className={panelClass}>
-      <div className="px-4 py-3 text-white flex items-center justify-between shrink-0" style={{ backgroundColor: primaryColor }}>
+      <div className="px-4 py-4 text-white flex items-center justify-between shrink-0" style={{ background: headerGradient(primaryColor) }}>
         <div className="flex items-center gap-3 min-w-0">
-          {config?.widget_avatar_url && (
-            <img src={config.widget_avatar_url} alt="" className="w-8 h-8 rounded-full object-cover border-2 border-white/70" />
+          {config?.widget_avatar_url ? (
+            <img src={config.widget_avatar_url} alt="" className="w-10 h-10 rounded-full object-cover ring-2 ring-white/40" />
+          ) : (
+            <span className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+              <MessageCircle className="w-5 h-5" />
+            </span>
           )}
           <div className="min-w-0">
-            <h3 className="font-semibold truncate">{config?.widget_title || strings.headerDefaultTitle}</h3>
-            <div className="flex items-center gap-1.5 text-xs text-white/90">
-              <span className={`w-2 h-2 rounded-full ${agentOnline ? 'bg-green-400' : 'bg-gray-300'}`} />
+            <h3 className="font-bold truncate leading-tight">{config?.widget_title || strings.headerDefaultTitle}</h3>
+            <div className="flex items-center gap-1.5 text-xs text-white/90 mt-0.5">
+              <span className={`w-2 h-2 rounded-full ${agentOnline ? 'bg-green-400 ring-2 ring-green-400/30' : 'bg-white/40'}`} />
               {agentOnline ? strings.onlineStatus : strings.offlineStatus}
             </div>
           </div>
         </div>
-        <div className="flex gap-1">
-          <button onClick={toggleMute} aria-label={muted ? strings.muteOff : strings.muteOn} className="hover:bg-white/20 p-1.5 rounded">
+        <div className="flex gap-0.5">
+          <button onClick={toggleMute} aria-label={muted ? strings.muteOff : strings.muteOn} className="hover:bg-white/20 p-2 rounded-full transition">
             {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
-          <button onClick={() => setMinimized((m) => !m)} aria-label={strings.minimize} className="hover:bg-white/20 p-1.5 rounded">
+          <button onClick={() => setMinimized((m) => !m)} aria-label={strings.minimize} className="hover:bg-white/20 p-2 rounded-full transition">
             <Minimize2 className="w-4 h-4" />
           </button>
-          <button onClick={handleClose} aria-label={strings.close} className="hover:bg-white/20 p-1.5 rounded">
+          <button onClick={handleClose} aria-label={strings.close} className="hover:bg-white/20 p-2 rounded-full transition">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -532,14 +547,14 @@ export function ChatWidget() {
                       value={preChat[field.name] || ''}
                       onChange={(e) => setPreChat((p) => ({ ...p, [field.name]: e.target.value }))}
                       placeholder={field.placeholder}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-2xl text-sm outline-none transition focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-400"
                     />
                     {preChatErrors[field.name] && (
                       <p className="text-xs text-red-500 mt-1">{preChatErrors[field.name]}</p>
                     )}
                   </div>
                 ))}
-                <button type="submit" className="w-full py-2 text-white rounded-lg font-medium hover:opacity-90" style={{ backgroundColor: primaryColor }}>
+                <button type="submit" className="w-full py-3 text-white rounded-2xl font-semibold shadow-md hover:opacity-90 active:scale-[0.98] transition" style={{ backgroundColor: primaryColor }}>
                   {strings.preChatStart}
                 </button>
                 <button
@@ -548,7 +563,7 @@ export function ChatWidget() {
                     setShowPreChat(false);
                     void ensureConversation();
                   }}
-                  className="w-full py-2 text-gray-600 rounded-lg text-sm hover:bg-gray-100"
+                  className="w-full py-2.5 text-gray-500 rounded-2xl text-sm font-medium hover:bg-gray-100 transition"
                 >
                   {strings.preChatSkip}
                 </button>
@@ -569,7 +584,7 @@ export function ChatWidget() {
                         value={leaveEmail}
                         onChange={(e) => setLeaveEmail(e.target.value)}
                         placeholder={strings.emailPlaceholder}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-2xl text-sm outline-none transition focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-400"
                       />
                       {leaveErrors.email && <p className="text-xs text-red-500 mt-1">{leaveErrors.email}</p>}
                     </div>
@@ -579,11 +594,11 @@ export function ChatWidget() {
                         onChange={(e) => setLeaveMessage(e.target.value)}
                         placeholder={strings.messagePlaceholder}
                         rows={4}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-2xl text-sm outline-none transition focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-400"
                       />
                       {leaveErrors.message && <p className="text-xs text-red-500 mt-1">{leaveErrors.message}</p>}
                     </div>
-                    <button type="submit" className="w-full py-2 text-white rounded-lg font-medium hover:opacity-90" style={{ backgroundColor: primaryColor }}>
+                    <button type="submit" className="w-full py-3 text-white rounded-2xl font-semibold shadow-md hover:opacity-90 active:scale-[0.98] transition" style={{ backgroundColor: primaryColor }}>
                       {strings.leaveMessageSubmit}
                     </button>
                   </form>
@@ -594,13 +609,34 @@ export function ChatWidget() {
             <>
               <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
                 {messages.length === 0 && (
-                  <div className="bg-white p-3 rounded-lg shadow-sm text-sm text-gray-700">
-                    {config?.welcome_message || strings.welcomeFallback}
+                  <div className="pt-3 pb-1">
+                    <div className="flex flex-col items-center text-center mb-4">
+                      {config?.widget_avatar_url ? (
+                        <img src={config.widget_avatar_url} alt="" className="w-16 h-16 rounded-full object-cover shadow-md" />
+                      ) : (
+                        <span
+                          className="w-16 h-16 rounded-full flex items-center justify-center text-white shadow-md"
+                          style={{ background: headerGradient(primaryColor) }}
+                        >
+                          <MessageCircle className="w-7 h-7" />
+                        </span>
+                      )}
+                      <p className="mt-3 text-base font-bold text-gray-800">Hi there 👋</p>
+                      <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+                        <span className={`w-1.5 h-1.5 rounded-full ${agentOnline ? 'bg-green-500' : 'bg-gray-300'}`} />
+                        {agentOnline ? strings.onlineStatus : strings.offlineStatus}
+                      </p>
+                    </div>
+                    <div className="flex justify-start">
+                      <div className="max-w-[85%] bg-white shadow-sm rounded-3xl rounded-bl-md px-4 py-3 text-sm text-gray-700">
+                        {config?.welcome_message || strings.welcomeFallback}
+                      </div>
+                    </div>
                   </div>
                 )}
                 {triggerMessage && (
                   <div className="flex justify-start">
-                    <div className="max-w-[78%] bg-white shadow-sm rounded-lg px-3 py-2 text-sm text-gray-800">
+                    <div className="max-w-[85%] bg-white shadow-sm rounded-3xl rounded-bl-md px-4 py-3 text-sm text-gray-800">
                       <p className="whitespace-pre-wrap break-words">{triggerMessage}</p>
                     </div>
                   </div>
@@ -610,11 +646,11 @@ export function ChatWidget() {
                 ))}
                 {agentTyping && (
                   <div className="flex justify-start">
-                    <div className="bg-white shadow-sm rounded-lg px-4 py-3">
+                    <div className="bg-white shadow-sm rounded-3xl rounded-bl-md px-4 py-3.5">
                       <div className="flex gap-1">
                         <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }} />
+                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }} />
                       </div>
                     </div>
                   </div>
@@ -626,11 +662,11 @@ export function ChatWidget() {
                 <div className="px-4 py-1.5 text-xs text-red-600 bg-red-50 border-t border-red-100">{attachError}</div>
               )}
 
-              <form onSubmit={handleSend} className="p-3 bg-white border-t flex items-center gap-2">
+              <form onSubmit={handleSend} className="p-3 bg-white border-t border-gray-100 flex items-center gap-2">
                 <input ref={fileInputRef} type="file" onChange={handleFile} className="hidden"
                   accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain" />
                 <button type="button" onClick={() => fileInputRef.current?.click()} aria-label={strings.attach}
-                  className="p-2 text-gray-500 hover:text-gray-700 rounded" disabled={sending}>
+                  className="p-2.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition shrink-0" disabled={sending}>
                   <Paperclip className="w-5 h-5" />
                 </button>
                 <input
@@ -638,10 +674,10 @@ export function ChatWidget() {
                   value={input}
                   onChange={(e) => handleInputChange(e.target.value)}
                   placeholder={strings.inputPlaceholder}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-full text-sm outline-none transition focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-400"
                 />
                 <button type="submit" disabled={!input.trim() || sending} aria-label={strings.send}
-                  className="p-2 text-white rounded-lg disabled:opacity-50" style={{ backgroundColor: primaryColor }}>
+                  className="w-11 h-11 shrink-0 flex items-center justify-center text-white rounded-full shadow-md transition active:scale-95 disabled:opacity-40 disabled:shadow-none" style={{ backgroundColor: primaryColor }}>
                   <Send className="w-5 h-5" />
                 </button>
               </form>
@@ -657,9 +693,11 @@ function MessageBubble({ message, primaryColor, token }: { message: WidgetMessag
   const isVisitor = message.sender_type === 'visitor';
   const attachment = message.metadata?.attachment;
   return (
-    <div className={`flex ${isVisitor ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex flex-col ${isVisitor ? 'items-end' : 'items-start'}`}>
       <div
-        className={`max-w-[78%] rounded-lg px-3 py-2 text-sm ${isVisitor ? 'text-white' : 'bg-white shadow-sm text-gray-800'}`}
+        className={`max-w-[82%] px-3.5 py-2.5 text-sm shadow-sm ${
+          isVisitor ? 'text-white rounded-3xl rounded-br-md' : 'bg-white text-gray-800 rounded-3xl rounded-bl-md'
+        }`}
         style={isVisitor ? { backgroundColor: primaryColor } : undefined}
       >
         {message.sender_type === 'ai' && <div className="text-[11px] text-gray-500 mb-1">🤖 {strings.aiLabel}</div>}
@@ -693,6 +731,7 @@ function MessageBubble({ message, primaryColor, token }: { message: WidgetMessag
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
         )}
       </div>
+      <span className="text-[10px] text-gray-400 mt-1 px-2">{fmtTime(message.created_at)}</span>
     </div>
   );
 }

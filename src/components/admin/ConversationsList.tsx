@@ -47,13 +47,13 @@ export function ConversationsList({ selectedId, onSelect, reloadNonce, unread, p
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex gap-1 p-2 border-b border-gray-100">
+      <div className="flex gap-1.5 p-2.5 border-b border-gray-100">
         {FILTERS.map((f) => (
           <button
             key={f.id}
             onClick={() => setFilter(f.id)}
-            className={`px-3 py-1 rounded-full text-sm ${
-              filter === f.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
+            className={`px-3 py-1.5 rounded-full text-sm font-semibold transition ${
+              filter === f.id ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/25' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
             }`}
           >
             {f.label}
@@ -61,10 +61,13 @@ export function ConversationsList({ selectedId, onSelect, reloadNonce, unread, p
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {loading && <div className="p-6 text-center text-gray-400 text-sm">Loading…</div>}
         {!loading && conversations.length === 0 && (
-          <div className="p-6 text-center text-gray-400 text-sm">No conversations yet</div>
+          <div className="p-10 text-center text-gray-400 text-sm">
+            <div className="mx-auto mb-2 w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center text-xl">💬</div>
+            No conversations yet
+          </div>
         )}
         {conversations.map((c) => {
           const name = c.visitor_name || c.visitor_email || 'Anonymous visitor';
@@ -77,12 +80,12 @@ export function ConversationsList({ selectedId, onSelect, reloadNonce, unread, p
             <button
               key={c.id}
               onClick={() => onSelect(c.id)}
-              className={`w-full text-left px-4 py-3 border-b border-gray-50 flex gap-3 items-start ${
-                selectedId === c.id ? 'bg-blue-50' : 'hover:bg-gray-50'
+              className={`w-full text-left px-3 py-2.5 rounded-2xl flex gap-3 items-start transition ${
+                selectedId === c.id ? 'bg-blue-50 ring-1 ring-blue-100' : 'hover:bg-gray-100'
               }`}
             >
               <div className="relative shrink-0 mt-0.5">
-                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white flex items-center justify-center text-sm font-semibold">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white flex items-center justify-center text-sm font-bold shadow-sm">
                   {name.charAt(0).toUpperCase()}
                 </div>
                 {onlineConvIds.has(c.id) && (

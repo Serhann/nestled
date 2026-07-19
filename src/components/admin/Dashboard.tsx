@@ -61,10 +61,10 @@ function StatCard({
     violet: 'bg-violet-100 text-violet-700',
   };
   return (
-    <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex items-center gap-3">
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${tones[tone]}`}>{icon}</div>
+    <div className="bg-white rounded-3xl p-4 shadow-sm border border-gray-100/80 flex items-center gap-3 hover:shadow-md hover:-translate-y-0.5 transition">
+      <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${tones[tone]}`}>{icon}</div>
       <div className="min-w-0">
-        <p className="text-2xl font-bold text-gray-800 leading-tight tabular-nums">{value}</p>
+        <p className="text-2xl font-extrabold text-gray-800 leading-tight tabular-nums">{value}</p>
         <p className="text-xs text-gray-500 truncate">{label}</p>
       </div>
     </div>
@@ -103,19 +103,40 @@ export function Dashboard({ agentName, role, presence, reloadNonce, onOpenConver
     .slice(0, 6);
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-gray-50">
-      <div>
-        <h1 className="text-xl font-bold text-gray-800">Welcome back, {agentName.split(' ')[0]}</h1>
-        <p className="text-sm text-gray-500">Here's what's happening across your inbox.</p>
+    <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-[#f5f2ee]">
+      {/* Greeting hero */}
+      <div
+        className="relative overflow-hidden rounded-3xl p-6 sm:p-7 text-white shadow-md"
+        style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 45%, #0ea5e9 100%)' }}
+      >
+        <div className="absolute -right-8 -top-10 w-44 h-44 rounded-full bg-white/10" />
+        <div className="absolute -right-16 top-10 w-40 h-40 rounded-full bg-white/10" />
+        <div className="relative">
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+            Hey {agentName.split(' ')[0]} 👋
+          </h1>
+          <p className="text-white/85 text-sm mt-1">Here's what's happening across your inbox today.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <span className="inline-flex items-center gap-1.5 bg-white/15 backdrop-blur rounded-full px-3 py-1 text-sm font-semibold">
+              <Inbox className="w-4 h-4" /> {open} open
+            </span>
+            <span className="inline-flex items-center gap-1.5 bg-white/15 backdrop-blur rounded-full px-3 py-1 text-sm font-semibold">
+              <Users className="w-4 h-4" /> {visitorsOnline} online now
+            </span>
+            {needsHuman > 0 && (
+              <span className="inline-flex items-center gap-1.5 bg-amber-400/90 text-amber-950 rounded-full px-3 py-1 text-sm font-semibold">
+                <AlertTriangle className="w-4 h-4" /> {needsHuman} need a human
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={<Inbox className="w-5 h-5" />} label="Open conversations" value={open} tone="blue" />
-        <StatCard icon={<AlertTriangle className="w-5 h-5" />} label="Needs a human" value={needsHuman} tone="amber" />
-        <StatCard icon={<Users className="w-5 h-5" />} label="Visitors online now" value={visitorsOnline} tone="green" />
-        <StatCard icon={<CheckCircle2 className="w-5 h-5" />} label="Resolved" value={resolved} tone="gray" />
-        <StatCard icon={<MessageSquare className="w-5 h-5" />} label="Pending" value={pending} tone="gray" />
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <StatCard icon={<MessageSquare className="w-5 h-5" />} label="Total conversations" value={conversations.length} tone="blue" />
+        <StatCard icon={<Inbox className="w-5 h-5" />} label="Pending" value={pending} tone="amber" />
+        <StatCard icon={<CheckCircle2 className="w-5 h-5" />} label="Resolved" value={resolved} tone="green" />
         {role === 'admin' && (
           <StatCard icon={<UserCheck className="w-5 h-5" />} label="Agents online" value={`${agentsOnline}/${agents.length}`} tone="green" />
         )}
@@ -134,9 +155,9 @@ export function Dashboard({ agentName, role, presence, reloadNonce, onOpenConver
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Recent conversations */}
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100">
-          <div className="flex items-center px-4 py-3 border-b border-gray-100">
-            <h2 className="font-semibold text-gray-800">Recent conversations</h2>
+        <div className="lg:col-span-2 bg-white rounded-3xl shadow-sm border border-gray-100/80 overflow-hidden">
+          <div className="flex items-center px-5 py-3.5 border-b border-gray-100">
+            <h2 className="font-bold text-gray-800">Recent conversations</h2>
             <button onClick={() => onNavigate('chats')} className="ml-auto text-sm text-blue-600 hover:underline">
               View all
             </button>
@@ -176,9 +197,9 @@ export function Dashboard({ agentName, role, presence, reloadNonce, onOpenConver
 
         {/* Quick management (admin) */}
         {role === 'admin' && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-            <div className="px-4 py-3 border-b border-gray-100">
-              <h2 className="font-semibold text-gray-800">Manage</h2>
+          <div className="bg-white rounded-3xl shadow-sm border border-gray-100/80 overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-gray-100">
+              <h2 className="font-bold text-gray-800">Manage</h2>
             </div>
             <ul className="divide-y divide-gray-50">
               {MANAGE_LINKS.map((l) => (

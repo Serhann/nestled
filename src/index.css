@@ -1,3 +1,17 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  html {
+    /* Friendly, rounded system font stack (SF Rounded on Apple, graceful
+       fallbacks elsewhere). Reinforces the warm & friendly direction. */
+    font-family: ui-rounded, 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', 'Quicksand',
+      'Segoe UI', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* NOTE: no global body background — the widget page (/chat) must stay fully
+     transparent so only the round launcher shows through the embed iframe. Each
+     app surface paints its own canvas (admin shell, landing, demo host). */
+}

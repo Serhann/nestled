@@ -272,12 +272,12 @@ export function AdminPanel() {
   const showMobileHeader = !(section === 'chats' && selectedId);
 
   return (
-    <div className="flex h-[100dvh] bg-gray-100">
+    <div className="flex h-[100dvh] bg-[#f5f2ee]">
       {/* ── Desktop sidebar ─────────────────────────────────────────────── */}
-      <aside className="hidden md:flex md:flex-col w-60 bg-white border-r border-gray-200 shrink-0">
-        <div className="flex items-center gap-2.5 px-4 h-16 border-b border-gray-100">
-          <img src="/icon-192.png" alt="" className="w-8 h-8 rounded-lg" />
-          <span className="font-bold text-gray-800 text-lg">JetChat</span>
+      <aside className="hidden md:flex md:flex-col w-64 bg-white border-r border-gray-200/70 shrink-0">
+        <div className="flex items-center gap-2.5 px-5 h-16">
+          <img src="/icon-192.png" alt="" className="w-9 h-9 rounded-2xl shadow-sm" />
+          <span className="font-extrabold text-gray-800 text-lg tracking-tight">JetChat</span>
         </div>
         <nav className="flex-1 overflow-y-auto py-3">
           <SidebarGroup
@@ -288,7 +288,7 @@ export function AdminPanel() {
           />
           {visibleNav.some((n) => n.group === 'manage') && (
             <>
-              <p className="px-4 pt-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Manage</p>
+              <p className="px-6 pt-5 pb-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">Manage</p>
               <SidebarGroup
                 items={visibleNav.filter((n) => n.group === 'manage')}
                 section={section}
@@ -302,29 +302,29 @@ export function AdminPanel() {
         <div className="border-t border-gray-100 p-3 space-y-1">
           <button
             onClick={() => go('account')}
-            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left ${section === 'account' ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition ${section === 'account' ? 'bg-blue-50' : 'hover:bg-gray-100'}`}
           >
-            <span className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white flex items-center justify-center text-sm font-semibold shrink-0">
+            <span className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white flex items-center justify-center text-sm font-bold shrink-0 shadow-sm">
               {agent.name.charAt(0).toUpperCase()}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-medium text-gray-800 truncate">{agent.name}</span>
+              <span className="block text-sm font-semibold text-gray-800 truncate">{agent.name}</span>
               <span className="flex items-center gap-1 text-xs text-gray-500">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> Online · {agent.role}
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 ring-2 ring-green-500/20" /> Online · {agent.role}
               </span>
             </span>
           </button>
           <button
             onClick={togglePush}
             disabled={!isPushSupported()}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50 transition"
           >
             {pushState === 'on' ? <Bell className="w-4 h-4 text-blue-600" /> : <BellOff className="w-4 h-4" />}
             {pushState === 'on' ? 'Notifications on' : 'Enable notifications'}
           </button>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm text-red-600 hover:bg-red-50"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left text-sm font-medium text-red-600 hover:bg-red-50 transition"
           >
             <LogOut className="w-4 h-4" /> Sign out
           </button>
@@ -336,7 +336,7 @@ export function AdminPanel() {
         {/* Mobile top bar */}
         {showMobileHeader && (
           <header className="md:hidden flex items-center gap-3 px-4 h-14 bg-white border-b border-gray-200 shrink-0">
-            <img src="/icon-192.png" alt="" className="w-8 h-8 rounded-lg" />
+            <img src="/icon-192.png" alt="" className="w-8 h-8 rounded-xl shadow-sm" />
             <h1 className="font-bold text-gray-800">{sectionTitle}</h1>
             <span className="ml-auto text-sm text-gray-500 truncate max-w-[40%]">{agent.name}</span>
           </header>
@@ -354,7 +354,7 @@ export function AdminPanel() {
         <main className="flex-1 flex flex-col overflow-hidden">{renderContent()}</main>
 
         {/* Mobile bottom navigation */}
-        <nav className="md:hidden flex shrink-0 bg-white border-t border-gray-200">
+        <nav className="md:hidden flex shrink-0 bg-white border-t border-gray-200/70 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]">
           {(
             [
               { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
@@ -362,23 +362,30 @@ export function AdminPanel() {
               { id: 'visitors', label: 'Visitors', icon: Users },
               { id: 'account', label: 'Account', icon: User },
             ] as const
-          ).map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => go(id)}
-              className={`relative flex-1 flex flex-col items-center gap-0.5 py-2 text-xs ${
-                section === id ? 'text-blue-600' : 'text-gray-500'
-              }`}
-            >
-              <Icon className="w-5 h-5" />
-              {label}
-              {id === 'chats' && totalUnread > 0 && (
-                <span className="absolute top-1 right-1/2 translate-x-4 bg-red-500 text-white text-[10px] rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
-                  {totalUnread}
+          ).map(({ id, label, icon: Icon }) => {
+            const active = section === id;
+            return (
+              <button
+                key={id}
+                onClick={() => go(id)}
+                className="relative flex-1 flex flex-col items-center gap-1 py-1 text-[11px] font-medium"
+              >
+                <span
+                  className={`relative flex items-center justify-center w-12 h-7 rounded-full transition ${
+                    active ? 'bg-blue-100 text-blue-600' : 'text-gray-400'
+                  }`}
+                >
+                  <Icon className="w-5 h-5" />
+                  {id === 'chats' && totalUnread > 0 && (
+                    <span className="absolute -top-0.5 right-1.5 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
+                      {totalUnread}
+                    </span>
+                  )}
                 </span>
-              )}
-            </button>
-          ))}
+                <span className={active ? 'text-blue-600 font-semibold' : 'text-gray-500'}>{label}</span>
+              </button>
+            );
+          })}
         </nav>
       </div>
 
@@ -400,19 +407,21 @@ function SidebarGroup({
   unreadTotal: number;
 }) {
   return (
-    <div className="px-2 space-y-0.5">
+    <div className="px-3 space-y-1">
       {items.map(({ id, label, icon: Icon }) => (
         <button
           key={id}
           onClick={() => onGo(id)}
-          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium ${
-            section === id ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-semibold transition ${
+            section === id
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-600/25'
+              : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
           }`}
         >
           <Icon className="w-5 h-5 shrink-0" />
           <span className="flex-1 text-left">{label}</span>
           {id === 'chats' && unreadTotal > 0 && (
-            <span className="bg-red-500 text-white text-[10px] rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
+            <span className={`text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center ${section === id ? 'bg-white text-blue-600' : 'bg-red-500 text-white'}`}>
               {unreadTotal}
             </span>
           )}

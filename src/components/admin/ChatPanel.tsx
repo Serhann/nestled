@@ -249,7 +249,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
             <div className="relative">
               <button
                 onClick={() => setShowAssign((s) => !s)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm bg-gray-100 text-gray-700"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold bg-gray-100 text-gray-600 hover:bg-gray-200 transition"
               >
                 <UserPlus className="w-4 h-4" />
                 {assignedId === meId ? 'You' : assignedName ?? 'Assign'}
@@ -280,8 +280,8 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
             </div>
             <button
               onClick={toggleResolved}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-medium ${
-                conversation?.status === 'resolved' ? 'bg-gray-100 text-gray-600' : 'bg-green-50 text-green-700'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition ${
+                conversation?.status === 'resolved' ? 'bg-gray-100 text-gray-600 hover:bg-gray-200' : 'bg-green-100 text-green-700 hover:bg-green-200'
               }`}
             >
               {conversation?.status === 'resolved' ? <RotateCcw className="w-4 h-4" /> : <CheckCircle className="w-4 h-4" />}
@@ -289,7 +289,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
             </button>
             <button
               onClick={() => setShowInfo((s) => !s)}
-              className={`p-1.5 rounded-lg ${showInfo ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
+              className={`p-2 rounded-full transition ${showInfo ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
               title="Visitor details"
               aria-label="Visitor details"
             >
@@ -337,18 +337,18 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
               ))}
             </div>
           )}
-          <div className="flex items-center gap-2 px-3 pt-2">
-            <button onClick={() => setMode('reply')} className={`text-xs px-2 py-1 rounded ${mode === 'reply' ? 'bg-blue-100 text-blue-700' : 'text-gray-500'}`}>
+          <div className="flex items-center gap-1.5 px-3 pt-2.5">
+            <button onClick={() => setMode('reply')} className={`text-xs font-semibold px-3 py-1 rounded-full transition ${mode === 'reply' ? 'bg-blue-100 text-blue-700' : 'text-gray-400 hover:bg-gray-100'}`}>
               Reply
             </button>
-            <button onClick={() => setMode('note')} className={`text-xs px-2 py-1 rounded flex items-center gap-1 ${mode === 'note' ? 'bg-amber-100 text-amber-700' : 'text-gray-500'}`}>
+            <button onClick={() => setMode('note')} className={`text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1 transition ${mode === 'note' ? 'bg-amber-100 text-amber-700' : 'text-gray-400 hover:bg-gray-100'}`}>
               <StickyNote className="w-3 h-3" /> Note
             </button>
           </div>
-          <form onSubmit={handleSend} className="p-3 pt-1.5 flex items-center gap-2">
+          <form onSubmit={handleSend} className="p-3 pt-2 flex items-center gap-2">
             <input ref={fileRef} type="file" onChange={handleFile} className="hidden"
               accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain" />
-            <button type="button" onClick={() => fileRef.current?.click()} className="p-2 text-gray-500 hover:text-gray-700" disabled={sending || mode === 'note'} aria-label="Attach">
+            <button type="button" onClick={() => fileRef.current?.click()} className="p-2.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition shrink-0" disabled={sending || mode === 'note'} aria-label="Attach">
               <Paperclip className="w-5 h-5" />
             </button>
             <input
@@ -356,11 +356,11 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
               value={input}
               onChange={(e) => handleInput(e.target.value)}
               placeholder={mode === 'note' ? 'Add an internal note…' : 'Type a reply…  (/ for canned)'}
-              className={`flex-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${
-                mode === 'note' ? 'bg-amber-50 border-amber-200 focus:ring-amber-400' : 'border-gray-300 focus:ring-blue-500'
+              className={`flex-1 px-4 py-2.5 border rounded-full text-sm outline-none transition focus:ring-4 ${
+                mode === 'note' ? 'bg-amber-50 border-amber-200 focus:ring-amber-400/20 focus:border-amber-400' : 'bg-gray-50 border-gray-200 focus:bg-white focus:ring-blue-500/15 focus:border-blue-400'
               }`}
             />
-            <button type="submit" disabled={!input.trim() || sending} className={`p-2 text-white rounded-lg disabled:opacity-50 ${mode === 'note' ? 'bg-amber-500' : 'bg-blue-600'}`} aria-label="Send">
+            <button type="submit" disabled={!input.trim() || sending} className={`w-11 h-11 shrink-0 flex items-center justify-center text-white rounded-full shadow-md transition active:scale-95 disabled:opacity-40 disabled:shadow-none ${mode === 'note' ? 'bg-amber-500 shadow-amber-500/25' : 'bg-blue-600 shadow-blue-600/25 hover:bg-blue-700'}`} aria-label="Send">
               <Send className="w-5 h-5" />
             </button>
           </form>
@@ -573,11 +573,15 @@ function Bubble({ m }: { m: AdminMessage }) {
   return (
     <div className={`flex ${isAgent ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-          isAgent ? 'bg-blue-600 text-white' : m.sender_type === 'ai' ? 'bg-violet-50 text-gray-800' : 'bg-white shadow-sm text-gray-800'
+        className={`max-w-[80%] px-3.5 py-2.5 text-sm shadow-sm ${
+          isAgent
+            ? 'bg-blue-600 text-white rounded-3xl rounded-br-md'
+            : m.sender_type === 'ai'
+              ? 'bg-violet-50 text-gray-800 rounded-3xl rounded-bl-md ring-1 ring-violet-100'
+              : 'bg-white text-gray-800 rounded-3xl rounded-bl-md'
         }`}
       >
-        {m.sender_type === 'ai' && <div className="text-[11px] text-violet-500 mb-1">🤖 AI Assistant</div>}
+        {m.sender_type === 'ai' && <div className="text-[11px] font-semibold text-violet-500 mb-1">🤖 AI Assistant</div>}
         {m.sender_type === 'visitor' && <div className="text-[11px] text-gray-400 mb-1">Visitor</div>}
         {attachment ? (
           attachment.kind === 'image' ? (

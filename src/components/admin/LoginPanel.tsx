@@ -31,16 +31,19 @@ export function LoginPanel({ onLogin }: LoginPanelProps) {
     }
   };
 
+  const inputClass =
+    'w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-400 outline-none transition';
+
   return (
-    <div className="min-h-[100dvh] bg-gradient-to-br from-slate-900 to-slate-700 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-7">
-        <div className="flex items-center justify-center mb-6">
-          <img src="/icon-192.png" alt="JetChat" className="w-14 h-14 rounded-2xl" />
+    <div className="min-h-[100dvh] bg-gradient-to-br from-blue-500 via-blue-600 to-cyan-500 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl shadow-xl w-full max-w-sm p-8 animate-pop-in">
+        <div className="flex items-center justify-center mb-5">
+          <img src="/icon-192.png" alt="JetChat" className="w-16 h-16 rounded-3xl shadow-md" />
         </div>
         <h2 className="text-2xl font-bold text-center text-gray-800 mb-1">
-          {mode === 'bootstrap' ? 'Create first admin' : 'JetChat Admin'}
+          {mode === 'bootstrap' ? 'Create first admin' : 'Welcome back 👋'}
         </h2>
-        <p className="text-center text-gray-500 text-sm mb-6">
+        <p className="text-center text-gray-500 text-sm mb-7">
           {mode === 'bootstrap'
             ? 'Set up the first administrator account.'
             : 'Sign in to handle chats and visitors.'}
@@ -54,7 +57,7 @@ export function LoginPanel({ onLogin }: LoginPanelProps) {
               onChange={(e) => setName(e.target.value)}
               placeholder="Full name"
               required
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className={inputClass}
             />
           )}
           <input
@@ -63,7 +66,7 @@ export function LoginPanel({ onLogin }: LoginPanelProps) {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@jetfood.com"
             required
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className={inputClass}
           />
           <input
             type="password"
@@ -72,24 +75,24 @@ export function LoginPanel({ onLogin }: LoginPanelProps) {
             placeholder="Password"
             required
             minLength={8}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className={inputClass}
           />
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2.5 rounded-lg text-sm">
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2.5 rounded-2xl text-sm">
               {error}
             </div>
           )}
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            className="w-full bg-blue-600 text-white py-3 rounded-2xl font-semibold hover:bg-blue-700 active:scale-[0.98] shadow-md shadow-blue-600/25 transition disabled:opacity-50 flex items-center justify-center gap-2"
           >
             <LogIn className="w-4 h-4" />
             {loading ? 'Please wait…' : mode === 'bootstrap' ? 'Create admin' : 'Sign in'}
           </button>
         </form>
 
-        <div className="mt-5 text-center">
+        <div className="mt-6 text-center">
           <button
             onClick={() => {
               setMode(mode === 'bootstrap' ? 'login' : 'bootstrap');

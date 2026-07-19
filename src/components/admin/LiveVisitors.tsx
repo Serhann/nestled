@@ -42,19 +42,27 @@ export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch }: Prop
   };
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="px-4 py-3 border-b border-gray-100 sticky top-0 bg-white">
-        <h2 className="font-semibold text-gray-800">Live visitors</h2>
-        <p className="text-sm text-gray-500">{online.length} online right now</p>
+    <div className="flex-1 overflow-y-auto bg-gray-50">
+      <div className="px-5 py-4 border-b border-gray-100 sticky top-0 bg-white/90 backdrop-blur z-10">
+        <h2 className="font-bold text-gray-800 text-lg">Live visitors</h2>
+        <p className="text-sm text-gray-500 flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-green-500 ring-2 ring-green-500/20" />
+          {online.length} online right now
+        </p>
       </div>
 
-      {online.length === 0 && <div className="p-6 text-center text-gray-400 text-sm">No visitors on the site right now</div>}
+      {online.length === 0 && (
+        <div className="p-12 text-center text-gray-400 text-sm">
+          <div className="mx-auto mb-3 w-14 h-14 rounded-3xl bg-gray-100 flex items-center justify-center text-2xl">👀</div>
+          No visitors on the site right now
+        </div>
+      )}
 
-      <div className="divide-y divide-gray-50">
+      <div className="p-3 space-y-2">
         {online.map((v) => (
-          <div key={v.visitorId}>
+          <div key={v.visitorId} className="bg-white rounded-2xl border border-gray-100/80 shadow-sm overflow-hidden">
             <div className="px-4 py-3 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0">
+              <div className="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0 ring-4 ring-green-500/10">
                 {v.device === 'mobile' ? <Smartphone className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
               </div>
               <div className="min-w-0 flex-1">
@@ -130,11 +138,11 @@ export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch }: Prop
 
       {/* Proactive start-chat sheet */}
       {target && (
-        <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-4" onClick={() => setTarget(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-4" onClick={() => setTarget(null)}>
+          <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-xl animate-pop-in" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-gray-800">Start a chat</h3>
-              <button onClick={() => setTarget(null)} className="text-gray-400"><X className="w-5 h-5" /></button>
+              <h3 className="font-bold text-gray-800 text-lg">Start a chat 👋</h3>
+              <button onClick={() => setTarget(null)} className="text-gray-400 hover:text-gray-600 p-1 -m-1"><X className="w-5 h-5" /></button>
             </div>
             <p className="text-sm text-gray-500 mb-3">
               Send an opening message. The chat opens on the visitor's screen if they're still browsing.
@@ -143,12 +151,12 @@ export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch }: Prop
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 mb-3"
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-400 outline-none transition mb-3"
             />
             <button
               onClick={send}
               disabled={busy || !message.trim()}
-              className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium disabled:opacity-50"
+              className="w-full bg-blue-600 text-white py-3 rounded-2xl font-semibold shadow-md shadow-blue-600/25 hover:bg-blue-700 active:scale-[0.98] transition disabled:opacity-50"
             >
               {busy ? 'Sending…' : 'Send & open chat'}
             </button>
