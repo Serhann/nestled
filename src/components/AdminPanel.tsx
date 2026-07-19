@@ -272,63 +272,47 @@ export function AdminPanel() {
   const showMobileHeader = !(section === 'chats' && selectedId);
 
   return (
-    <div className="flex h-[100dvh] bg-[#f5f2ee]">
-      {/* ── Desktop sidebar ─────────────────────────────────────────────── */}
-      <aside className="hidden md:flex md:flex-col w-64 bg-white border-r border-gray-200/70 shrink-0">
-        <div className="flex items-center gap-2.5 px-5 h-16">
-          <img src="/icon-192.png" alt="" className="w-9 h-9 rounded-2xl shadow-sm" />
-          <span className="font-extrabold text-gray-800 text-lg tracking-tight">JetChat</span>
+    <div className="flex h-[100dvh] bg-canvas">
+      {/* ── Desktop icon rail (Organic design) ──────────────────────────── */}
+      <aside className="hidden md:flex md:flex-col items-center w-[70px] bg-gray-900 shrink-0 py-3 gap-1">
+        <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center mb-3 shadow-md" title="JetChat">
+          <MessageSquare className="w-5 h-5 text-white" />
         </div>
-        <nav className="flex-1 overflow-y-auto py-3">
-          <SidebarGroup
-            items={visibleNav.filter((n) => n.group === 'main')}
-            section={section}
-            onGo={go}
-            unreadTotal={totalUnread}
-          />
-          {visibleNav.some((n) => n.group === 'manage') && (
-            <>
-              <p className="px-6 pt-5 pb-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">Manage</p>
-              <SidebarGroup
-                items={visibleNav.filter((n) => n.group === 'manage')}
-                section={section}
-                onGo={go}
-                unreadTotal={totalUnread}
-              />
-            </>
-          )}
-        </nav>
-        {/* Sidebar footer: identity + push + logout */}
-        <div className="border-t border-gray-100 p-3 space-y-1">
-          <button
-            onClick={() => go('account')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition ${section === 'account' ? 'bg-blue-50' : 'hover:bg-gray-100'}`}
+        {visibleNav
+          .filter((n) => n.group === 'main')
+          .map((n) => (
+            <RailButton key={n.id} item={n} active={section === n.id} onGo={go} badge={n.id === 'chats' ? totalUnread : 0} />
+          ))}
+        {visibleNav.some((n) => n.group === 'manage') && <div className="w-8 h-px bg-white/10 my-2" />}
+        {visibleNav
+          .filter((n) => n.group === 'manage')
+          .map((n) => (
+            <RailButton key={n.id} item={n} active={section === n.id} onGo={go} badge={0} />
+          ))}
+        <div className="flex-1" />
+        <button
+          onClick={togglePush}
+          disabled={!isPushSupported()}
+          title={pushState === 'on' ? 'Notifications on' : 'Enable notifications'}
+          className="w-11 h-11 rounded-2xl flex items-center justify-center text-white/50 hover:bg-white/10 hover:text-white/80 disabled:opacity-40 transition"
+        >
+          {pushState === 'on' ? <Bell className="w-5 h-5 text-blue-400" /> : <BellOff className="w-5 h-5" />}
+        </button>
+        <button
+          onClick={handleLogout}
+          title="Sign out"
+          className="w-11 h-11 rounded-2xl flex items-center justify-center text-white/50 hover:bg-white/10 hover:text-red-300 transition"
+        >
+          <LogOut className="w-5 h-5" />
+        </button>
+        <button onClick={() => go('account')} title={`${agent.name} · ${agent.role}`} className="relative mt-1">
+          <span
+            className={`w-10 h-10 rounded-full bg-green-200 text-green-800 flex items-center justify-center text-sm font-bold ${section === 'account' ? 'ring-2 ring-white' : ''}`}
           >
-            <span className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white flex items-center justify-center text-sm font-bold shrink-0 shadow-sm">
-              {agent.name.charAt(0).toUpperCase()}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold text-gray-800 truncate">{agent.name}</span>
-              <span className="flex items-center gap-1 text-xs text-gray-500">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 ring-2 ring-green-500/20" /> Online · {agent.role}
-              </span>
-            </span>
-          </button>
-          <button
-            onClick={togglePush}
-            disabled={!isPushSupported()}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50 transition"
-          >
-            {pushState === 'on' ? <Bell className="w-4 h-4 text-blue-600" /> : <BellOff className="w-4 h-4" />}
-            {pushState === 'on' ? 'Notifications on' : 'Enable notifications'}
-          </button>
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left text-sm font-medium text-red-600 hover:bg-red-50 transition"
-          >
-            <LogOut className="w-4 h-4" /> Sign out
-          </button>
-        </div>
+            {agent.name.charAt(0).toUpperCase()}
+          </span>
+          <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 border-2 border-gray-900" />
+        </button>
       </aside>
 
       {/* ── Main column ─────────────────────────────────────────────────── */}
@@ -395,39 +379,34 @@ export function AdminPanel() {
   );
 }
 
-function SidebarGroup({
-  items,
-  section,
+function RailButton({
+  item,
+  active,
   onGo,
-  unreadTotal,
+  badge,
 }: {
-  items: NavItem[];
-  section: Section;
+  item: NavItem;
+  active: boolean;
   onGo: (s: Section) => void;
-  unreadTotal: number;
+  badge: number;
 }) {
+  const Icon = item.icon;
   return (
-    <div className="px-3 space-y-1">
-      {items.map(({ id, label, icon: Icon }) => (
-        <button
-          key={id}
-          onClick={() => onGo(id)}
-          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-semibold transition ${
-            section === id
-              ? 'bg-blue-600 text-white shadow-md shadow-blue-600/25'
-              : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
-          }`}
-        >
-          <Icon className="w-5 h-5 shrink-0" />
-          <span className="flex-1 text-left">{label}</span>
-          {id === 'chats' && unreadTotal > 0 && (
-            <span className={`text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center ${section === id ? 'bg-white text-blue-600' : 'bg-red-500 text-white'}`}>
-              {unreadTotal}
-            </span>
-          )}
-        </button>
-      ))}
-    </div>
+    <button
+      onClick={() => onGo(item.id)}
+      title={item.label}
+      aria-label={item.label}
+      className={`relative w-11 h-11 rounded-2xl flex items-center justify-center transition ${
+        active ? 'bg-white/15 text-white' : 'text-white/50 hover:bg-white/10 hover:text-white/80'
+      }`}
+    >
+      <Icon className="w-5 h-5" />
+      {badge > 0 && (
+        <span className="absolute -top-0.5 -right-0.5 bg-blue-500 text-white text-[10px] font-bold rounded-full min-w-[17px] h-[17px] px-1 flex items-center justify-center border-2 border-gray-900">
+          {badge}
+        </span>
+      )}
+    </button>
   );
 }
 

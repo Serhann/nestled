@@ -19,7 +19,10 @@ export type RealtimeEvent =
   | { type: 'message:new'; conversationId: string; message: unknown }
   | { type: 'typing'; conversationId: string; from: 'visitor' | 'agent'; isTyping: boolean }
   | { type: 'presence:list'; visitors: unknown[] }
-  | { type: 'agent:status'; online: boolean };
+  | { type: 'agent:status'; online: boolean }
+  // Sent to a conversation's visitor when an agent claims/joins it, so the widget
+  // can release its "waiting for an agent" hold.
+  | { type: 'agent:joined'; conversationId: string; agentName: string | null };
 
 interface AgentSocketState {
   agentId: string;

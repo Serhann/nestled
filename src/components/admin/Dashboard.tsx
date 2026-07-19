@@ -64,8 +64,8 @@ function StatCard({
     <div className="bg-white rounded-3xl p-4 shadow-sm border border-gray-100/80 flex items-center gap-3 hover:shadow-md hover:-translate-y-0.5 transition">
       <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${tones[tone]}`}>{icon}</div>
       <div className="min-w-0">
-        <p className="text-2xl font-extrabold text-gray-800 leading-tight tabular-nums">{value}</p>
-        <p className="text-xs text-gray-500 truncate">{label}</p>
+        <p className="font-display text-3xl text-gray-800 leading-none tabular-nums">{value}</p>
+        <p className="text-xs text-gray-500 truncate mt-1">{label}</p>
       </div>
     </div>
   );
@@ -103,16 +103,16 @@ export function Dashboard({ agentName, role, presence, reloadNonce, onOpenConver
     .slice(0, 6);
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-[#f5f2ee]">
+    <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 bg-canvas">
       {/* Greeting hero */}
       <div
         className="relative overflow-hidden rounded-3xl p-6 sm:p-7 text-white shadow-md"
-        style={{ background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 45%, #0ea5e9 100%)' }}
+        style={{ background: 'linear-gradient(135deg, #c67139 0%, #b2622d 50%, #8c491a 100%)' }}
       >
         <div className="absolute -right-8 -top-10 w-44 h-44 rounded-full bg-white/10" />
         <div className="absolute -right-16 top-10 w-40 h-40 rounded-full bg-white/10" />
         <div className="relative">
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+          <h1 className="font-display text-3xl sm:text-4xl">
             Hey {agentName.split(' ')[0]} 👋
           </h1>
           <p className="text-white/85 text-sm mt-1">Here's what's happening across your inbox today.</p>

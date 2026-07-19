@@ -27,6 +27,86 @@ interface AIModeSettings {
   ai_response_mode: 'off' | 'first_message' | 'when_no_agent_online' | 'always';
 }
 
+// ── Order-aware quick actions ────────────────────────────────────────────────
+// The widget's order chips post a structured `intent` (+ the visitor's live
+// order). Informational intents ('where', 'status') are answered automatically
+// from the order data — no human needed. Problem intents (a delay, a missing
+// item, a mistake, a refund, "talk to a human") escalate: the conversation is
+// flagged needs_human and every agent is notified. The bot reply text is
+// generated here (server-side, trusted) rather than accepted from the client.
+interface OrderCtx {
+  id?: string;
+  status?: string;
+  eta?: string;
+  restaurant?: string;
+}
+
+const orderCtxSchema = z.object({
+  id: z.string().max(120).optional(),
+  status: z.string().max(120).optional(),
+  eta: z.string().max(120).optional(),
+  restaurant: z.string().max(200).optional(),
+});
+
+const quickActionBody = z.object({
+  intent: z.enum(['where', 'status', 'late', 'change_address', 'missing_item', 'wrong', 'refund', 'human']),
+  order: orderCtxSchema.optional(),
+});
+
+type QuickIntent = z.infer<typeof quickActionBody>['intent'];
+
+const ord = (o: OrderCtx) => (o.id ? `#${o.id}` : 'your order');
+
+const QUICK_INTENTS: Record<
+  QuickIntent,
+  { kind: 'auto' | 'human'; visitor: (o: OrderCtx) => string; reply: (o: OrderCtx) => string }
+> = {
+  where: {
+    kind: 'auto',
+    visitor: (o) => `Where is my order ${ord(o)}?`,
+    reply: (o) =>
+      `Your order ${ord(o)}${o.restaurant ? ` from ${o.restaurant}` : ''} is ${o.status || 'on its way'}` +
+      `${o.eta ? ` — estimated arrival in ${o.eta}` : ''}. I'll let you know the moment it's nearby! 🛵`,
+  },
+  status: {
+    kind: 'auto',
+    visitor: (o) => `What's the status of my order ${ord(o)}?`,
+    reply: (o) =>
+      `Order ${ord(o)} is currently: ${o.status || 'being processed'}` +
+      `${o.eta ? ` (ETA ${o.eta})` : ''}.`,
+  },
+  late: {
+    kind: 'human',
+    visitor: (o) => `My order ${ord(o)} seems late — can someone check?`,
+    reply: () => `Sorry about the wait! I'm connecting you with an agent to check on the delay — please hold on a moment.`,
+  },
+  change_address: {
+    kind: 'human',
+    visitor: (o) => `I need to change the delivery address for order ${ord(o)}.`,
+    reply: () => `Sure — connecting you with an agent to update the delivery address. One moment please.`,
+  },
+  missing_item: {
+    kind: 'human',
+    visitor: (o) => `An item is missing from my order ${ord(o)}.`,
+    reply: () => `I'm sorry about that. Connecting you with an agent to sort out the missing item — please hold on.`,
+  },
+  wrong: {
+    kind: 'human',
+    visitor: (o) => `Something was wrong with my order ${ord(o)}.`,
+    reply: () => `That's not right — connecting you with an agent to help you fix this. One moment please.`,
+  },
+  refund: {
+    kind: 'human',
+    visitor: (o) => `I'd like a refund for order ${ord(o)}.`,
+    reply: () => `I've flagged your refund request — connecting you with an agent to review it. Please hold on a moment.`,
+  },
+  human: {
+    kind: 'human',
+    visitor: (o) => `I'd like to talk to an agent${o.id ? ` about order #${o.id}` : ''}.`,
+    reply: () => `Of course — connecting you with an agent now. Please hold on a moment.`,
+  },
+};
+
 /**
  * Decide whether the AI should reply to this visitor message, then post it.
  * Reply modes:
@@ -209,6 +289,57 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     void maybeAIReply(id);
 
     return reply.code(201).send({ message });
+  });
+
+  // Order-aware quick action (visitor-scoped). Posts the visitor's request and
+  // an instant bot reply; escalates to a human for problem intents.
+  app.post('/api/conversations/:id/quick-action', {
+    preHandler: requireVisitor('id'),
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parseBody(quickActionBody, req.body, reply);
+    if (!body) return;
+
+    const def = QUICK_INTENTS[body.intent];
+    const order: OrderCtx = body.order ?? {};
+
+    const visitorText = def.visitor(order);
+    const visitorMsg = await insertMessage({ conversationId: id, content: visitorText, senderType: 'visitor' });
+    // A resolved conversation re-opens on new visitor activity.
+    void prisma.conversations
+      .updateMany({ where: { id, status: 'resolved' }, data: { status: 'open' } })
+      .catch(() => undefined);
+
+    const botMsg = await insertMessage({
+      conversationId: id,
+      content: def.reply(order),
+      senderType: 'ai',
+      metadata: { quick_action: body.intent, auto: def.kind === 'auto' },
+    });
+
+    if (def.kind === 'human') {
+      // Escalate: flag for a human and notify every agent.
+      const updated = await prisma.conversations.update({
+        where: { id },
+        data: { needs_human: true, status: 'open' },
+        select: { id: true, needs_human: true, status: true },
+      });
+      broadcastToAgents({ type: 'conversation:updated', conversation: updated });
+      await pushToAgents({
+        type: 'message',
+        conversationId: id,
+        title: 'Agent requested',
+        body: visitorText,
+        url: `/admin?conversation=${id}`,
+      });
+    }
+    void notifyNewMessage(id, visitorText, 'visitor');
+
+    return reply.code(201).send({
+      messages: [visitorMsg, botMsg].filter(Boolean),
+      needs_human: def.kind === 'human',
+    });
   });
 
   // Visitor typing indicator (visitor-scoped) → forwarded to agents.

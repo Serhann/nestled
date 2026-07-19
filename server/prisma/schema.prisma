@@ -129,7 +129,7 @@ model public_settings {
   id                         Int      @id @default(1)
   widget_title               String   @default("Chat with us")
   welcome_message            String   @default("Hi! How can we help you today?")
-  primary_color              String   @default("#3B82F6")
+  primary_color              String   @default("#c67139")
   widget_position            String   @default("right") // CHECK (IN ('left','right'))
   widget_avatar_url          String?
   ai_enabled                 Boolean  @default(true)

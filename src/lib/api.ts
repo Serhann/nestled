@@ -120,6 +120,30 @@ export function sendMessage(
   }).then((r) => json<{ message: WidgetMessage }>(r));
 }
 
+export type QuickIntent =
+  | 'where'
+  | 'status'
+  | 'late'
+  | 'change_address'
+  | 'missing_item'
+  | 'wrong'
+  | 'refund'
+  | 'human';
+
+/** Post an order-aware quick action; returns the visitor request + bot reply. */
+export function quickAction(
+  convId: string,
+  token: string,
+  intent: QuickIntent,
+  order?: { id?: string; status?: string; eta?: string; restaurant?: string },
+): Promise<{ messages: WidgetMessage[]; needs_human: boolean }> {
+  return fetch(`${apiBase()}/api/conversations/${convId}/quick-action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ intent, order }),
+  }).then((r) => json<{ messages: WidgetMessage[]; needs_human: boolean }>(r));
+}
+
 export function uploadAttachment(
   convId: string,
   token: string,
@@ -151,6 +175,7 @@ export interface WSHandlers {
   onMessage?: (m: WidgetMessage) => void;
   onTyping?: (isTyping: boolean) => void;
   onAgentStatus?: (online: boolean) => void;
+  onAgentJoined?: (agentName: string | null) => void;
 }
 
 export interface PresenceProactive {
@@ -250,6 +275,7 @@ export function openConversationWS(convId: string, token: string, handlers: WSHa
     if (e.type === 'message:new' && e.message) handlers.onMessage?.(e.message as WidgetMessage);
     else if (e.type === 'typing' && e.from === 'agent') handlers.onTyping?.(Boolean(e.isTyping));
     else if (e.type === 'agent:status') handlers.onAgentStatus?.(Boolean(e.online));
+    else if (e.type === 'agent:joined') handlers.onAgentJoined?.((e.agentName as string | null) ?? null);
   };
   return ws;
 }

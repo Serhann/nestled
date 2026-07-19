@@ -44,7 +44,7 @@ export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch }: Prop
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50">
       <div className="px-5 py-4 border-b border-gray-100 sticky top-0 bg-white/90 backdrop-blur z-10">
-        <h2 className="font-bold text-gray-800 text-lg">Live visitors</h2>
+        <h2 className="font-display text-xl text-gray-800">Live visitors</h2>
         <p className="text-sm text-gray-500 flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-green-500 ring-2 ring-green-500/20" />
           {online.length} online right now

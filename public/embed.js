@@ -67,6 +67,33 @@
   }
   var identity = readIdentity();
 
+  // The visitor's current order context (JetFood-specific). The host site feeds
+  // this so the widget can show order-aware quick actions (track / late / issue
+  // with a delivered order, etc.). Sources: data-order-* attributes / URL params
+  // at load, then live updates via JetChat('order', {...}).
+  function readOrder() {
+    var o = {};
+    var params = new URLSearchParams(window.location.search);
+    var pick = function (attr, param) {
+      var v = (self && self.getAttribute(attr)) || params.get(param);
+      return v || null;
+    };
+    var id = pick('data-order-id', 'order_id');
+    var status = pick('data-order-status', 'order_status');
+    var eta = pick('data-order-eta', 'order_eta');
+    var restaurant = pick('data-order-restaurant', 'order_restaurant');
+    var url = pick('data-order-url', 'order_url');
+    var total = pick('data-order-total', 'order_total');
+    if (id) o.id = id;
+    if (status) o.status = status;
+    if (eta) o.eta = eta;
+    if (restaurant) o.restaurant = restaurant;
+    if (url) o.url = url;
+    if (total) o.total = total;
+    return o;
+  }
+  var order = readOrder();
+
   function identityParams() {
     var p = '';
     if (identity.email) p += '&ue=' + encodeURIComponent(identity.email);
@@ -74,6 +101,12 @@
     if (identity.phone) p += '&up=' + encodeURIComponent(identity.phone);
     if (identity.user_id) p += '&uid=' + encodeURIComponent(identity.user_id);
     if (identity.order_id) p += '&oid=' + encodeURIComponent(identity.order_id);
+    if (order.id) p += '&o_id=' + encodeURIComponent(order.id);
+    if (order.status) p += '&o_status=' + encodeURIComponent(order.status);
+    if (order.eta) p += '&o_eta=' + encodeURIComponent(order.eta);
+    if (order.restaurant) p += '&o_rest=' + encodeURIComponent(order.restaurant);
+    if (order.url) p += '&o_url=' + encodeURIComponent(order.url);
+    if (order.total) p += '&o_total=' + encodeURIComponent(order.total);
     return p;
   }
 
@@ -170,6 +203,10 @@
       if (cmd === 'identify' && payload && typeof payload === 'object') {
         for (var k in payload) if (payload[k] != null) identity[k] = payload[k];
         built.iframe.contentWindow.postMessage({ type: 'jetchat:identify', traits: payload }, '*');
+      } else if (cmd === 'order' && payload && typeof payload === 'object') {
+        // Live order update from the host site (status changed, delivered, …).
+        for (var ok in payload) if (payload[ok] != null) order[ok] = payload[ok];
+        built.iframe.contentWindow.postMessage({ type: 'jetchat:order', order: payload }, '*');
       }
     }
     var queued = window.JetChat && window.JetChat.q ? window.JetChat.q : [];

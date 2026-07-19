@@ -5,6 +5,7 @@ import { requireAgent } from '../plugins/auth.js';
 import { parseBody } from '../lib/validate.js';
 import { insertMessage } from '../lib/messages.js';
 import { broadcastToAgents, sendToConversationVisitors } from '../realtime/hub.js';
+// (sendToConversationVisitors is also used to tell the widget an agent joined.)
 
 const replyBody = z.object({ content: z.string().min(1).max(8000) });
 const statusBody = z.object({ status: z.enum(['open', 'pending', 'resolved']) });
@@ -143,9 +144,11 @@ export async function agentConversationRoutes(app: FastifyInstance): Promise<voi
     // Omitted agent_id = claim it for myself; null = release to the pool.
     const target = body.agent_id === undefined ? req.agent!.id : body.agent_id;
 
+    let targetName: string | null = null;
     if (target) {
-      const exists = await prisma.agents.findUnique({ where: { id: target }, select: { id: true } });
+      const exists = await prisma.agents.findUnique({ where: { id: target }, select: { name: true } });
       if (!exists) return reply.code(404).send({ error: 'Agent not found' });
+      targetName = exists.name;
     }
     const updated = await prisma.conversations
       .update({
@@ -159,6 +162,10 @@ export async function agentConversationRoutes(app: FastifyInstance): Promise<voi
       });
     if (!updated) return reply.code(404).send({ error: 'Conversation not found' });
     broadcastToAgents({ type: 'conversation:updated', conversation: updated });
+    // Tell the widget an agent joined so it can release its "waiting" hold.
+    if (target) {
+      sendToConversationVisitors(id, { type: 'agent:joined', conversationId: id, agentName: targetName });
+    }
     return reply.send({ conversation: updated });
   });
 
