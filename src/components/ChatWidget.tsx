@@ -112,6 +112,8 @@ export interface OrderContext {
   restaurant?: string;
   url?: string;
   total?: string;
+  items?: string; // short line, e.g. "Margherita, garlic bread"
+  placed?: string; // human time, e.g. "Yesterday, 8:12 PM"
 }
 
 function readOrder(): OrderContext {
@@ -204,6 +206,10 @@ export function ChatWidget() {
   const [triggerMessage, setTriggerMessage] = useState<string | null>(null);
   const [activeTriggerId, setActiveTriggerId] = useState<string | null>(null);
   const [order, setOrder] = useState<OrderContext>(readOrder);
+  // The visitor's recent orders, fed by the host via JetChat('orders', [...]).
+  // Drives the order picker (design 2b) when there's more than one.
+  const [orders, setOrders] = useState<OrderContext[]>([]);
+  const [showPicker, setShowPicker] = useState(false);
   // "Waiting for an agent" hold: after an escalation the visitor can't type
   // until an agent takes the chat (joins/assigns, or sends the first reply).
   const [waiting, setWaiting] = useState(false);
@@ -360,6 +366,16 @@ export function ChatWidget() {
       } else if (data && data.type === 'jetchat:order' && data.order && typeof data.order === 'object') {
         // Live order update from the host site (status changed, delivered, …).
         setOrder((prev) => ({ ...prev, ...data.order }));
+      } else if (data && data.type === 'jetchat:orders' && Array.isArray(data.orders)) {
+        // Full list of the visitor's recent orders (for the picker).
+        const list = (data.orders as OrderContext[]).filter((o) => o && o.id);
+        setOrders(list);
+        // Adopt the active (in-progress) order as the current context if none set.
+        setOrder((prev) => {
+          if (prev.id) return prev;
+          const active = list.find((o) => orderPhase(o.status) === 'in_progress') || list[0];
+          return active ? { ...prev, ...active } : prev;
+        });
       }
     };
     window.addEventListener('message', onMessage);
@@ -776,6 +792,63 @@ export function ChatWidget() {
                 </>
               )}
             </div>
+          ) : showPicker ? (
+            <div className="flex-1 overflow-y-auto bg-cream flex flex-col">
+              <div className="px-5 pt-5 pb-4">
+                <h4 className="font-display text-xl text-gray-800">Which order?</h4>
+                <p className="text-sm text-gray-600 mt-0.5">We'll pull up the details for you.</p>
+              </div>
+              <div className="flex-1 px-4 pb-4 space-y-2.5">
+                {orders.map((o) => {
+                  const { label, tone } = orderStatusMeta(o);
+                  const active = orderPhase(o.status) === 'in_progress';
+                  const badge =
+                    tone === 'done'
+                      ? { bg: '#e1eecc', fg: '#3d472b' }
+                      : tone === 'in'
+                        ? { bg: `color-mix(in srgb, ${primaryColor} 16%, #fff)`, fg: primaryColor }
+                        : { bg: '#eee7db', fg: '#645c50' };
+                  return (
+                    <button
+                      key={o.id}
+                      onClick={() => {
+                        setOrder(o);
+                        setShowPicker(false);
+                      }}
+                      className="w-full text-left rounded-2xl bg-white px-4 py-3 transition hover:border-gray-300 active:scale-[0.99]"
+                      style={{ border: active ? '2px solid #7a8a5e' : '1.5px solid #e5ded0' }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-gray-800 flex-1 truncate">{o.restaurant || `Order #${o.id}`}</span>
+                        <span className="text-[9px] font-bold rounded-full px-2 py-0.5 shrink-0" style={{ background: badge.bg, color: badge.fg }}>
+                          {label.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-600 mt-1 truncate">
+                        #{o.id}
+                        {o.items ? ` · ${o.items}` : ''}
+                        {o.total ? ` · ${o.total}` : ''}
+                      </div>
+                      <div className="text-[11px] mt-1" style={{ color: active ? '#6f7f54' : '#9c9484' }}>
+                        {active ? `Arriving in ~${o.eta || 'soon'}` : o.placed || 'Delivered'}
+                      </div>
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => {
+                    setShowPicker(false);
+                    void startPlainChat();
+                  }}
+                  className="w-full flex items-center gap-2.5 rounded-2xl px-4 py-3 mt-1"
+                  style={{ background: `color-mix(in srgb, ${primaryColor} 8%, #fff)`, border: `1px solid color-mix(in srgb, ${primaryColor} 22%, #fff)` }}
+                >
+                  <span className="text-xs text-left" style={{ color: primaryColor }}>
+                    Can't find it? Just describe the order and we'll look it up.
+                  </span>
+                </button>
+              </div>
+            </div>
           ) : showPreChat ? (
             <div className="flex-1 overflow-y-auto p-5 bg-cream">
               <h4 className="font-display text-xl text-gray-800 mb-1">{strings.preChatTitle}</h4>
@@ -876,6 +949,18 @@ export function ChatWidget() {
                           <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
                         </button>
                       ))}
+                      {orders.length > 1 && (
+                        <button
+                          onClick={() => setShowPicker(true)}
+                          className="flex items-center gap-3 bg-white border-[1.5px] border-gray-200 rounded-full px-4 py-3 text-left transition hover:border-gray-300 active:scale-[0.99]"
+                        >
+                          <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${primaryColor} 12%, #fff)` }}>
+                            <ShoppingBag className="w-4 h-4" style={{ color: primaryColor }} />
+                          </span>
+                          <span className="flex-1 text-sm font-semibold text-gray-800">A different order</span>
+                          <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
+                        </button>
+                      )}
                       {canRate && (
                         <button
                           onClick={() => setRating({ stars: 0, tags: [], comment: '', sent: false })}

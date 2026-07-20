@@ -151,6 +151,21 @@ export function sendProactiveToVisitor(
   return true;
 }
 
+/**
+ * Relay a Live Assist frame (the agent's guiding pointer / click / banner) to a
+ * visitor's presence socket(s), where presence.js renders it as an overlay on
+ * the real page. Low-risk, view-only guidance — never executes host-page code.
+ */
+export function sendAssistToVisitor(visitorId: string, assist: Record<string, unknown>): boolean {
+  const t = visitors.get(visitorId);
+  if (!t || t.sockets.size === 0) return false;
+  const frame = JSON.stringify({ type: 'assist', ...assist });
+  for (const ws of t.sockets) {
+    if (ws.readyState === ws.OPEN) ws.send(frame);
+  }
+  return true;
+}
+
 export function isVisitorOnline(visitorId: string): boolean {
   const t = visitors.get(visitorId);
   return Boolean(t && t.sockets.size > 0);

@@ -66,6 +66,16 @@
           <button onclick="applyFields()">Apply</button>
         </div>
 
+        <div class="lbl">Multiple orders (order picker)</div>
+        <div class="row">
+          <button onclick="feedOrders()">Feed 3 recent orders</button>
+          <button class="ghost" onclick="clearOrders()">Clear list</button>
+        </div>
+        <p style="margin:6px 0 0;font-size:12px;color:#8a8175">
+          Sends <code>JetChat('orders', […])</code>. With more than one order the widget's
+          intent home shows “A different order” → the picker (design 2b).
+        </p>
+
         <div class="row" style="margin-top:12px">
           <button class="ghost" onclick="clearOrder()">Clear order (no order)</button>
         </div>
@@ -117,6 +127,15 @@
         push({ id: document.getElementById('oid').value.trim(), restaurant: document.getElementById('orest').value.trim() });
       }
       function clearOrder() { push({ id: '' }); }
+      function feedOrders() {
+        var list = [
+          { id: '4832', status: 'On the way', eta: '15 min', restaurant: 'Napoli Pizza Co', items: 'Margherita, garlic bread, tiramisu', total: '$32.40' },
+          { id: '4821', status: 'Delivered', restaurant: 'Thai Garden', items: 'Pad thai, spring rolls', total: '$24.10', placed: 'Yesterday, 8:12 PM' },
+          { id: '4790', status: 'Delivered', restaurant: 'Burger Bros', items: 'Double smash combo ×2', total: '$28.60', placed: 'Jul 15, 9:04 PM' }
+        ];
+        if (window.JetChat) JetChat('orders', list);
+      }
+      function clearOrders() { if (window.JetChat) JetChat('orders', []); }
       render();
     </script>
   </body>

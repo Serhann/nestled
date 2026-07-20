@@ -207,6 +207,9 @@
         // Live order update from the host site (status changed, delivered, …).
         for (var ok in payload) if (payload[ok] != null) order[ok] = payload[ok];
         built.iframe.contentWindow.postMessage({ type: 'jetchat:order', order: payload }, '*');
+      } else if (cmd === 'orders' && Array.isArray(payload)) {
+        // Full list of the visitor's recent orders (drives the order picker).
+        built.iframe.contentWindow.postMessage({ type: 'jetchat:orders', orders: payload }, '*');
       }
     }
     var queued = window.JetChat && window.JetChat.q ? window.JetChat.q : [];

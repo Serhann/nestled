@@ -476,6 +476,8 @@ export interface AgentWSHandlers {
 export interface AgentSocket {
   view: (conversationId: string | null) => void;
   watch: (visitorId: string | null) => void;
+  /** Live Assist: relay a guiding pointer/click/banner to the watched visitor. */
+  assist: (visitorId: string, payload: Record<string, unknown>) => void;
   close: () => void;
 }
 
@@ -531,6 +533,9 @@ export function openAgentWS(handlers: AgentWSHandlers): AgentSocket {
     },
     watch(visitorId) {
       send(visitorId ? { type: 'watch', visitorId } : { type: 'unwatch' });
+    },
+    assist(visitorId, payload) {
+      send({ type: 'assist', visitorId, assist: payload });
     },
     close() {
       closed = true;

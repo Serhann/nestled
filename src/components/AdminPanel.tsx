@@ -234,6 +234,8 @@ export function AdminPanel() {
                   liveMessage={liveMessage}
                   typing={typing}
                   presence={presence}
+                  magicBrowse={magicBrowse}
+                  onWatch={startWatch}
                   onChanged={() => setListNonce((n) => n + 1)}
                 />
               ) : (
@@ -374,7 +376,15 @@ export function AdminPanel() {
       </div>
 
       {/* Live session replay overlay */}
-      {watching && <MagicBrowse feed={replayFeed} onClose={stopWatch} />}
+      {watching && (
+        <MagicBrowse
+          feed={replayFeed}
+          onClose={stopWatch}
+          visitor={presence.find((v) => v.visitorId === watching) ?? null}
+          agentName={agent.name}
+          onAssist={(payload) => socketRef.current?.assist(watching, payload)}
+        />
+      )}
     </div>
   );
 }

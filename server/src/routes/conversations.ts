@@ -57,6 +57,30 @@ type QuickIntent = z.infer<typeof quickActionBody>['intent'];
 
 const ord = (o: OrderCtx) => (o.id ? `#${o.id}` : 'your order');
 
+// Short, human-readable reason for the admin handoff summary (design t3).
+const HANDOFF_REASON: Record<QuickIntent, string> = {
+  where: 'Order tracking',
+  status: 'Order status',
+  late: 'Order running late',
+  change_address: 'Change delivery address',
+  missing_item: 'Missing item',
+  wrong: 'Wrong / incorrect order',
+  refund: 'Refund request',
+  human: 'Wants to talk to an agent',
+};
+
+// A one-line suggested next step the agent can act on.
+const HANDOFF_SUGGESTION: Record<QuickIntent, string> = {
+  where: 'Share a live ETA update.',
+  status: 'Confirm the current order status.',
+  late: 'Check the delay and offer a goodwill gesture if warranted.',
+  change_address: 'Verify identity, then update the delivery address.',
+  missing_item: 'Confirm the missing item and refund or re-send it.',
+  wrong: 'Confirm what went wrong and arrange a fix or refund.',
+  refund: 'Review the order and approve an appropriate refund.',
+  human: 'Greet the customer and ask how you can help.',
+};
+
 const QUICK_INTENTS: Record<
   QuickIntent,
   { kind: 'auto' | 'human'; visitor: (o: OrderCtx) => string; reply: (o: OrderCtx) => string }
@@ -319,10 +343,30 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     });
 
     if (def.kind === 'human') {
-      // Escalate: flag for a human and notify every agent.
+      // Escalate: flag for a human and notify every agent. Stamp a handoff
+      // summary onto the conversation metadata so the admin inbox can show the
+      // "escalated by bot" context + suggested action (design t3).
+      const existing = await prisma.conversations.findUnique({
+        where: { id },
+        select: { metadata: true },
+      });
+      const prevMeta = (existing?.metadata as Record<string, unknown> | null) ?? {};
+      const handoff = {
+        by: 'bot' as const,
+        intent: body.intent,
+        reason: HANDOFF_REASON[body.intent],
+        suggestion: HANDOFF_SUGGESTION[body.intent],
+        request: visitorText,
+        order: order.id ? order : null,
+        at: new Date().toISOString(),
+      };
       const updated = await prisma.conversations.update({
         where: { id },
-        data: { needs_human: true, status: 'open' },
+        data: {
+          needs_human: true,
+          status: 'open',
+          metadata: { ...prevMeta, handoff } as object,
+        },
         select: { id: true, needs_human: true, status: true },
       });
       broadcastToAgents({ type: 'conversation:updated', conversation: updated });

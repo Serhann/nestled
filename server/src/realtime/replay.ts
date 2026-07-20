@@ -55,6 +55,12 @@ export function stopWatch(ws: WebSocket): void {
   watchers.delete(ws);
 }
 
+/** True if this agent socket is currently watching the given visitor. Guards
+ *  Live Assist so an agent can only guide a session they're actually viewing. */
+export function isWatching(ws: WebSocket, visitorId: string): boolean {
+  return watchers.get(ws) === visitorId;
+}
+
 export function clearReplay(visitorId: string): void {
   buffers.delete(visitorId);
 }

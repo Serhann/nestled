@@ -1,6 +1,7 @@
 import type { WebSocket } from 'ws';
 import { prisma } from '../db/prisma.js';
-import { startWatch, stopWatch } from './replay.js';
+import { startWatch, stopWatch, isWatching } from './replay.js';
+import { sendAssistToVisitor } from './presence.js';
 
 /**
  * In-process realtime hub. Replaces Supabase realtime channels. Agents get a
@@ -72,6 +73,7 @@ export function registerAgentSocket(ws: WebSocket, agentId: string): void {
         type?: string;
         conversationId?: string;
         visitorId?: string;
+        assist?: Record<string, unknown>;
       };
       const state = agentSockets.get(ws);
       if (!state) return;
@@ -83,6 +85,10 @@ export function registerAgentSocket(ws: WebSocket, agentId: string): void {
         startWatch(ws, msg.visitorId); // MagicBrowse live replay
       } else if (msg.type === 'unwatch') {
         stopWatch(ws);
+      } else if (msg.type === 'assist' && typeof msg.visitorId === 'string' && msg.assist) {
+        // Live Assist: relay the agent's guiding pointer/click to the visitor,
+        // but only for a session this agent is actually watching.
+        if (isWatching(ws, msg.visitorId)) sendAssistToVisitor(msg.visitorId, msg.assist);
       }
     } catch {
       // ignore malformed control frames

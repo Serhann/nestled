@@ -15,3 +15,40 @@
      heading in components). No global body background — the widget page (/chat)
      must stay fully transparent so only the round launcher shows in the embed. */
 }
+
+/* ── MagicBrowse live view: make the VISITOR's own cursor + clicks prominent ──
+   rrweb renders the recorded pointer as `.replayer-mouse` with a click pulse on
+   `.active`. Defaults are tiny/blue and easy to miss, so we scope louder,
+   terracotta styling to the live-view root (.jc-live) — the agent clearly sees
+   where the visitor points and clicks. */
+.jc-live .replayer-mouse {
+  width: 22px;
+  height: 22px;
+  z-index: 2147483000;
+}
+.jc-live .replayer-mouse::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(198, 113, 57, 0.4);
+  border: 2px solid #c67139;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55);
+}
+.jc-live .replayer-mouse.active::after {
+  animation: jc-live-click 0.5s ease-out 1;
+}
+@keyframes jc-live-click {
+  0% {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(4.2);
+  }
+}

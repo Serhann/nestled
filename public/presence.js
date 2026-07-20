@@ -110,6 +110,79 @@
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
     }
 
+    // ── Live Assist overlay ──────────────────────────────────────────────────
+    // Renders the agent's guiding pointer/click on this page (view-only; never
+    // runs host code). Coordinates are viewport (fixed) positions matching what
+    // the agent sees. A watchdog tears the overlay down if the agent goes quiet.
+    var assist = { root: null, cursor: null, banner: null, watchdog: null };
+
+    function assistTeardown() {
+      if (assist.watchdog) { clearTimeout(assist.watchdog); assist.watchdog = null; }
+      if (assist.root && assist.root.parentNode) assist.root.parentNode.removeChild(assist.root);
+      assist.root = assist.cursor = assist.banner = null;
+    }
+
+    function assistEnsure(agentName) {
+      if (assist.root) return;
+      var root = document.createElement('div');
+      root.setAttribute('style', 'position:fixed;inset:0;z-index:2147483646;pointer-events:none;overflow:hidden');
+
+      var banner = document.createElement('div');
+      banner.setAttribute('style', 'position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#c67139;color:#fff;font:600 13px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;padding:9px 16px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,.18);display:flex;align-items:center;gap:8px;white-space:nowrap');
+      banner.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:#a7f3d0;box-shadow:0 0 0 3px rgba(167,243,208,.35);display:inline-block"></span>' +
+        (agentName ? String(agentName).replace(/[<>&]/g, '') : 'An agent') + ' is helping you';
+
+      var cursor = document.createElement('div');
+      cursor.setAttribute('style', 'position:fixed;left:0;top:0;transform:translate(-4px,-2px);transition:left .08s linear,top .08s linear;opacity:0;will-change:left,top');
+      cursor.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24" style="filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))"><path d="M4 2l6 15 2.3-6.2L18.5 8 4 2z" fill="#c67139" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>' +
+        '<span style="position:absolute;left:22px;top:14px;background:#c67139;color:#fff;font:600 11px/1 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;padding:3px 7px;border-radius:999px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.2)">' +
+        (agentName ? String(agentName).replace(/[<>&]/g, '') : 'Agent') + '</span>';
+
+      root.appendChild(banner);
+      root.appendChild(cursor);
+      document.body.appendChild(root);
+      assist.root = root; assist.cursor = cursor; assist.banner = banner;
+    }
+
+    function assistBump() {
+      if (assist.watchdog) clearTimeout(assist.watchdog);
+      assist.watchdog = setTimeout(assistTeardown, 15000);
+    }
+
+    function assistRipple(x, y) {
+      if (!assist.root) return;
+      var r = document.createElement('div');
+      r.setAttribute('style', 'position:fixed;left:' + x + 'px;top:' + y + 'px;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid #c67139;background:rgba(198,113,57,.25);pointer-events:none;animation:jc-assist-ripple .6s ease-out forwards');
+      assist.root.appendChild(r);
+      setTimeout(function () { if (r.parentNode) r.parentNode.removeChild(r); }, 650);
+    }
+
+    function handleAssist(data) {
+      var kind = data.kind;
+      if (kind === 'stop') { assistTeardown(); return; }
+      assistEnsure(data.agent);
+      assistBump();
+      if (kind === 'pointer') {
+        if (!assist.cursor) return;
+        assist.cursor.style.opacity = '1';
+        assist.cursor.style.left = data.x + 'px';
+        assist.cursor.style.top = data.y + 'px';
+      } else if (kind === 'click') {
+        if (assist.cursor) { assist.cursor.style.opacity = '1'; assist.cursor.style.left = data.x + 'px'; assist.cursor.style.top = data.y + 'px'; }
+        assistRipple(data.x, data.y);
+      } else if (kind === 'hide') {
+        if (assist.cursor) assist.cursor.style.opacity = '0';
+      }
+    }
+
+    // Ripple keyframes (injected once).
+    if (!document.getElementById('jc-assist-style')) {
+      var st = document.createElement('style');
+      st.id = 'jc-assist-style';
+      st.textContent = '@keyframes jc-assist-ripple{from{transform:scale(1);opacity:1}to{transform:scale(3.4);opacity:0}}';
+      document.head.appendChild(st);
+    }
+
     function sendNavigation() {
       send({ type: 'update', url: window.location.href, utm: collectUtm() });
     }
@@ -137,6 +210,9 @@
           // Let the widget adopt the conversation and open itself.
           if (onProactive) onProactive(data);
           window.dispatchEvent(new CustomEvent('jetchat:proactive', { detail: data }));
+        } else if (data && data.type === 'assist') {
+          // Live Assist: an agent is guiding this visitor's screen.
+          handleAssist(data);
         }
       };
 

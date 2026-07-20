@@ -17,6 +17,9 @@ import {
   Link2,
   History,
   X,
+  Sparkles,
+  ArrowRight,
+  Eye,
 } from 'lucide-react';
 import {
   getConversation,
@@ -44,6 +47,8 @@ interface Props {
   liveMessage: { conversationId: string; message: AdminMessage } | null;
   typing: { conversationId: string; isTyping: boolean } | null;
   presence: LiveVisitor[];
+  magicBrowse?: boolean;
+  onWatch?: (visitorId: string) => void;
   onChanged: () => void;
 }
 
@@ -64,7 +69,7 @@ function duration(ms: number): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
-export function ChatPanel({ conversationId, meId, liveMessage, typing, presence, onChanged }: Props) {
+export function ChatPanel({ conversationId, meId, liveMessage, typing, presence, magicBrowse, onWatch, onChanged }: Props) {
   const [conversation, setConversation] = useState<AdminConversation | null>(null);
   const [messages, setMessages] = useState<AdminMessage[]>([]);
   const [notes, setNotes] = useState<ConversationNote[]>([]);
@@ -207,8 +212,18 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         order_id?: string;
         user_id?: string;
         phone?: string;
+        handoff?: {
+          by?: string;
+          intent?: string;
+          reason?: string;
+          suggestion?: string;
+          request?: string;
+          order?: { id?: string; status?: string; eta?: string; restaurant?: string; total?: string } | null;
+          at?: string;
+        };
       }
     | undefined;
+  const handoff = conversation?.needs_human ? meta?.handoff : undefined;
   const geoText = meta?.location
     ? [meta.location.city, meta.location.region, meta.location.country].filter(Boolean).join(', ')
     : '';
@@ -232,8 +247,15 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> online
                 </span>
               )}
+              {handoff && (
+                <span className="inline-flex items-center gap-1 text-[9px] font-bold tracking-wide bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">
+                  <Sparkles className="w-2.5 h-2.5" /> ESCALATED BY BOT
+                </span>
+              )}
             </p>
             <p className="text-xs text-gray-500 truncate flex items-center gap-1">
+              {handoff?.order?.restaurant && <span className="text-gray-600">{handoff.order.restaurant} · </span>}
+              {handoff?.reason && <span className="text-blue-600 font-medium">{handoff.reason} · </span>}
               {meta?.order_id && <span className="text-blue-600">Order #{meta.order_id} · </span>}
               {geoText && (
                 <>
@@ -246,6 +268,20 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2 shrink-0">
+            {magicBrowse && onWatch && conversation?.visitor_id && (
+              <button
+                onClick={() => onWatch(conversation.visitor_id)}
+                disabled={!live?.online}
+                title={live?.online ? "Watch this visitor's screen live" : 'Live view is available while the visitor is online'}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition ${
+                  live?.online ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                <Eye className="w-4 h-4" />
+                <span className="hidden sm:inline">Watch</span>
+                {live?.online && <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
+              </button>
+            )}
             <div className="relative">
               <button
                 onClick={() => setShowAssign((s) => !s)}
@@ -300,6 +336,54 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
 
         {/* Timeline */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+          {/* Bot → human handoff summary (design t3). */}
+          {handoff && (
+            <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                <span className="text-[10px] font-bold tracking-wider text-blue-700">BOT SUMMARY</span>
+                {handoff.at && <span className="ml-auto text-[11px] text-gray-400">{new Date(handoff.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+              </div>
+              <p className="text-sm text-gray-800 leading-relaxed">
+                <span className="font-semibold">{handoff.reason ?? 'Handoff'}</span>
+                {handoff.order?.id && (
+                  <>
+                    {' on '}
+                    <b>#{handoff.order.id}{handoff.order.restaurant ? ` · ${handoff.order.restaurant}` : ''}</b>
+                    {handoff.order.status ? ` (${handoff.order.status}${handoff.order.eta ? `, ETA ${handoff.order.eta}` : ''})` : ''}
+                  </>
+                )}
+                .
+              </p>
+              {handoff.request && (
+                <p className="text-xs text-gray-500 mt-1.5 italic">“{handoff.request}”</p>
+              )}
+              {handoff.suggestion && (
+                <div className="mt-3 flex items-center gap-2 text-sm">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-white border border-blue-200 text-blue-700 px-2.5 py-1 text-xs font-semibold shrink-0">
+                    <ArrowRight className="w-3 h-3" /> Suggested
+                  </span>
+                  <span className="text-gray-700">{handoff.suggestion}</span>
+                </div>
+              )}
+              <div className="mt-3 flex items-center gap-2">
+                {assignedId !== meId && (
+                  <button
+                    onClick={() => doAssign(undefined)}
+                    className="inline-flex items-center gap-1.5 bg-blue-600 text-white rounded-full px-3.5 py-1.5 text-xs font-semibold hover:bg-blue-700 transition"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" /> Claim &amp; reply
+                  </button>
+                )}
+                <button
+                  onClick={toggleResolved}
+                  className="inline-flex items-center gap-1.5 bg-white border border-gray-200 text-gray-600 rounded-full px-3.5 py-1.5 text-xs font-semibold hover:bg-gray-50 transition"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" /> Mark resolved
+                </button>
+              </div>
+            </div>
+          )}
           {timeline.map((item) =>
             item.kind === 'note' ? (
               <div key={`n-${item.data.id}`} className="mx-auto max-w-[90%] bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-900">
@@ -427,6 +511,24 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
 
             {tab === 'activity' && (
               <div className="space-y-4">
+                {magicBrowse && onWatch && conversation?.visitor_id && (
+                  <button
+                    onClick={() => onWatch(conversation.visitor_id)}
+                    disabled={!live?.online}
+                    className={`w-full flex items-center gap-2.5 rounded-2xl px-4 py-3 text-left transition ${
+                      live?.online ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <Eye className="w-5 h-5 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold">Watch live session</span>
+                      <span className={`block text-[11px] ${live?.online ? 'text-white/80' : 'text-gray-400'}`}>
+                        {live?.online ? 'See their screen in real time' : 'Available while the visitor is online'}
+                      </span>
+                    </span>
+                    {live?.online && <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse shrink-0" />}
+                  </button>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   <Metric label="Status" value={live?.online ? 'Online' : 'Offline'} good={live?.online} />
                   <Metric label="Time on site" value={live ? duration(live.timeOnSite) : '—'} />
