@@ -82,6 +82,7 @@
     }
     var onProactive = typeof options.onProactive === 'function' ? options.onProactive : null;
     var recordScriptUrl = options.recordScriptUrl || null; // rrweb-record UMD, host origin
+    var mode = options.mode === 'saas' ? 'saas' : 'food'; // scenario pack / site
 
     // Prefer a shared visitor id (the embed passes the same one to the widget
     // iframe) so presence, conversations, and proactive all agree on identity.
@@ -103,6 +104,7 @@
         screen: { w: window.screen.width, h: window.screen.height },
         returning: returning,
         sessionStart: sessionStart,
+        mode: mode,
       });
     }
 
@@ -157,6 +159,15 @@
       setTimeout(function () { if (r.parentNode) r.parentNode.removeChild(r); }, 650);
     }
 
+    // Normalised (0..1) coords → this window's live viewport pixels. Using
+    // innerWidth/innerHeight (not the recorded size) keeps the pointer aligned
+    // regardless of any record-time vs now viewport difference.
+    function denorm(data) {
+      var nx = typeof data.nx === 'number' ? data.nx : 0;
+      var ny = typeof data.ny === 'number' ? data.ny : 0;
+      return { x: Math.round(nx * window.innerWidth), y: Math.round(ny * window.innerHeight) };
+    }
+
     function handleAssist(data) {
       var kind = data.kind;
       if (kind === 'stop') { assistTeardown(); return; }
@@ -164,12 +175,14 @@
       assistBump();
       if (kind === 'pointer') {
         if (!assist.cursor) return;
+        var p = denorm(data);
         assist.cursor.style.opacity = '1';
-        assist.cursor.style.left = data.x + 'px';
-        assist.cursor.style.top = data.y + 'px';
+        assist.cursor.style.left = p.x + 'px';
+        assist.cursor.style.top = p.y + 'px';
       } else if (kind === 'click') {
-        if (assist.cursor) { assist.cursor.style.opacity = '1'; assist.cursor.style.left = data.x + 'px'; assist.cursor.style.top = data.y + 'px'; }
-        assistRipple(data.x, data.y);
+        var c = denorm(data);
+        if (assist.cursor) { assist.cursor.style.opacity = '1'; assist.cursor.style.left = c.x + 'px'; assist.cursor.style.top = c.y + 'px'; }
+        assistRipple(c.x, c.y);
       } else if (kind === 'hide') {
         if (assist.cursor) assist.cursor.style.opacity = '0';
       }

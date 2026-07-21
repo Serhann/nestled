@@ -25,17 +25,22 @@
   var apiBase = (self && self.getAttribute('data-api-base')) || scriptOrigin;
   var widgetOrigin = (self && self.getAttribute('data-widget-origin')) || scriptOrigin;
   var position = (self && self.getAttribute('data-position')) === 'left' ? 'left' : 'right';
+  // Scenario pack for this site: 'food' (default) or 'saas' (tryjet.io).
+  var mode = (self && self.getAttribute('data-mode')) === 'saas' ? 'saas' : 'food';
 
   var LAUNCHER = 76;
 
-  // Persistent, shared visitor id — the same id feeds presence (host page) and
-  // the widget (iframe), so identity is consistent across origins.
+  // Persistent visitor id — the same id feeds presence (host page) and the
+  // widget (iframe). Namespaced by mode so two of our sites sharing one origin
+  // (e.g. the local demo host at /demo and /tryjet) don't collapse into one
+  // visitor. In production the sites are separate origins anyway.
+  var VISITOR_KEY = 'jetchat_visitor_id_' + mode;
   function getVisitorId() {
     try {
-      var id = localStorage.getItem('jetchat_visitor_id');
+      var id = localStorage.getItem(VISITOR_KEY);
       if (!id) {
         id = 'v_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
-        localStorage.setItem('jetchat_visitor_id', id);
+        localStorage.setItem(VISITOR_KEY, id);
       }
       return id;
     } catch (e) {
@@ -140,6 +145,8 @@
       encodeURIComponent(visitorId) +
       '&pos=' +
       position +
+      '&mode=' +
+      mode +
       // Host page URL, so the widget can evaluate page-based triggers.
       '&href=' +
       encodeURIComponent(window.location.href) +
@@ -173,6 +180,7 @@
         window.JetChatPresence.init({
           apiBase: apiBase,
           visitorId: visitorId,
+          mode: mode,
           onProactive: onProactive,
           // rrweb recorder is served from the widget origin (host-page context).
           recordScriptUrl: widgetOrigin + '/vendor/rrweb-record.min.js',

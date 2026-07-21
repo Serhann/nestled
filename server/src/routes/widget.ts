@@ -10,7 +10,7 @@ import { anyAgentOnline } from '../realtime/hub.js';
  * cannot recur. Active triggers are also served here for the embed to evaluate.
  */
 export async function widgetRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/widget-config', async (_req, reply) => {
+  app.get('/api/widget-config', async (req, reply) => {
     const settings = await prisma.public_settings.findUnique({
       where: { id: 1 },
       select: {
@@ -29,7 +29,41 @@ export async function widgetRoutes(app: FastifyInstance): Promise<void> {
         magic_browse_enabled: true,
       },
     });
-    return reply.send({ settings });
+
+    // Per-site overrides (Site manager): if the embed passes ?site=<key>, merge
+    // that site's appearance overrides onto the global settings and attach its
+    // configured quick actions. Only active sites apply.
+    let quick_actions: unknown[] = [];
+    const siteKey = (req.query as { site?: string }).site;
+    if (settings && siteKey) {
+      const site = await prisma.sites.findUnique({ where: { key: siteKey } });
+      if (site && site.is_active) {
+        if (site.primary_color) settings.primary_color = site.primary_color;
+        if (site.widget_title) settings.widget_title = site.widget_title;
+        if (site.welcome_message) settings.welcome_message = site.welcome_message;
+        if (site.widget_position === 'left' || site.widget_position === 'right') {
+          settings.widget_position = site.widget_position;
+        }
+        // Resolve the site's chosen action keys against the managed quick_actions
+        // catalog so the widget gets each action's label, kind and intake fields.
+        const chosen = (Array.isArray(site.quick_actions) ? site.quick_actions : []) as { intent: string; label?: string }[];
+        if (chosen.length > 0) {
+          const defs = await prisma.quick_actions.findMany({
+            where: { key: { in: chosen.map((c) => c.intent) }, is_active: true },
+            select: { key: true, label: true, kind: true, fields: true },
+          });
+          const byKey = new Map(defs.map((d) => [d.key, d]));
+          quick_actions = chosen
+            .map((c) => {
+              const d = byKey.get(c.intent);
+              if (!d) return null;
+              return { intent: d.key, label: c.label || d.label, kind: d.kind, fields: d.fields ?? [] };
+            })
+            .filter(Boolean);
+        }
+      }
+    }
+    return reply.send({ settings: settings ? { ...settings, quick_actions } : settings });
   });
 
   // Server-side country detection for the trigger engine — replaces the client

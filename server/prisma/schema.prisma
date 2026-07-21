@@ -114,6 +114,7 @@ model knowledge_base {
   keywords   String[] @default([])
   priority   Int      @default(0)
   is_active  Boolean  @default(true)
+  sites      String[] @default([]) // which sites/modes this applies to; empty = all
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @db.Timestamptz(6)
 
@@ -172,6 +173,7 @@ model triggers {
   priority           Int      @default(0)
   fire_count         Int      @default(0)
   conversation_count Int      @default(0)
+  sites              String[] @default([]) // which sites/modes this applies to; empty = all
   created_at         DateTime @default(now()) @db.Timestamptz(6)
   updated_at         DateTime @default(now()) @db.Timestamptz(6)
 
@@ -304,11 +306,47 @@ model attachments {
 // ---------------------------------------------------------------------------
 // Canned responses + internal notes (Phase 6).
 // ---------------------------------------------------------------------------
+/// A deployment site (e.g. jetfood.com, tryjet.io). Its `key` matches the
+/// embed's data-mode. Per-site widget appearance overrides (null = inherit the
+/// global public_settings) and the quick-action set the widget shows.
+model sites {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key             String   @unique
+  name            String
+  is_active       Boolean  @default(true)
+  primary_color   String?
+  widget_title    String?
+  welcome_message String?
+  widget_position String? // 'left' | 'right'
+  quick_actions   Json     @default("[]") // [{ intent, label? }] — empty = built-in pack
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// A managed quick action shown in the widget. Fully data-driven: label, whether
+/// it auto-replies or escalates to an agent, the visitor/reply text (with
+/// {placeholders}), an optional intake form (fields), and a handoff suggestion.
+model quick_actions {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key              String   @unique
+  label            String
+  kind             String   @default("human") // 'auto' | 'human'
+  visitor_template String   @default("")
+  reply_template   String   @default("")
+  suggestion       String?
+  fields           Json     @default("[]") // [{ name, label, required }]
+  priority         Int      @default(0)
+  is_active        Boolean  @default(true)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @default(now()) @db.Timestamptz(6)
+}
+
 model canned_responses {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   shortcut   String   @unique
   title      String
   content    String
+  sites      String[] @default([]) // which sites/modes this applies to; empty = all
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @db.Timestamptz(6)
 }

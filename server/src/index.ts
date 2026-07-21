@@ -21,6 +21,8 @@ import { pushRoutes } from './routes/push.js';
 import { presenceRoutes } from './routes/presence.js';
 import { attachmentRoutes } from './routes/attachments.js';
 import { cannedRoutes } from './routes/canned.js';
+import { siteRoutes } from './routes/sites.js';
+import { quickActionRoutes } from './routes/quickActions.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -91,6 +93,8 @@ export async function buildServer() {
   await app.register(presenceRoutes);
   await app.register(attachmentRoutes);
   await app.register(cannedRoutes);
+  await app.register(siteRoutes);
+  await app.register(quickActionRoutes);
 
   return app;
 }

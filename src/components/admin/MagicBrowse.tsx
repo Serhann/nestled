@@ -130,24 +130,30 @@ export function MagicBrowse({
     holder.w > 0 && holder.h > 0 ? Math.min(holder.w / viewport.w, holder.h / viewport.h, 1) : 0;
 
   // ── Live Assist: relay the agent's guiding pointer/click to the visitor ──────
-  // Screen coords over the scaled stage → visitor viewport coords (÷ scale).
-  const toViewport = (clientX: number, clientY: number): { x: number; y: number } | null => {
+  // Send NORMALISED coordinates (0..1) relative to the stage — which is exactly
+  // the visitor's viewport, contain-scaled. The host de-normalises against its
+  // own live innerWidth/innerHeight, so the pointer lands on the same spot even
+  // if the recorded viewport size differs from the visitor's current window
+  // (this is what caused the vertical drift).
+  const toNorm = (clientX: number, clientY: number): { nx: number; ny: number } | null => {
     const rect = captureRef.current?.getBoundingClientRect();
-    if (!rect || scale <= 0) return null;
-    return { x: Math.round((clientX - rect.left) / scale), y: Math.round((clientY - rect.top) / scale) };
+    if (!rect || rect.width === 0 || rect.height === 0) return null;
+    const nx = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    const ny = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+    return { nx, ny };
   };
   const onAssistMove = (e: React.MouseEvent) => {
     if (!onAssist) return;
     const now = Date.now();
     if (now - lastSent.current < 40) return; // ~25fps throttle
     lastSent.current = now;
-    const p = toViewport(e.clientX, e.clientY);
-    if (p) onAssist({ kind: 'pointer', x: p.x, y: p.y });
+    const p = toNorm(e.clientX, e.clientY);
+    if (p) onAssist({ kind: 'pointer', nx: p.nx, ny: p.ny });
   };
   const onAssistClick = (e: React.MouseEvent) => {
     if (!onAssist) return;
-    const p = toViewport(e.clientX, e.clientY);
-    if (p) onAssist({ kind: 'click', x: p.x, y: p.y });
+    const p = toNorm(e.clientX, e.clientY);
+    if (p) onAssist({ kind: 'click', nx: p.nx, ny: p.ny });
   };
   const toggleAssist = () => {
     setAssist((on) => {

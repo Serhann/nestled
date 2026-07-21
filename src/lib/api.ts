@@ -18,6 +18,21 @@ export interface WidgetConfig {
   auto_welcome_message: string | null;
   auto_welcome_delay: number;
   notification_sound_enabled: boolean;
+  // Per-site quick actions (Site + Quick-action managers). Empty → widget uses
+  // its built-in pack. `fields` = an intake form to collect before running.
+  quick_actions?: WidgetQuickAction[];
+}
+
+export interface WidgetField {
+  name: string;
+  label: string;
+  required: boolean;
+}
+export interface WidgetQuickAction {
+  intent: string;
+  label?: string;
+  kind?: 'auto' | 'human';
+  fields?: WidgetField[];
 }
 
 export interface PreChatField {
@@ -69,7 +84,10 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export function getWidgetConfig(): Promise<{ settings: WidgetConfig }> {
-  return fetch(`${apiBase()}/api/widget-config`).then((r) => json<{ settings: WidgetConfig }>(r));
+  const site = param('mode') || 'food';
+  return fetch(`${apiBase()}/api/widget-config?site=${encodeURIComponent(site)}`).then((r) =>
+    json<{ settings: WidgetConfig }>(r),
+  );
 }
 
 export function getAgentStatus(): Promise<{ online: boolean }> {
@@ -81,7 +99,8 @@ export function getGeo(): Promise<{ country_code: string | null }> {
 }
 
 export function getActiveTriggers(): Promise<{ triggers: unknown[] }> {
-  return fetch(`${apiBase()}/api/triggers/active`).then((r) => json<{ triggers: unknown[] }>(r));
+  const mode = param('mode') || 'food';
+  return fetch(`${apiBase()}/api/triggers/active?mode=${encodeURIComponent(mode)}`).then((r) => json<{ triggers: unknown[] }>(r));
 }
 
 /** Fire-and-forget trigger analytics ping. */
@@ -120,15 +139,9 @@ export function sendMessage(
   }).then((r) => json<{ message: WidgetMessage }>(r));
 }
 
-export type QuickIntent =
-  | 'where'
-  | 'status'
-  | 'late'
-  | 'change_address'
-  | 'missing_item'
-  | 'wrong'
-  | 'refund'
-  | 'human';
+// Quick-action keys are now data-driven (managed in the admin), so this is a
+// free string rather than a fixed union.
+export type QuickIntent = string;
 
 /** Post an order-aware quick action; returns the visitor request + bot reply. */
 export function quickAction(
@@ -136,11 +149,12 @@ export function quickAction(
   token: string,
   intent: QuickIntent,
   order?: { id?: string; status?: string; eta?: string; restaurant?: string },
+  fields?: Record<string, string>,
 ): Promise<{ messages: WidgetMessage[]; needs_human: boolean }> {
   return fetch(`${apiBase()}/api/conversations/${convId}/quick-action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ intent, order }),
+    body: JSON.stringify({ intent, order, fields }),
   }).then((r) => json<{ messages: WidgetMessage[]; needs_human: boolean }>(r));
 }
 
@@ -222,6 +236,7 @@ export function openPresenceWS(
       screen: { w: window.screen.width, h: window.screen.height },
       returning,
       sessionStart,
+      mode: param('mode') || 'food',
     });
 
   const connect = () => {

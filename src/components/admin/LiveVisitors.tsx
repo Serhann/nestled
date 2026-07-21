@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { Globe, Monitor, Smartphone, MessageSquarePlus, Eye, History, X } from 'lucide-react';
-import { startChat, type LiveVisitor } from '../../lib/adminApi';
+import { startChat, visitorSource, type LiveVisitor } from '../../lib/adminApi';
+
+const SOURCE_TONE: Record<'food' | 'saas' | 'web', string> = {
+  food: 'bg-blue-100 text-blue-700',
+  saas: 'bg-violet-100 text-violet-700',
+  web: 'bg-gray-100 text-gray-600',
+};
 
 interface Props {
   visitors: LiveVisitor[];
@@ -67,6 +73,14 @@ export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch }: Prop
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-sm">
+                  {(() => {
+                    const src = visitorSource(v);
+                    return (
+                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${SOURCE_TONE[src.tone]}`}>
+                        {src.label}
+                      </span>
+                    );
+                  })()}
                   <Globe className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                   <span className="text-gray-700 truncate">
                     {v.geo

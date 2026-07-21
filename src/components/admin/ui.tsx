@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { ArrowLeft, type LucideIcon } from 'lucide-react';
+import { listSites } from '../../lib/adminApi';
 
 /**
  * Shared Organic-design building blocks for the admin "Manage" screens
@@ -191,13 +193,80 @@ export function Toggle({
   );
 }
 
+// Site key → display name, kept fresh whenever a SiteScope loads the list. The
+// seeded sites are the sensible default so labels resolve before any fetch.
+const SITE_NAMES: Record<string, string> = { food: 'JetFood', saas: 'TryJet' };
+
+/** Human label for a `sites` array (empty = All sites). */
+export function siteScopeLabel(sites: string[] | undefined): string {
+  if (!sites || sites.length === 0) return 'All sites';
+  return sites.map((s) => SITE_NAMES[s] ?? s).join(', ');
+}
+
+/**
+ * "Apply to which site(s)" picker. Value is an array of site keys; an empty
+ * array means every site. Options are loaded from the Site manager so it always
+ * reflects the sites that actually exist.
+ */
+export function SiteScope({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [options, setOptions] = useState<{ id: string; label: string }[]>(
+    Object.entries(SITE_NAMES).map(([id, label]) => ({ id, label })),
+  );
+  useEffect(() => {
+    listSites()
+      .then((sites) => {
+        for (const s of sites) SITE_NAMES[s.key] = s.name;
+        setOptions(sites.map((s) => ({ id: s.key, label: s.name })));
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const toggle = (id: string) =>
+    onChange(value.includes(id) ? value.filter((s) => s !== id) : [...value, id]);
+  const all = value.length === 0;
+  return (
+    <div>
+      <span className="block text-sm font-semibold text-gray-700 mb-1.5">Apply to sites</span>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => onChange([])}
+          className={`rounded-full border-[1.5px] px-3.5 py-1.5 text-sm font-semibold transition ${
+            all ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          All sites
+        </button>
+        {options.map((s) => {
+          const on = value.includes(s.id);
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => toggle(s.id)}
+              className={`rounded-full border-[1.5px] px-3.5 py-1.5 text-sm font-semibold transition ${
+                on ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {s.label}
+            </button>
+          );
+        })}
+      </div>
+      <span className="block text-xs text-gray-400 mt-1">
+        {all ? 'Shown on every site.' : `Only on: ${siteScopeLabel(value)}.`}
+      </span>
+    </div>
+  );
+}
+
 /** Small rounded status/role pill. */
 export function Badge({
   children,
   tone = 'gray',
 }: {
   children: React.ReactNode;
-  tone?: 'gray' | 'blue' | 'green' | 'amber' | 'red';
+  tone?: 'gray' | 'blue' | 'green' | 'amber' | 'red' | 'violet';
 }) {
   const tones: Record<string, string> = {
     gray: 'bg-gray-100 text-gray-600',
@@ -205,6 +274,7 @@ export function Badge({
     green: 'bg-green-100 text-green-700',
     amber: 'bg-amber-100 text-amber-700',
     red: 'bg-red-100 text-red-600',
+    violet: 'bg-violet-100 text-violet-700',
   };
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${tones[tone]}`}>

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Plus, Trash2, BookOpen, Pencil, Tag } from 'lucide-react';
 import { listKB, createKB, updateKB, deleteKB, type KBItem, type KBInput } from '../../lib/adminApi';
-import { ManagePage, PageHeader, Card, PrimaryButton, EmptyState, Field, TextInput, TextArea, Toggle, Badge } from './ui';
+import { ManagePage, PageHeader, Card, PrimaryButton, EmptyState, Field, TextInput, TextArea, Toggle, Badge, SiteScope, siteScopeLabel } from './ui';
 
 function empty(): KBInput {
-  return { question: '', answer: '', category: 'general', keywords: [], priority: 0, is_active: true };
+  return { question: '', answer: '', category: 'general', keywords: [], priority: 0, is_active: true, sites: [] };
 }
 
 /**
@@ -82,6 +82,7 @@ export function KnowledgeBasePanel({ onBack }: { onBack: () => void }) {
               onChange={(e) => set({ keywords: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
             />
           </Field>
+          <SiteScope value={inp.sites} onChange={(v) => set({ sites: v })} />
           <div className="pt-1 border-t border-gray-100">
             <div className="pt-4">
               <Toggle checked={inp.is_active} onChange={(v) => set({ is_active: v })} label="Active" description="Inactive entries are ignored by the assistant." />
@@ -123,7 +124,7 @@ export function KnowledgeBasePanel({ onBack }: { onBack: () => void }) {
           {items.map((k) => (
             <Card key={k.id} className="p-4 flex items-start gap-3 group hover:shadow-md transition">
               <button
-                onClick={() => setEditing({ id: k.id, input: { question: k.question, answer: k.answer, category: k.category, keywords: k.keywords, priority: k.priority, is_active: k.is_active } })}
+                onClick={() => setEditing({ id: k.id, input: { question: k.question, answer: k.answer, category: k.category, keywords: k.keywords, priority: k.priority, is_active: k.is_active, sites: k.sites } })}
                 className="min-w-0 flex-1 text-left"
               >
                 <div className="flex items-center gap-2 flex-wrap">
@@ -134,6 +135,7 @@ export function KnowledgeBasePanel({ onBack }: { onBack: () => void }) {
                 <p className="text-sm text-gray-500 mt-1 line-clamp-2">{k.answer}</p>
                 <div className="mt-2 flex items-center gap-2 flex-wrap">
                   <Badge tone="blue">{k.category}</Badge>
+                  <Badge tone={k.sites.length ? 'violet' : 'gray'}>{siteScopeLabel(k.sites)}</Badge>
                   {k.keywords.length > 0 && (
                     <span className="inline-flex items-center gap-1 text-[11px] text-gray-400">
                       <Tag className="w-3 h-3" /> {k.keywords.join(', ')}
@@ -143,7 +145,7 @@ export function KnowledgeBasePanel({ onBack }: { onBack: () => void }) {
               </button>
               <div className="shrink-0 flex items-center gap-1">
                 <button
-                  onClick={() => setEditing({ id: k.id, input: { question: k.question, answer: k.answer, category: k.category, keywords: k.keywords, priority: k.priority, is_active: k.is_active } })}
+                  onClick={() => setEditing({ id: k.id, input: { question: k.question, answer: k.answer, category: k.category, keywords: k.keywords, priority: k.priority, is_active: k.is_active, sites: k.sites } })}
                   className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition"
                   aria-label="Edit"
                 >

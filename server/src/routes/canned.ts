@@ -13,6 +13,8 @@ const cannedBody = z.object({
     .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, numbers and dashes'),
   title: z.string().min(1).max(120),
   content: z.string().min(1).max(4000),
+  // Which sites/modes this applies to; empty = all sites.
+  sites: z.array(z.enum(['food', 'saas'])).default([]),
 });
 
 /** Canned responses: agents read (for `/` autocomplete); admins manage. */
@@ -28,7 +30,7 @@ export async function cannedRoutes(app: FastifyInstance): Promise<void> {
     const existing = await prisma.canned_responses.findUnique({ where: { shortcut: body.shortcut } });
     if (existing) return reply.code(409).send({ error: 'That shortcut already exists' });
     const created = await prisma.canned_responses.create({
-      data: { shortcut: body.shortcut, title: body.title, content: body.content },
+      data: { shortcut: body.shortcut, title: body.title, content: body.content, sites: body.sites },
     });
     await audit(req, { action: 'canned.create', targetType: 'canned_response', targetId: created.id });
     return reply.code(201).send({ item: created });
@@ -41,7 +43,7 @@ export async function cannedRoutes(app: FastifyInstance): Promise<void> {
     const updated = await prisma.canned_responses
       .update({
         where: { id },
-        data: { shortcut: body.shortcut, title: body.title, content: body.content, updated_at: new Date() },
+        data: { shortcut: body.shortcut, title: body.title, content: body.content, sites: body.sites, updated_at: new Date() },
       })
       .catch((e: unknown) => {
         if ((e as { code?: string }).code === 'P2025') return null;

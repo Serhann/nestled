@@ -13,17 +13,20 @@ import {
   MessageSquareText,
   Zap,
   Settings,
+  Globe2,
+  MousePointerClick,
 } from 'lucide-react';
 import {
   listConversations,
   listAgents,
   getAiUsage,
+  conversationSource,
   type AdminConversation,
   type AgentRow,
   type LiveVisitor,
 } from '../../lib/adminApi';
 
-export type ManageSection = 'agents' | 'kb' | 'canned' | 'triggers' | 'settings';
+export type ManageSection = 'agents' | 'sites' | 'quick-actions' | 'kb' | 'canned' | 'triggers' | 'settings';
 
 interface Props {
   agentName: string;
@@ -73,6 +76,8 @@ function StatCard({
 
 const MANAGE_LINKS: { id: ManageSection; label: string; icon: React.ReactNode }[] = [
   { id: 'agents', label: 'Agents & users', icon: <Users2 className="w-4 h-4" /> },
+  { id: 'sites', label: 'Sites', icon: <Globe2 className="w-4 h-4" /> },
+  { id: 'quick-actions', label: 'Quick actions', icon: <MousePointerClick className="w-4 h-4" /> },
   { id: 'kb', label: 'Knowledge base', icon: <BookOpen className="w-4 h-4" /> },
   { id: 'canned', label: 'Canned responses', icon: <MessageSquareText className="w-4 h-4" /> },
   { id: 'triggers', label: 'Triggers', icon: <Zap className="w-4 h-4" /> },
@@ -180,6 +185,11 @@ export function Dashboard({ agentName, role, presence, reloadNonce, onOpenConver
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-gray-800 truncate">{name}</span>
+                          {(() => {
+                            const src = conversationSource(c.metadata);
+                            const tone = src.tone === 'saas' ? 'bg-violet-100 text-violet-700' : src.tone === 'food' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600';
+                            return <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0 ${tone}`}>{src.label}</span>;
+                          })()}
                           {c.needs_human && (
                             <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 rounded">needs human</span>
                           )}

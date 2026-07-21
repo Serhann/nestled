@@ -29,6 +29,7 @@ export interface PresenceEntry {
   ip: string;
   geo: GeoLocation | null;
   conversationId: string | null; // set if this visitor has an open conversation
+  mode: string; // which site / scenario pack this visitor is on (site key)
   lastSeen: number;
 }
 
@@ -61,6 +62,7 @@ interface HelloData {
   screen?: { w: number; h: number };
   returning?: boolean;
   sessionStart?: number;
+  mode?: string;
 }
 
 export function registerPresenceSocket(
@@ -89,6 +91,7 @@ export function registerPresenceSocket(
         ip,
         geo,
         conversationId: null,
+        mode: hello.mode || 'food',
         lastSeen: now,
       },
     };
@@ -97,6 +100,7 @@ export function registerPresenceSocket(
     // Reconnect / second tab: refresh but keep counters.
     tracked.entry.ip = ip;
     if (geo) tracked.entry.geo = geo;
+    if (hello.mode) tracked.entry.mode = hello.mode;
     tracked.entry.lastSeen = now;
   }
   tracked.sockets.add(ws);

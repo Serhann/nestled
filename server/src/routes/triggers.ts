@@ -11,6 +11,8 @@ const triggerBody = z.object({
   identifier: z.string().min(1).max(80).regex(/^[a-z0-9-]+$/),
   is_active: z.boolean().default(true),
   priority: z.number().int().min(0).max(1000).default(0),
+  // Which sites/modes this applies to; empty = all sites.
+  sites: z.array(z.enum(['food', 'saas'])).default([]),
   actions: z.object({
     show_message: z.boolean().default(false),
     message_content: z.string().max(2000).nullable().default(null),
@@ -135,12 +137,17 @@ async function writeChildren(
 }
 
 export async function triggerRoutes(app: FastifyInstance): Promise<void> {
-  // Public: active triggers for the embed/widget to evaluate.
-  app.get('/api/triggers/active', async (_req, reply) => {
+  // Public: active triggers for the embed/widget to evaluate. Scoped to the
+  // caller's site via ?mode= (empty sites = all sites).
+  app.get('/api/triggers/active', async (req, reply) => {
+    const mode = (req.query as { mode?: string }).mode;
+    const where = mode
+      ? { is_active: true, OR: [{ sites: { isEmpty: true } }, { sites: { has: mode } }] }
+      : { is_active: true };
     const triggers = await prisma.triggers.findMany({
-      where: { is_active: true },
+      where,
       orderBy: { priority: 'asc' },
-      select: { id: true, name: true, identifier: true, priority: true, ...withChildren },
+      select: { id: true, name: true, identifier: true, priority: true, sites: true, ...withChildren },
     });
     return reply.send({ triggers: triggers.map((t) => assemble(t as Record<string, unknown>)) });
   });
@@ -166,6 +173,7 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
         priority: true,
         fire_count: true,
         conversation_count: true,
+        sites: true,
         created_at: true,
         updated_at: true,
         ...withChildren,
@@ -190,6 +198,7 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
           identifier: body.identifier,
           is_active: body.is_active,
           priority: body.priority,
+          sites: body.sites,
         },
         select: { id: true },
       });
@@ -215,6 +224,7 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
           identifier: body.identifier,
           is_active: body.is_active,
           priority: body.priority,
+          sites: body.sites,
           updated_at: new Date(),
         },
       });

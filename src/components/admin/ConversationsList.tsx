@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Sparkles, Inbox, Radio } from 'lucide-react';
-import { listConversations, type AdminConversation, type LiveVisitor } from '../../lib/adminApi';
+import { listConversations, conversationSource, type AdminConversation, type LiveVisitor } from '../../lib/adminApi';
+
+const SOURCE_TONE: Record<'food' | 'saas' | 'web', string> = {
+  food: 'bg-blue-100 text-blue-700',
+  saas: 'bg-violet-100 text-violet-700',
+  web: 'bg-gray-100 text-gray-600',
+};
 
 interface Props {
   selectedId: string | null;
@@ -162,6 +168,7 @@ export function ConversationsList({ selectedId, onSelect, reloadNonce, unread, p
           const u = unread[c.id] ?? 0;
           const online = isOnline(c);
           const unanswered = isUnanswered(c);
+          const src = conversationSource(c.metadata);
           const preview =
             c.last_message != null
               ? `${c.last_sender === 'visitor' ? '' : c.last_sender === 'ai' ? '🤖 ' : '↩ '}${c.last_message}`
@@ -195,6 +202,9 @@ export function ConversationsList({ selectedId, onSelect, reloadNonce, unread, p
                   <span className="ml-auto text-xs text-gray-400 shrink-0">{timeAgo(c.updated_at)}</span>
                 </div>
                 <div className="flex items-center gap-2">
+                  <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${SOURCE_TONE[src.tone]}`}>
+                    {src.label}
+                  </span>
                   <p className={`text-sm truncate flex-1 ${unanswered ? 'text-gray-700 font-medium' : 'text-gray-500'}`}>{preview}</p>
                   {u > 0 && (
                     <span className="bg-red-500 text-white text-[10px] rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center shrink-0">

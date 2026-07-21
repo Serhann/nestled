@@ -12,6 +12,8 @@ const kbBody = z.object({
   keywords: z.array(z.string().max(100)).default([]),
   priority: z.number().int().min(0).max(100).default(0),
   is_active: z.boolean().default(true),
+  // Which sites/modes this applies to; empty = all sites.
+  sites: z.array(z.enum(['food', 'saas'])).default([]),
 });
 
 export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
@@ -33,6 +35,7 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
         keywords: body.keywords,
         priority: body.priority,
         is_active: body.is_active,
+        sites: body.sites,
       },
     });
     await audit(req, { action: 'kb.create', targetType: 'knowledge_base', targetId: created.id });
@@ -53,6 +56,7 @@ export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {
           keywords: body.keywords,
           priority: body.priority,
           is_active: body.is_active,
+          sites: body.sites,
           updated_at: new Date(),
         },
       })

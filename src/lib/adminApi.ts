@@ -33,6 +33,28 @@ export interface AdminConversation {
   last_sender: 'visitor' | 'agent' | 'ai' | null;
 }
 
+/**
+ * Which site / scenario pack a conversation came from, for a scannable label in
+ * the inbox. Derived from `widget_mode` (set by the embed's data-mode), falling
+ * back to the host page's hostname.
+ */
+export function conversationSource(
+  metadata: Record<string, unknown> | null | undefined,
+): { label: string; tone: 'food' | 'saas' | 'web' } {
+  const mode = metadata?.widget_mode;
+  if (mode === 'saas') return { label: 'TryJet', tone: 'saas' };
+  if (mode === 'food') return { label: 'JetFood', tone: 'food' };
+  const page = metadata?.current_page;
+  if (typeof page === 'string') {
+    try {
+      return { label: new URL(page).hostname.replace(/^www\./, ''), tone: 'web' };
+    } catch {
+      /* not a URL */
+    }
+  }
+  return { label: 'Web', tone: 'web' };
+}
+
 export interface AdminMessage {
   id: string;
   conversation_id: string;
@@ -70,8 +92,26 @@ export interface LiveVisitor {
   ip: string;
   geo: VisitorGeo | null;
   conversationId: string | null;
+  mode?: string;
   online: boolean;
   timeOnSite: number;
+}
+
+/** Site / scenario label for a live visitor (mirrors conversationSource). */
+export function visitorSource(v: { mode?: string; url?: string | null }): {
+  label: string;
+  tone: 'food' | 'saas' | 'web';
+} {
+  if (v.mode === 'saas') return { label: 'TryJet', tone: 'saas' };
+  if (v.mode === 'food') return { label: 'JetFood', tone: 'food' };
+  if (v.url) {
+    try {
+      return { label: new URL(v.url).hostname.replace(/^www\./, ''), tone: 'web' };
+    } catch {
+      /* not a URL */
+    }
+  }
+  return { label: 'Web', tone: 'web' };
 }
 
 export function apiBase(): string {
@@ -238,6 +278,7 @@ export interface CannedResponse {
   shortcut: string;
   title: string;
   content: string;
+  sites: string[]; // which sites/modes this applies to; empty = all
 }
 export async function listCanned(): Promise<CannedResponse[]> {
   const r = await authed('/api/canned-responses');
@@ -252,6 +293,92 @@ export async function createCanned(body: Omit<CannedResponse, 'id'>): Promise<vo
 }
 export async function deleteCanned(id: string): Promise<void> {
   await authed(`/api/canned-responses/${id}`, { method: 'DELETE' });
+}
+
+// ── Sites (site manager, admin) ───────────────────────────────────────────────
+export interface SiteQuickAction {
+  intent: string;
+  label?: string;
+}
+export interface Site {
+  id: string;
+  key: string;
+  name: string;
+  is_active: boolean;
+  primary_color: string | null;
+  widget_title: string | null;
+  welcome_message: string | null;
+  widget_position: 'left' | 'right' | null;
+  quick_actions: SiteQuickAction[];
+}
+export type SiteInput = Omit<Site, 'id'>;
+
+export async function listSites(): Promise<Site[]> {
+  const r = await authed('/api/sites');
+  return (await jsonOrThrow<{ sites: Site[] }>(r)).sites;
+}
+export async function createSite(body: SiteInput): Promise<void> {
+  const r = await authed('/api/sites', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(r.status === 409 ? 'That site key already exists' : 'Could not save');
+}
+export async function updateSite(id: string, body: SiteInput): Promise<void> {
+  const r = await authed(`/api/sites/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(r.status === 409 ? 'That site key already exists' : 'Could not save');
+}
+export async function deleteSite(id: string): Promise<void> {
+  await authed(`/api/sites/${id}`, { method: 'DELETE' });
+}
+
+// ── Quick actions (managed, admin) ────────────────────────────────────────────
+export interface QuickActionField {
+  name: string;
+  label: string;
+  required: boolean;
+}
+export interface QuickActionDef {
+  id: string;
+  key: string;
+  label: string;
+  kind: 'auto' | 'human';
+  visitor_template: string;
+  reply_template: string;
+  suggestion: string | null;
+  fields: QuickActionField[];
+  priority: number;
+  is_active: boolean;
+}
+export type QuickActionInput = Omit<QuickActionDef, 'id'>;
+
+export async function listQuickActions(): Promise<QuickActionDef[]> {
+  const r = await authed('/api/quick-actions');
+  return (await jsonOrThrow<{ items: QuickActionDef[] }>(r)).items;
+}
+export async function createQuickAction(body: QuickActionInput): Promise<void> {
+  const r = await authed('/api/quick-actions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(r.status === 409 ? 'That key already exists' : 'Could not save');
+}
+export async function updateQuickAction(id: string, body: QuickActionInput): Promise<void> {
+  const r = await authed(`/api/quick-actions/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(r.status === 409 ? 'That key already exists' : 'Could not save');
+}
+export async function deleteQuickAction(id: string): Promise<void> {
+  await authed(`/api/quick-actions/${id}`, { method: 'DELETE' });
 }
 
 // ── Settings + AI usage (admin) ───────────────────────────────────────────────
@@ -291,6 +418,7 @@ export interface KBItem {
   keywords: string[];
   priority: number;
   is_active: boolean;
+  sites: string[]; // which sites/modes this applies to; empty = all
 }
 export type KBInput = Omit<KBItem, 'id'>;
 
@@ -327,6 +455,7 @@ export interface TriggerFull {
   priority: number;
   fire_count: number;
   conversation_count: number;
+  sites: string[]; // which sites/modes this applies to; empty = all
   actions: Record<string, unknown> | null;
   events: Record<string, unknown> | null;
   behaviors: Record<string, unknown> | null;
@@ -337,6 +466,7 @@ export interface TriggerInput {
   identifier: string;
   is_active: boolean;
   priority: number;
+  sites: string[]; // which sites/modes this applies to; empty = all
   actions: {
     show_message: boolean;
     message_content: string | null;

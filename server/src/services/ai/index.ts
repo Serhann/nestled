@@ -38,11 +38,26 @@ async function loadSettings(): Promise<AISettings | null> {
   return (row as AISettings | null) ?? null;
 }
 
-async function loadKnowledge(): Promise<KnowledgeItem[]> {
+async function loadKnowledge(mode?: string): Promise<KnowledgeItem[]> {
+  // Site scoping: an entry with an empty `sites` applies everywhere; otherwise
+  // only when it lists the conversation's site/mode.
+  const where = mode
+    ? { is_active: true, OR: [{ sites: { isEmpty: true } }, { sites: { has: mode } }] }
+    : { is_active: true };
   return prisma.knowledge_base.findMany({
-    where: { is_active: true },
+    where,
     select: { question: true, answer: true, category: true, keywords: true, priority: true },
   });
+}
+
+/** The site/scenario ('food' | 'saas') a conversation belongs to, from metadata. */
+async function conversationMode(conversationId: string): Promise<string | undefined> {
+  const conv = await prisma.conversations.findUnique({
+    where: { id: conversationId },
+    select: { metadata: true },
+  });
+  const m = (conv?.metadata as Record<string, unknown> | null)?.widget_mode;
+  return typeof m === 'string' ? m : undefined;
 }
 
 /**
@@ -58,7 +73,7 @@ export async function generateAIReply(
   const settings = await loadSettings();
   if (!settings) return null;
 
-  const knowledge = await loadKnowledge();
+  const knowledge = await loadKnowledge(await conversationMode(conversationId));
   const provider = providers[settings.ai_provider] ?? knowledgeBaseProvider;
 
   let result;

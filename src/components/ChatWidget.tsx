@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { MessageCircle, X, Send, Minimize2, Paperclip, Volume2, VolumeX, FileText, Smile, ShoppingBag, Loader2, Check, ChevronRight, Star, Clock, MessageSquareText } from 'lucide-react';
+import { MessageCircle, X, Send, Minimize2, Paperclip, Volume2, VolumeX, FileText, Smile, ShoppingBag, Loader2, Check, ChevronRight, Star, Clock, MessageSquareText, AlertTriangle, CreditCard, Sparkles, Tag, Headphones, type LucideIcon } from 'lucide-react';
 import {
   apiBase,
   attachmentUrl,
@@ -74,12 +74,16 @@ interface StoredConversation {
 }
 
 function getVisitorId(): string {
-  const fromParam = new URLSearchParams(window.location.search).get('vid');
+  const params = new URLSearchParams(window.location.search);
+  const fromParam = params.get('vid');
   if (fromParam) return fromParam;
-  let id = localStorage.getItem('jetchat_visitor_id');
+  // Standalone (/chat opened directly): namespace by site key so the same origin
+  // can preview multiple sites without sharing one identity.
+  const key = `jetchat_visitor_id_${params.get('mode') || 'food'}`;
+  let id = localStorage.getItem(key);
   if (!id) {
     id = `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-    localStorage.setItem('jetchat_visitor_id', id);
+    localStorage.setItem(key, id);
   }
   return id;
 }
@@ -144,12 +148,76 @@ function orderStatusMeta(order: OrderContext): { label: string; tone: 'in' | 'do
   return { label, tone: phase === 'delivered' ? 'done' : phase === 'in_progress' ? 'in' : 'other' };
 }
 
+/** A quick-action row/chip: label + intent, with an optional leading icon,
+ *  behaviour, and an intake form to collect before running. */
+export interface QuickAction {
+  label: string;
+  intent: QuickIntent;
+  icon?: LucideIcon;
+  kind?: 'auto' | 'human';
+  fields?: { name: string; label: string; required: boolean }[];
+}
+
+/**
+ * The site key the widget runs as, from the embed's `data-mode` (forwarded as
+ * the `mode` URL param). 'food' is jetfood's order-tracking experience; any
+ * other key is configured in the Site manager. Kept as a raw string so custom
+ * sites work.
+ */
+export type WidgetMode = string;
+
+function readMode(): WidgetMode {
+  return new URLSearchParams(window.location.search).get('mode') || 'food';
+}
+
+/** Icon for each quick-action intent (used when rendering site-configured or
+ *  built-in actions). */
+const INTENT_ICONS: Record<string, LucideIcon> = {
+  where: Clock,
+  status: Clock,
+  late: Clock,
+  change_address: Clock,
+  missing_item: AlertTriangle,
+  wrong: AlertTriangle,
+  refund: CreditCard,
+  tech_issue: AlertTriangle,
+  billing: CreditCard,
+  demo: Sparkles,
+  pricing: Tag,
+  human: Headphones,
+};
+
+/** Default button label per intent when a site doesn't override it. */
+const QUICK_ACTION_DEFAULT_LABEL: Record<string, string> = {
+  where: "Where's my order?",
+  status: 'Order status',
+  late: 'Running late?',
+  change_address: 'Change address',
+  missing_item: 'Missing item',
+  wrong: 'Something was wrong',
+  refund: 'Request a refund',
+  tech_issue: 'Report a technical issue',
+  billing: 'Account & billing',
+  demo: 'Book a demo / trial',
+  pricing: 'Pricing & plans',
+  human: 'Talk to a human',
+};
+
+/** tryjet.io (SaaS) quick actions — support + lead-gen. 'human' is appended by
+ *  the caller as the shared baseline. */
+const SAAS_ACTIONS: QuickAction[] = [
+  { label: 'Report a technical issue', intent: 'tech_issue', icon: AlertTriangle },
+  { label: 'Account & billing', intent: 'billing', icon: CreditCard },
+  { label: 'Book a demo / free trial', intent: 'demo', icon: Sparkles },
+  { label: 'Pricing & plans', intent: 'pricing', icon: Tag },
+];
+
 /**
  * Order-aware quick actions. Informational intents ('where', 'status') are
  * answered automatically by the server; problem intents escalate to a human.
  * Empty when there is no order in context.
  */
-function orderQuickActions(order: OrderContext): { label: string; intent: QuickIntent }[] {
+function orderQuickActions(order: OrderContext): QuickAction[] {
   if (!order.id) return [];
   switch (orderPhase(order.status)) {
     case 'in_progress':
@@ -213,8 +281,14 @@ export function ChatWidget() {
   // "Waiting for an agent" hold: after an escalation the visitor can't type
   // until an agent takes the chat (joins/assigns, or sends the first reply).
   const [waiting, setWaiting] = useState(false);
+  // Once the chat has reached an agent (via an escalating quick action or an
+  // agent joining/replying), stop offering the quick-action chips — the visitor
+  // is now talking to a person.
+  const [escalated, setEscalated] = useState(false);
   // Rate-your-delivery end state (design 2d). Null = not rating.
   const [rating, setRating] = useState<{ stars: number; tags: string[]; comment: string; sent: boolean } | null>(null);
+  // Generic quick-action intake: collect an action's fields before running it.
+  const [intake, setIntake] = useState<{ action: QuickAction; values: Record<string, string> } | null>(null);
 
   // Pre-chat + offline-message forms.
   const [showPreChat, setShowPreChat] = useState(false);
@@ -242,6 +316,8 @@ export function ChatWidget() {
   const primaryColor = config?.primary_color || '#c67139';
   const embedded = isEmbedded();
   const side = config?.widget_position === 'left' ? 'left' : 'right';
+  const mode = useRef<WidgetMode>(readMode()).current;
+  const isFood = mode === 'food';
 
   // ── Load config + agent status ──────────────────────────────────────────────
   useEffect(() => {
@@ -286,7 +362,11 @@ export function ChatWidget() {
     let cancelled = false;
     getMessages(conversation.id, conversation.token)
       .then((r) => {
-        if (!cancelled) setMessages(r.messages);
+        if (cancelled) return;
+        setMessages(r.messages);
+        // If an agent has already spoken in this conversation, keep the quick
+        // actions hidden across reloads.
+        if (r.messages.some((m) => m.sender_type === 'agent')) setEscalated(true);
       })
       .catch(() => undefined);
 
@@ -297,12 +377,19 @@ export function ChatWidget() {
           if (!openRef.current) setUnread((u) => u + 1);
           playBlip();
         }
-        // A real agent replied → they've taken the chat; release the hold.
-        if (m.sender_type === 'agent') setWaiting(false);
+        // A real agent replied → they've taken the chat; release the hold and
+        // stop offering quick actions.
+        if (m.sender_type === 'agent') {
+          setWaiting(false);
+          setEscalated(true);
+        }
       },
       onTyping: (t) => setAgentTyping(t),
       onAgentStatus: (o) => setAgentOnline(o),
-      onAgentJoined: () => setWaiting(false),
+      onAgentJoined: () => {
+        setWaiting(false);
+        setEscalated(true);
+      },
     });
     wsRef.current = ws;
     return () => {
@@ -452,6 +539,8 @@ export function ChatWidget() {
     current_page: hostUrl(),
     screen_resolution: `${window.screen.width}x${window.screen.height}`,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    // Which scenario pack / site this chat came from (food = jetfood, saas = tryjet).
+    widget_mode: mode,
     // Attribute the conversation to the trigger that produced it (analytics).
     ...(activeTriggerId ? { trigger_id: activeTriggerId } : {}),
     // The visitor's current order, so agents see the context in the profile.
@@ -516,24 +605,47 @@ export function ChatWidget() {
   // Run an order quick action. Informational intents get an instant automated
   // reply; problem intents escalate to a human — the server decides and returns
   // both the visitor request and the bot reply.
-  const handleQuickAction = async (intent: QuickIntent) => {
+  const handleQuickAction = async (intent: QuickIntent, fields?: { store?: string; state?: string }) => {
     if (sending) return;
     setShowPreChat(false);
     setSending(true);
     try {
       const conv = await ensureConversation();
-      const { messages: msgs, needs_human } = await apiQuickAction(conv.id, conv.token, intent, orderRef.current);
+      const { messages: msgs, needs_human } = await apiQuickAction(conv.id, conv.token, intent, orderRef.current, fields);
       setMessages((prev) => {
         const seen = new Set(prev.map((m) => m.id));
         return [...prev, ...msgs.filter((m) => m && !seen.has(m.id))];
       });
       // Escalated to an agent → hold the composer until an agent takes the chat.
-      if (needs_human) setWaiting(true);
+      if (needs_human) {
+        setWaiting(true);
+        setEscalated(true);
+      }
     } catch {
       setAttachError(strings.genericError);
     } finally {
       setSending(false);
     }
+  };
+
+  // Route a quick action. If it defines intake fields, collect them first, then
+  // run it with those values; otherwise run it immediately.
+  const startAction = (action: QuickAction) => {
+    if (sending) return;
+    if (action.fields && action.fields.length > 0) setIntake({ action, values: {} });
+    else void handleQuickAction(action.intent);
+  };
+
+  const submitIntake = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!intake) return;
+    const missing = intake.action.fields?.some((f) => f.required && !(intake.values[f.name] ?? '').trim());
+    if (missing) return;
+    const values: Record<string, string> = {};
+    for (const [k, v] of Object.entries(intake.values)) if (v.trim()) values[k] = v.trim();
+    const intent = intake.action.intent;
+    setIntake(null);
+    await handleQuickAction(intent, values);
   };
 
   // Start a plain chat from the intent home ("Something else — just chat").
@@ -565,9 +677,31 @@ export function ChatWidget() {
     }
   };
 
-  const quickActions = orderQuickActions(order);
-  // Offer the rating flow once an order looks delivered.
-  const canRate = order.id != null && orderPhase(order.status) === 'delivered';
+  // Quick actions come from the Site manager when configured; otherwise fall
+  // back to the built-in pack for this site key (food = order-aware; saas =
+  // support + lead-gen; anything else = just "talk to a human").
+  const configuredActions = config?.quick_actions ?? [];
+  const quickActions: QuickAction[] =
+    configuredActions.length > 0
+      ? configuredActions.map((a) => ({
+          intent: a.intent,
+          label: a.label || QUICK_ACTION_DEFAULT_LABEL[a.intent] || a.intent,
+          icon: INTENT_ICONS[a.intent],
+          kind: a.kind,
+          fields: a.fields,
+        }))
+      : isFood
+        ? orderQuickActions(order)
+        : mode === 'saas'
+          ? [...SAAS_ACTIONS, { label: 'Talk to a human', intent: 'human', icon: Headphones }]
+          : [{ label: 'Talk to a human', intent: 'human', icon: Headphones }];
+  // Offer the rating flow once an order looks delivered (food only).
+  const canRate = isFood && order.id != null && orderPhase(order.status) === 'delivered';
+  // The intent home shows before any messages: when the site has configured
+  // actions, always; for the built-in food pack only when there's an order in
+  // context; otherwise (saas / custom) always.
+  const showIntentHome =
+    messages.length === 0 && (configuredActions.length > 0 || (isFood ? order.id != null : true));
 
   const handleInputChange = (value: string) => {
     setInput(value);
@@ -849,6 +983,55 @@ export function ChatWidget() {
                 </button>
               </div>
             </div>
+          ) : intake ? (
+            <div className="flex-1 overflow-y-auto bg-cream flex flex-col">
+              <div className="px-5 pt-5 pb-4">
+                <h4 className="font-display text-xl text-gray-800 flex items-center gap-2">
+                  {intake.action.icon && <intake.action.icon className="w-5 h-5" style={{ color: primaryColor }} />}
+                  {intake.action.label}
+                </h4>
+                <p className="text-sm text-gray-600 mt-1">Just a couple of quick details so we can help.</p>
+              </div>
+              <form onSubmit={submitIntake} className="flex-1 px-5 flex flex-col gap-4">
+                {intake.action.fields?.map((f) => (
+                  <div key={f.name}>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                      {f.label}
+                      {f.required && <span className="text-red-500 ml-1">*</span>}
+                    </label>
+                    <input
+                      value={intake.values[f.name] ?? ''}
+                      onChange={(e) =>
+                        setIntake((s) => (s ? { ...s, values: { ...s.values, [f.name]: e.target.value } } : s))
+                      }
+                      placeholder={f.label}
+                      className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-2xl text-sm outline-none transition focus:ring-4 focus:ring-blue-500/15 focus:border-blue-400"
+                    />
+                  </div>
+                ))}
+                <div className="flex-1" />
+                <div className="pb-5 space-y-2">
+                  <button
+                    type="submit"
+                    disabled={
+                      sending ||
+                      (intake.action.fields ?? []).some((f) => f.required && !(intake.values[f.name] ?? '').trim())
+                    }
+                    className="w-full py-3 text-white rounded-full font-semibold shadow-md hover:opacity-90 active:scale-[0.98] transition disabled:opacity-40"
+                    style={{ backgroundColor: primaryColor }}
+                  >
+                    Continue
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIntake(null)}
+                    className="w-full py-2 text-gray-500 rounded-full text-sm font-medium hover:bg-gray-100 transition"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
           ) : showPreChat ? (
             <div className="flex-1 overflow-y-auto p-5 bg-cream">
               <h4 className="font-display text-xl text-gray-800 mb-1">{strings.preChatTitle}</h4>
@@ -926,30 +1109,36 @@ export function ChatWidget() {
           ) : (
             <>
               <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-cream">
-                {/* Order context card with delivery progress (fed by the host site). */}
-                {order.id && <OrderCard order={order} primaryColor={primaryColor} />}
+                {/* Order context card with delivery progress (food mode, host-fed). */}
+                {isFood && order.id && <OrderCard order={order} primaryColor={primaryColor} />}
 
-                {/* Order-aware intent home (design 2a): the visitor picks what they
-                    need before a conversation exists. */}
-                {messages.length === 0 && order.id && (
+                {/* Intent home (design 2a): the visitor picks what they need
+                    before a conversation exists. Food = order actions; SaaS =
+                    support + lead-gen actions. */}
+                {showIntentHome && (
                   <div className="pt-1">
-                    <p className="text-[11px] font-bold tracking-wider text-gray-500 mb-2 px-1">WHAT DO YOU NEED?</p>
+                    <p className="text-[11px] font-bold tracking-wider text-gray-500 mb-2 px-1">
+                      {isFood ? 'WHAT DO YOU NEED?' : 'HOW CAN WE HELP?'}
+                    </p>
                     <div className="flex flex-col gap-2">
-                      {quickActions.map((a) => (
-                        <button
-                          key={a.label}
-                          onClick={() => handleQuickAction(a.intent)}
-                          disabled={sending}
-                          className="flex items-center gap-3 bg-white border-[1.5px] border-gray-200 rounded-full px-4 py-3 text-left transition hover:border-gray-300 active:scale-[0.99] disabled:opacity-50"
-                        >
-                          <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${primaryColor} 12%, #fff)` }}>
-                            <Clock className="w-4 h-4" style={{ color: primaryColor }} />
-                          </span>
-                          <span className="flex-1 text-sm font-semibold text-gray-800">{a.label}</span>
-                          <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
-                        </button>
-                      ))}
-                      {orders.length > 1 && (
+                      {quickActions.map((a) => {
+                        const Icon = a.icon ?? Clock;
+                        return (
+                          <button
+                            key={a.label}
+                            onClick={() => startAction(a)}
+                            disabled={sending}
+                            className="flex items-center gap-3 bg-white border-[1.5px] border-gray-200 rounded-full px-4 py-3 text-left transition hover:border-gray-300 active:scale-[0.99] disabled:opacity-50"
+                          >
+                            <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${primaryColor} 12%, #fff)` }}>
+                              <Icon className="w-4 h-4" style={{ color: primaryColor }} />
+                            </span>
+                            <span className="flex-1 text-sm font-semibold text-gray-800">{a.label}</span>
+                            <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
+                          </button>
+                        );
+                      })}
+                      {isFood && orders.length > 1 && (
                         <button
                           onClick={() => setShowPicker(true)}
                           className="flex items-center gap-3 bg-white border-[1.5px] border-gray-200 rounded-full px-4 py-3 text-left transition hover:border-gray-300 active:scale-[0.99]"
@@ -988,7 +1177,7 @@ export function ChatWidget() {
                   </div>
                 )}
 
-                {messages.length === 0 && !order.id && (
+                {messages.length === 0 && !showIntentHome && (
                   <div className="pt-1 pb-1">
                     <div className="flex flex-col items-center text-center mb-4">
                       {config?.widget_avatar_url ? (
@@ -1065,8 +1254,12 @@ export function ChatWidget() {
                 <>
                   {/* Order-aware quick actions (fed by the host). Right-aligned pill
                       chips, matching the design's suggested-reply row. */}
-                  {(quickActions.length > 0 || canRate) && messages.length > 0 && (
-                    <div className="flex gap-2 px-3 pt-2 pb-1 bg-white overflow-x-auto justify-end [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {(quickActions.length > 0 || canRate) && messages.length > 0 && !escalated && (
+                    <div className="flex gap-2 px-3 pt-2 pb-1 bg-white overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      {/* Grows to right-align the chips when they fit, but shrinks
+                          to 0 when they overflow so every chip stays scroll-reachable
+                          (justify-end alone makes the leading chips unreachable). */}
+                      <span aria-hidden className="flex-1 shrink min-w-0" />
                       {canRate && (
                         <button
                           onClick={() => setRating({ stars: 0, tags: [], comment: '', sent: false })}
@@ -1080,7 +1273,7 @@ export function ChatWidget() {
                       {quickActions.map((a) => (
                         <button
                           key={a.label}
-                          onClick={() => handleQuickAction(a.intent)}
+                          onClick={() => startAction(a)}
                           disabled={sending}
                           className="shrink-0 rounded-full border-[1.5px] px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition active:scale-95 disabled:opacity-50"
                           style={{

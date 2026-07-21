@@ -14,6 +14,8 @@ import {
   Zap,
   BookOpen,
   ChevronRight,
+  Globe2,
+  MousePointerClick,
 } from 'lucide-react';
 import { LoginPanel } from './admin/LoginPanel';
 import { ConversationsList } from './admin/ConversationsList';
@@ -25,6 +27,8 @@ import { SettingsPanel } from './admin/SettingsPanel';
 import { TriggersPanel } from './admin/TriggersPanel';
 import { MagicBrowse, type ReplayFeed } from './admin/MagicBrowse';
 import { KnowledgeBasePanel } from './admin/KnowledgeBasePanel';
+import { SitesManager } from './admin/SitesManager';
+import { QuickActionsManager } from './admin/QuickActionsManager';
 import { Dashboard } from './admin/Dashboard';
 import {
   tokens,
@@ -44,6 +48,8 @@ type Section =
   | 'chats'
   | 'visitors'
   | 'agents'
+  | 'sites'
+  | 'quick-actions'
   | 'kb'
   | 'canned'
   | 'triggers'
@@ -63,6 +69,8 @@ const NAV: NavItem[] = [
   { id: 'chats', label: 'Chats', icon: MessageSquare, group: 'main' },
   { id: 'visitors', label: 'Live visitors', icon: Users, group: 'main' },
   { id: 'agents', label: 'Agents & users', icon: Users2, adminOnly: true, group: 'manage' },
+  { id: 'sites', label: 'Sites', icon: Globe2, adminOnly: true, group: 'manage' },
+  { id: 'quick-actions', label: 'Quick actions', icon: MousePointerClick, adminOnly: true, group: 'manage' },
   { id: 'kb', label: 'Knowledge base', icon: BookOpen, adminOnly: true, group: 'manage' },
   { id: 'canned', label: 'Canned responses', icon: MessageSquareText, adminOnly: true, group: 'manage' },
   { id: 'triggers', label: 'Triggers', icon: Zap, adminOnly: true, group: 'manage' },
@@ -250,6 +258,10 @@ export function AdminPanel() {
         return <LiveVisitors visitors={presence} onStarted={startChatWith} magicBrowse={magicBrowse} onWatch={startWatch} />;
       case 'agents':
         return <AgentsManager meId={agent.id} onBack={() => go('dashboard')} />;
+      case 'sites':
+        return <SitesManager onBack={() => go('dashboard')} />;
+      case 'quick-actions':
+        return <QuickActionsManager onBack={() => go('dashboard')} />;
       case 'canned':
         return <CannedManager onBack={() => go('dashboard')} />;
       case 'settings':
@@ -435,6 +447,8 @@ function AccountView({
 }) {
   const manage: { id: Section; label: string; icon: typeof Users2 }[] = [
     { id: 'agents', label: 'Agents & users', icon: Users2 },
+    { id: 'sites', label: 'Sites', icon: Globe2 },
+    { id: 'quick-actions', label: 'Quick actions', icon: MousePointerClick },
     { id: 'kb', label: 'Knowledge base', icon: BookOpen },
     { id: 'canned', label: 'Canned responses', icon: MessageSquareText },
     { id: 'triggers', label: 'Triggers', icon: Zap },

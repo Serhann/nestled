@@ -19,6 +19,7 @@ export default defineConfig({
         admin: resolve(__dirname, 'admin.html'),
         chat: resolve(__dirname, 'chat.html'),
         demo: resolve(__dirname, 'demo.html'),
+        tryjet: resolve(__dirname, 'tryjet.html'),
       },
     },
   },

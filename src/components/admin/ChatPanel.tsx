@@ -33,6 +33,7 @@ import {
   listCanned,
   listAgents,
   assignConversation,
+  conversationSource,
   type AdminConversation,
   type AdminMessage,
   type ConversationNote,
@@ -130,8 +131,13 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
     const m = /^\/([a-z0-9-]*)$/.exec(input.trim());
     if (!m) return [];
     const q = m[1];
-    return canned.filter((c) => c.shortcut.startsWith(q)).slice(0, 5);
-  }, [input, canned, mode]);
+    // Scope to this conversation's site: an empty `sites` shows everywhere.
+    const cmode = (conversation?.metadata as { widget_mode?: string } | undefined)?.widget_mode;
+    return canned
+      .filter((c) => c.sites.length === 0 || (cmode != null && c.sites.includes(cmode)))
+      .filter((c) => c.shortcut.startsWith(q))
+      .slice(0, 6);
+  }, [input, canned, mode, conversation]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -219,6 +225,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
           suggestion?: string;
           request?: string;
           order?: { id?: string; status?: string; eta?: string; restaurant?: string; total?: string } | null;
+          fields?: { store?: string; state?: string } | null;
           at?: string;
         };
       }
@@ -247,6 +254,12 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500" /> online
                 </span>
               )}
+              {(() => {
+                const src = conversationSource(conversation?.metadata);
+                const tone =
+                  src.tone === 'saas' ? 'bg-violet-100 text-violet-700' : src.tone === 'food' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600';
+                return <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0 ${tone}`}>{src.label}</span>;
+              })()}
               {handoff && (
                 <span className="inline-flex items-center gap-1 text-[9px] font-bold tracking-wide bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">
                   <Sparkles className="w-2.5 h-2.5" /> ESCALATED BY BOT
@@ -355,6 +368,20 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                 )}
                 .
               </p>
+              {handoff.fields && (handoff.fields.store || handoff.fields.state) && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {handoff.fields.store && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-white border border-blue-200 text-blue-700 px-2.5 py-1 text-xs font-semibold">
+                      🏬 {handoff.fields.store}
+                    </span>
+                  )}
+                  {handoff.fields.state && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-white border border-blue-200 text-blue-700 px-2.5 py-1 text-xs font-semibold">
+                      📍 {handoff.fields.state}
+                    </span>
+                  )}
+                </div>
+              )}
               {handoff.request && (
                 <p className="text-xs text-gray-500 mt-1.5 italic">“{handoff.request}”</p>
               )}
@@ -411,10 +438,13 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         {/* Composer */}
         <div className="border-t border-gray-200">
           {cannedMatches.length > 0 && (
-            <div className="border-b border-gray-100 max-h-48 overflow-y-auto">
+            <div className="border-b border-gray-100 max-h-52 overflow-y-auto">
+              <div className="px-4 pt-2 pb-1 text-[10px] font-bold tracking-wider text-gray-400">
+                CANNED RESPONSES · press Enter or click to insert
+              </div>
               {cannedMatches.map((c) => (
-                <button key={c.id} onClick={() => setInput(c.content)} className="w-full text-left px-4 py-2 hover:bg-gray-50">
-                  <span className="text-sm font-medium text-blue-600">/{c.shortcut}</span>
+                <button key={c.id} onClick={() => setInput(c.content)} className="w-full text-left px-4 py-2 hover:bg-blue-50">
+                  <span className="text-sm font-semibold text-blue-600">/{c.shortcut}</span>
                   <span className="text-sm text-gray-500 ml-2">{c.title}</span>
                   <p className="text-xs text-gray-400 truncate">{c.content}</p>
                 </button>
@@ -439,6 +469,14 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
               type="text"
               value={input}
               onChange={(e) => handleInput(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter while the canned hint is open inserts the top match
+                // instead of sending the "/shortcut" text.
+                if (e.key === 'Enter' && cannedMatches.length > 0) {
+                  e.preventDefault();
+                  setInput(cannedMatches[0].content);
+                }
+              }}
               placeholder={mode === 'note' ? 'Add an internal note…' : 'Type a reply…  (/ for canned)'}
               className={`flex-1 px-4 py-2.5 border rounded-full text-sm outline-none transition focus:ring-4 ${
                 mode === 'note' ? 'bg-amber-50 border-amber-200 focus:ring-amber-400/20 focus:border-amber-400' : 'bg-gray-50 border-gray-200 focus:bg-white focus:ring-blue-500/15 focus:border-blue-400'

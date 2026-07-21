@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Trash2, Plus, MessageSquareText, Zap } from 'lucide-react';
 import { listCanned, createCanned, deleteCanned, type CannedResponse } from '../../lib/adminApi';
-import { ManagePage, PageHeader, Card, PrimaryButton, GhostButton, EmptyState, Field, TextInput, TextArea, Modal } from './ui';
+import { ManagePage, PageHeader, Card, PrimaryButton, GhostButton, EmptyState, Field, TextInput, TextArea, Modal, SiteScope, siteScopeLabel, Badge } from './ui';
 
 export function CannedManager({ onBack }: { onBack: () => void }) {
   const [items, setItems] = useState<CannedResponse[]>([]);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ shortcut: '', title: '', content: '' });
+  const [form, setForm] = useState<{ shortcut: string; title: string; content: string; sites: string[] }>({ shortcut: '', title: '', content: '', sites: [] });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -16,7 +16,7 @@ export function CannedManager({ onBack }: { onBack: () => void }) {
   }, []);
 
   const openForm = () => {
-    setForm({ shortcut: '', title: '', content: '' });
+    setForm({ shortcut: '', title: '', content: '', sites: [] });
     setError('');
     setShowForm(true);
   };
@@ -84,6 +84,9 @@ export function CannedManager({ onBack }: { onBack: () => void }) {
                 </button>
               </div>
               <p className="text-sm text-gray-500 mt-2 line-clamp-3 whitespace-pre-wrap">{c.content}</p>
+              <div className="mt-2">
+                <Badge tone={c.sites.length ? 'violet' : 'gray'}>{siteScopeLabel(c.sites)}</Badge>
+              </div>
             </Card>
           ))}
         </div>
@@ -123,6 +126,7 @@ export function CannedManager({ onBack }: { onBack: () => void }) {
             <Field label="Response text">
               <TextArea required rows={4} placeholder="We're open every day from 10am to 11pm 🍽️" value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} />
             </Field>
+            <SiteScope value={form.sites} onChange={(v) => setForm({ ...form, sites: v })} />
             {error && <p className="text-sm text-red-500">{error}</p>}
           </form>
         </Modal>

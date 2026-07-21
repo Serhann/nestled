@@ -8,7 +8,7 @@ import {
   type TriggerFull,
   type TriggerInput,
 } from '../../lib/adminApi';
-import { ManagePage, PageHeader, Card, PrimaryButton, EmptyState, Field, TextInput, TextArea, Toggle, Badge } from './ui';
+import { ManagePage, PageHeader, Card, PrimaryButton, EmptyState, Field, TextInput, TextArea, Toggle, Badge, SiteScope, siteScopeLabel } from './ui';
 
 function emptyTrigger(): TriggerInput {
   return {
@@ -16,6 +16,7 @@ function emptyTrigger(): TriggerInput {
     identifier: '',
     is_active: true,
     priority: 0,
+    sites: [],
     actions: { show_message: true, message_content: '', localized_messages: {}, open_chatbox: false, play_sound: false },
     events: {
       on_leave_intent: false,
@@ -46,6 +47,7 @@ function toInput(t: TriggerFull): TriggerInput {
     identifier: t.identifier,
     is_active: t.is_active,
     priority: t.priority,
+    sites: t.sites ?? [],
     actions: { ...e.actions, ...(t.actions as object) },
     events: { ...e.events, ...(t.events as object) },
     behaviors: { ...e.behaviors, ...(t.behaviors as object) },
@@ -135,6 +137,9 @@ export function TriggersPanel({ onBack }: { onBack: () => void }) {
             <Field label="Priority">
               <TextInput type="number" className="w-24" value={inp.priority} onChange={(e) => set({ priority: Number(e.target.value) })} />
             </Field>
+          </div>
+          <div className="border-t border-gray-100 pt-4">
+            <SiteScope value={inp.sites} onChange={(v) => set({ sites: v })} />
           </div>
         </EditSection>
 
@@ -241,6 +246,7 @@ export function TriggersPanel({ onBack }: { onBack: () => void }) {
                   <div className="flex items-center gap-2">
                     <p className="font-semibold text-gray-800 truncate">{t.name || t.identifier}</p>
                     {t.is_active ? <Badge tone="green">Active</Badge> : <Badge tone="gray">Off</Badge>}
+                    <Badge tone={t.sites.length ? 'violet' : 'gray'}>{siteScopeLabel(t.sites)}</Badge>
                   </div>
                   <div className="mt-1.5 flex items-center gap-2 flex-wrap text-[11px] text-gray-500">
                     {ev.after_delay && (

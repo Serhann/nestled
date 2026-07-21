@@ -27,13 +27,12 @@ interface AIModeSettings {
   ai_response_mode: 'off' | 'first_message' | 'when_no_agent_online' | 'always';
 }
 
-// ── Order-aware quick actions ────────────────────────────────────────────────
-// The widget's order chips post a structured `intent` (+ the visitor's live
-// order). Informational intents ('where', 'status') are answered automatically
-// from the order data — no human needed. Problem intents (a delay, a missing
-// item, a mistake, a refund, "talk to a human") escalate: the conversation is
-// flagged needs_human and every agent is notified. The bot reply text is
-// generated here (server-side, trusted) rather than accepted from the client.
+// ── Order-aware quick actions (data-driven) ──────────────────────────────────
+// The widget posts a quick-action `intent` (the action's key) + the visitor's
+// live order + any collected fields. The action definition (label, kind, the
+// visitor/reply templates, handoff suggestion) lives in the quick_actions table
+// and is managed in the admin — this route renders its templates server-side
+// (trusted) and escalates when kind === 'human'.
 interface OrderCtx {
   id?: string;
   status?: string;
@@ -49,87 +48,27 @@ const orderCtxSchema = z.object({
 });
 
 const quickActionBody = z.object({
-  intent: z.enum(['where', 'status', 'late', 'change_address', 'missing_item', 'wrong', 'refund', 'human']),
+  intent: z.string().min(1).max(60), // the quick action's key
   order: orderCtxSchema.optional(),
+  fields: z.record(z.string().max(60), z.string().max(1000)).optional(),
 });
 
-type QuickIntent = z.infer<typeof quickActionBody>['intent'];
-
-const ord = (o: OrderCtx) => (o.id ? `#${o.id}` : 'your order');
-
-// Short, human-readable reason for the admin handoff summary (design t3).
-const HANDOFF_REASON: Record<QuickIntent, string> = {
-  where: 'Order tracking',
-  status: 'Order status',
-  late: 'Order running late',
-  change_address: 'Change delivery address',
-  missing_item: 'Missing item',
-  wrong: 'Wrong / incorrect order',
-  refund: 'Refund request',
-  human: 'Wants to talk to an agent',
-};
-
-// A one-line suggested next step the agent can act on.
-const HANDOFF_SUGGESTION: Record<QuickIntent, string> = {
-  where: 'Share a live ETA update.',
-  status: 'Confirm the current order status.',
-  late: 'Check the delay and offer a goodwill gesture if warranted.',
-  change_address: 'Verify identity, then update the delivery address.',
-  missing_item: 'Confirm the missing item and refund or re-send it.',
-  wrong: 'Confirm what went wrong and arrange a fix or refund.',
-  refund: 'Review the order and approve an appropriate refund.',
-  human: 'Greet the customer and ask how you can help.',
-};
-
-const QUICK_INTENTS: Record<
-  QuickIntent,
-  { kind: 'auto' | 'human'; visitor: (o: OrderCtx) => string; reply: (o: OrderCtx) => string }
-> = {
-  where: {
-    kind: 'auto',
-    visitor: (o) => `Where is my order ${ord(o)}?`,
-    reply: (o) =>
-      `Your order ${ord(o)}${o.restaurant ? ` from ${o.restaurant}` : ''} is ${o.status || 'on its way'}` +
-      `${o.eta ? ` — estimated arrival in ${o.eta}` : ''}. I'll let you know the moment it's nearby! 🛵`,
-  },
-  status: {
-    kind: 'auto',
-    visitor: (o) => `What's the status of my order ${ord(o)}?`,
-    reply: (o) =>
-      `Order ${ord(o)} is currently: ${o.status || 'being processed'}` +
-      `${o.eta ? ` (ETA ${o.eta})` : ''}.`,
-  },
-  late: {
-    kind: 'human',
-    visitor: (o) => `My order ${ord(o)} seems late — can someone check?`,
-    reply: () => `Sorry about the wait! I'm connecting you with an agent to check on the delay — please hold on a moment.`,
-  },
-  change_address: {
-    kind: 'human',
-    visitor: (o) => `I need to change the delivery address for order ${ord(o)}.`,
-    reply: () => `Sure — connecting you with an agent to update the delivery address. One moment please.`,
-  },
-  missing_item: {
-    kind: 'human',
-    visitor: (o) => `An item is missing from my order ${ord(o)}.`,
-    reply: () => `I'm sorry about that. Connecting you with an agent to sort out the missing item — please hold on.`,
-  },
-  wrong: {
-    kind: 'human',
-    visitor: (o) => `Something was wrong with my order ${ord(o)}.`,
-    reply: () => `That's not right — connecting you with an agent to help you fix this. One moment please.`,
-  },
-  refund: {
-    kind: 'human',
-    visitor: (o) => `I'd like a refund for order ${ord(o)}.`,
-    reply: () => `I've flagged your refund request — connecting you with an agent to review it. Please hold on a moment.`,
-  },
-  human: {
-    kind: 'human',
-    visitor: (o) => `I'd like to talk to an agent${o.id ? ` about order #${o.id}` : ''}.`,
-    reply: () => `Of course — connecting you with an agent now. Please hold on a moment.`,
-  },
-};
+/** Substitute {placeholders} in a quick-action template from the order + any
+ *  collected fields. Missing tokens render as empty strings. */
+function renderTemplate(tpl: string, order: OrderCtx, fields: Record<string, string>): string {
+  const tokens: Record<string, string> = {
+    order: order.id ? `#${order.id}` : 'your order',
+    status: order.status || 'being processed',
+    eta: order.eta || '',
+    restaurant: order.restaurant || '',
+    restaurant_clause: order.restaurant ? ` from ${order.restaurant}` : '',
+    eta_clause: order.eta ? ` — estimated arrival in ${order.eta}` : '',
+    eta_paren: order.eta ? ` (ETA ${order.eta})` : '',
+    order_about: order.id ? ` about order #${order.id}` : '',
+    ...fields,
+  };
+  return tpl.replace(/\{(\w+)\}/g, (_m, k: string) => tokens[k] ?? '');
+}
 
 /**
  * Decide whether the AI should reply to this visitor message, then post it.
@@ -325,10 +264,14 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     const body = parseBody(quickActionBody, req.body, reply);
     if (!body) return;
 
-    const def = QUICK_INTENTS[body.intent];
+    // Look up the managed action by key. Unknown/inactive → 400.
+    const def = await prisma.quick_actions.findUnique({ where: { key: body.intent } });
+    if (!def || !def.is_active) return reply.code(400).send({ error: 'Unknown quick action' });
+    const isHuman = def.kind === 'human';
     const order: OrderCtx = body.order ?? {};
+    const fields: Record<string, string> = body.fields ?? {};
 
-    const visitorText = def.visitor(order);
+    const visitorText = renderTemplate(def.visitor_template, order, fields);
     const visitorMsg = await insertMessage({ conversationId: id, content: visitorText, senderType: 'visitor' });
     // A resolved conversation re-opens on new visitor activity.
     void prisma.conversations
@@ -337,12 +280,12 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
 
     const botMsg = await insertMessage({
       conversationId: id,
-      content: def.reply(order),
+      content: renderTemplate(def.reply_template, order, fields),
       senderType: 'ai',
-      metadata: { quick_action: body.intent, auto: def.kind === 'auto' },
+      metadata: { quick_action: body.intent, auto: !isHuman },
     });
 
-    if (def.kind === 'human') {
+    if (isHuman) {
       // Escalate: flag for a human and notify every agent. Stamp a handoff
       // summary onto the conversation metadata so the admin inbox can show the
       // "escalated by bot" context + suggested action (design t3).
@@ -354,10 +297,11 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
       const handoff = {
         by: 'bot' as const,
         intent: body.intent,
-        reason: HANDOFF_REASON[body.intent],
-        suggestion: HANDOFF_SUGGESTION[body.intent],
+        reason: def.label,
+        suggestion: def.suggestion ?? undefined,
         request: visitorText,
         order: order.id ? order : null,
+        fields: Object.keys(fields).length > 0 ? fields : null,
         at: new Date().toISOString(),
       };
       const updated = await prisma.conversations.update({
@@ -382,7 +326,7 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.code(201).send({
       messages: [visitorMsg, botMsg].filter(Boolean),
-      needs_human: def.kind === 'human',
+      needs_human: isHuman,
     });
   });
 
