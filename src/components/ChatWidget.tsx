@@ -772,6 +772,11 @@ export function ChatWidget() {
     }
   };
 
+  // Domain allowlist enforcement: if this site blocks unlisted domains and the
+  // host isn't allowed, render nothing at all (the load is still recorded server
+  // side, so the admin sees it in the Site manager).
+  if (config && config.enforce_domains && config.authorized === false) return null;
+
   // ── Render: launcher (closed) ─────────────────────────────────────────────────
   if (!open) {
     // In the embed iframe the launcher sits flush (the iframe itself is small

@@ -6,11 +6,21 @@ import {
   updateSite,
   deleteSite,
   listQuickActions,
+  listSiteDomains,
   type Site,
   type SiteInput,
   type QuickActionDef,
+  type SiteDomain,
 } from '../../lib/adminApi';
-import { ManagePage, PageHeader, Card, PrimaryButton, EmptyState, Field, TextInput, Select, Toggle, Badge } from './ui';
+import { ManagePage, PageHeader, Card, PrimaryButton, EmptyState, Field, TextInput, TextArea, Select, Toggle, Badge } from './ui';
+
+function timeAgo(iso: string): string {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
 
 function emptySite(): SiteInput {
   return {
@@ -22,6 +32,8 @@ function emptySite(): SiteInput {
     welcome_message: null,
     widget_position: null,
     quick_actions: [],
+    allowed_domains: [],
+    enforce_domains: false,
   };
 }
 function toInput(s: Site): SiteInput {
@@ -32,6 +44,7 @@ function toInput(s: Site): SiteInput {
 export function SitesManager({ onBack }: { onBack: () => void }) {
   const [sites, setSites] = useState<Site[]>([]);
   const [catalog, setCatalog] = useState<QuickActionDef[]>([]);
+  const [domains, setDomains] = useState<SiteDomain[]>([]);
   const [editing, setEditing] = useState<{ id: string | null; input: SiteInput } | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -42,6 +55,7 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     void load();
     listQuickActions().then(setCatalog).catch(() => undefined);
+    listSiteDomains().then(setDomains).catch(() => undefined);
   }, []);
 
   const save = async () => {
@@ -154,6 +168,53 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
           </Field>
         </Card>
 
+        {/* Allowed domains */}
+        <Card className="p-5 sm:p-6 space-y-5">
+          <h3 className="font-semibold text-gray-800">Allowed domains</h3>
+          <p className="text-xs text-gray-500 -mt-2">
+            Which domains may embed this site's widget — one per line (e.g. <code className="font-mono">tryjet.io</code>,{' '}
+            <code className="font-mono">*.tryjet.io</code>). A bare domain also covers its subdomains. Leave blank to
+            allow anywhere. Either way, every domain the widget loads on is recorded below.
+          </p>
+          <Field label="Domains">
+            <TextArea
+              rows={3}
+              placeholder={'tryjet.io\napp.tryjet.io'}
+              value={inp.allowed_domains.join('\n')}
+              onChange={(e) => set({ allowed_domains: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) })}
+            />
+          </Field>
+          <Toggle
+            checked={inp.enforce_domains}
+            onChange={(v) => set({ enforce_domains: v })}
+            label="Block unlisted domains"
+            description="Hide the widget entirely on domains that aren't in the list."
+          />
+          {editing.id && (
+            (() => {
+              const seen = domains.filter((d) => d.site_key === inp.key);
+              return (
+                <div className="rounded-2xl bg-canvas/60 border border-gray-100 p-4">
+                  <p className="text-[11px] font-bold tracking-wider text-gray-500 mb-2">SEEN ON THESE DOMAINS</p>
+                  {seen.length === 0 ? (
+                    <p className="text-sm text-gray-400">No loads recorded yet.</p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {seen.map((d) => (
+                        <li key={d.id} className="flex items-center gap-2 text-sm">
+                          <span className="font-mono text-gray-700 truncate flex-1">{d.host}</span>
+                          <span className="text-[11px] text-gray-400 shrink-0">{d.hits}× · {timeAgo(d.last_seen)}</span>
+                          <Badge tone={d.authorized ? 'green' : 'red'}>{d.authorized ? 'allowed' : 'unlisted'}</Badge>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()
+          )}
+        </Card>
+
         {/* Quick actions */}
         <Card className="p-5 sm:p-6 space-y-4">
           <h3 className="font-semibold text-gray-800">Quick actions</h3>
@@ -249,6 +310,10 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
                     {s.quick_actions.length > 0 ? `${s.quick_actions.length} quick actions` : 'built-in actions'}
                   </Badge>
                   {(s.widget_title || s.welcome_message || s.primary_color) && <Badge tone="violet">custom look</Badge>}
+                  {(() => {
+                    const unlisted = domains.filter((d) => d.site_key === s.key && !d.authorized).length;
+                    return unlisted > 0 ? <Badge tone="red">⚠ {unlisted} unlisted domain{unlisted === 1 ? '' : 's'}</Badge> : null;
+                  })()}
                 </div>
               </button>
               <div className="shrink-0 flex items-center gap-1">

@@ -21,6 +21,10 @@ export interface WidgetConfig {
   // Per-site quick actions (Site + Quick-action managers). Empty → widget uses
   // its built-in pack. `fields` = an intake form to collect before running.
   quick_actions?: WidgetQuickAction[];
+  // Domain allowlist result for this load (Site manager). authorized=false means
+  // the host domain isn't in the site's allowlist; enforce_domains hides the widget.
+  authorized?: boolean;
+  enforce_domains?: boolean;
 }
 
 export interface WidgetField {
@@ -85,9 +89,9 @@ async function json<T>(res: Response): Promise<T> {
 
 export function getWidgetConfig(): Promise<{ settings: WidgetConfig }> {
   const site = param('mode') || 'food';
-  return fetch(`${apiBase()}/api/widget-config?site=${encodeURIComponent(site)}`).then((r) =>
-    json<{ settings: WidgetConfig }>(r),
-  );
+  const href = param('href') || document.referrer || '';
+  const q = `site=${encodeURIComponent(site)}${href ? `&href=${encodeURIComponent(href)}` : ''}`;
+  return fetch(`${apiBase()}/api/widget-config?${q}`).then((r) => json<{ settings: WidgetConfig }>(r));
 }
 
 export function getAgentStatus(): Promise<{ online: boolean }> {

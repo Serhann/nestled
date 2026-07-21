@@ -319,8 +319,24 @@ model sites {
   welcome_message String?
   widget_position String? // 'left' | 'right'
   quick_actions   Json     @default("[]") // [{ intent, label? }] — empty = built-in pack
+  allowed_domains String[] @default([]) // hostnames allowed to embed; empty = anywhere
+  enforce_domains Boolean  @default(false) // hide the widget on unlisted domains
   created_at      DateTime @default(now()) @db.Timestamptz(6)
   updated_at      DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// Every domain the widget has actually been loaded on, per site. Lets admins
+/// spot the embed running on an unrecognised site.
+model site_domains {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  site_key   String
+  host       String
+  hits       Int      @default(1)
+  authorized Boolean  @default(true)
+  first_seen DateTime @default(now()) @db.Timestamptz(6)
+  last_seen  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([site_key, host])
 }
 
 /// A managed quick action shown in the widget. Fully data-driven: label, whether

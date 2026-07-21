@@ -310,8 +310,24 @@ export interface Site {
   welcome_message: string | null;
   widget_position: 'left' | 'right' | null;
   quick_actions: SiteQuickAction[];
+  allowed_domains: string[];
+  enforce_domains: boolean;
 }
 export type SiteInput = Omit<Site, 'id'>;
+
+export interface SiteDomain {
+  id: string;
+  site_key: string;
+  host: string;
+  hits: number;
+  authorized: boolean;
+  first_seen: string;
+  last_seen: string;
+}
+export async function listSiteDomains(): Promise<SiteDomain[]> {
+  const r = await authed('/api/sites/domains');
+  return (await jsonOrThrow<{ domains: SiteDomain[] }>(r)).domains;
+}
 
 export async function listSites(): Promise<Site[]> {
   const r = await authed('/api/sites');

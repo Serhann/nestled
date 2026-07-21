@@ -27,6 +27,9 @@ const siteBody = z.object({
   welcome_message: z.string().max(500).nullable().default(null),
   widget_position: z.enum(['left', 'right']).nullable().default(null),
   quick_actions: z.array(quickActionCfg).default([]),
+  // Hostnames allowed to embed (bare domain or *.wildcard). Empty = anywhere.
+  allowed_domains: z.array(z.string().max(253)).default([]),
+  enforce_domains: z.boolean().default(false),
 });
 
 /** Site manager (admin): per-site widget appearance + quick-action config. */
@@ -34,6 +37,13 @@ export async function siteRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/sites', { preHandler: requireAdmin }, async (_req, reply) => {
     const sites = await prisma.sites.findMany({ orderBy: { created_at: 'asc' } });
     return reply.send({ sites });
+  });
+
+  // Where the widget has actually been loaded (per site), newest first — lets
+  // admins spot the embed running on an unrecognised domain.
+  app.get('/api/sites/domains', { preHandler: requireAdmin }, async (_req, reply) => {
+    const domains = await prisma.site_domains.findMany({ orderBy: { last_seen: 'desc' }, take: 500 });
+    return reply.send({ domains });
   });
 
   app.post('/api/sites', { preHandler: requireAdmin }, async (req, reply) => {
@@ -51,6 +61,8 @@ export async function siteRoutes(app: FastifyInstance): Promise<void> {
         welcome_message: body.welcome_message,
         widget_position: body.widget_position,
         quick_actions: body.quick_actions as object,
+        allowed_domains: body.allowed_domains,
+        enforce_domains: body.enforce_domains,
       },
     });
     await audit(req, { action: 'site.create', targetType: 'site', targetId: created.id });
@@ -76,6 +88,8 @@ export async function siteRoutes(app: FastifyInstance): Promise<void> {
           welcome_message: body.welcome_message,
           widget_position: body.widget_position,
           quick_actions: body.quick_actions as object,
+          allowed_domains: body.allowed_domains,
+          enforce_domains: body.enforce_domains,
           updated_at: new Date(),
         },
       })
