@@ -29,9 +29,10 @@ services:
     expose:
       - '80'
     environment:
-      # Coolify routes the domain to this service on port 80. Set the URL in the
-      # Coolify UI's domain field, or here e.g.
-      #   SERVICE_FQDN_WEB_80=chat.jetfood.com
+      # Coolify routes the domain to this service on port 80. IMPORTANT: include
+      # the https:// scheme so Coolify provisions a Let's Encrypt certificate —
+      # a bare domain is treated as HTTP-only (no SSL). Set it in Coolify's env:
+      #   SERVICE_FQDN_WEB_80=https://chat.jetfood.com
       - SERVICE_FQDN_WEB_80
     healthcheck:
       # 127.0.0.1 (not localhost) — localhost can resolve to ::1 while nginx
