@@ -49,6 +49,87 @@
   }
   var visitorId = getVisitorId();
 
+  // ── Cross-site device fingerprint ──────────────────────────────────────────
+  // The visitor id lives in this site's first-party localStorage, so the same
+  // human on another of our customer sites (different origin) mints a brand-new
+  // id. To pool them we compute a device-level fingerprint that is identical
+  // across origins (UA, languages, platform, screen, timezone, canvas, WebGL)
+  // and hand it to the backend, which fuses matching visitors into one person.
+  // Kept lightweight and synchronous; the server only ever sees the hash.
+  function cyrb53(str) {
+    var h1 = 0xdeadbeef,
+      h2 = 0x41c6ce57;
+    for (var i = 0, ch; i < str.length; i++) {
+      ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+  }
+  function canvasSignal() {
+    try {
+      var c = document.createElement('canvas');
+      c.width = 240;
+      c.height = 60;
+      var ctx = c.getContext('2d');
+      if (!ctx) return '';
+      ctx.textBaseline = 'top';
+      ctx.font = "14px 'Arial'";
+      ctx.fillStyle = '#f60';
+      ctx.fillRect(125, 1, 62, 20);
+      ctx.fillStyle = '#069';
+      ctx.fillText('JetChat 🚀 fp', 2, 15);
+      ctx.fillStyle = 'rgba(102,204,0,0.7)';
+      ctx.fillText('JetChat 🚀 fp', 4, 17);
+      return c.toDataURL();
+    } catch (e) {
+      return '';
+    }
+  }
+  function webglSignal() {
+    try {
+      var c = document.createElement('canvas');
+      var gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl) return '';
+      var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      var vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+      var renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      return String(vendor) + '~' + String(renderer);
+    } catch (e) {
+      return '';
+    }
+  }
+  function computeFingerprint() {
+    try {
+      var n = navigator;
+      var s = window.screen;
+      var tz = '';
+      try {
+        tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      } catch (e) {}
+      var parts = [
+        n.userAgent || '',
+        (n.languages || [n.language]).join(','),
+        n.platform || '',
+        n.hardwareConcurrency || '',
+        n.deviceMemory || '',
+        n.maxTouchPoints || '',
+        s ? s.width + 'x' + s.height + 'x' + s.colorDepth : '',
+        window.devicePixelRatio || '',
+        tz,
+        new Date().getTimezoneOffset(),
+        canvasSignal(),
+        webglSignal(),
+      ];
+      return cyrb53(parts.join('||'));
+    } catch (e) {
+      return '';
+    }
+  }
+  var fingerprint = computeFingerprint();
+
   // Visitor identity (Crisp's user:email / user:nickname equivalent). Sources,
   // in order: script data attributes, host URL params, and the JetChat() API.
   function readIdentity() {
@@ -143,6 +224,8 @@
       encodeURIComponent(apiBase) +
       '&vid=' +
       encodeURIComponent(visitorId) +
+      '&fp=' +
+      encodeURIComponent(fingerprint) +
       '&pos=' +
       position +
       '&mode=' +
@@ -238,6 +321,7 @@
         window.JetChatPresence.init({
           apiBase: apiBase,
           visitorId: visitorId,
+          fingerprint: fingerprint,
           mode: mode,
           onProactive: onProactive,
           // rrweb recorder is served from the widget origin (host-page context).

@@ -6,6 +6,7 @@ import { parseBody } from '../lib/validate.js';
 import { insertMessage } from '../lib/messages.js';
 import { broadcastToAgents, sendToConversationVisitors } from '../realtime/hub.js';
 import { translateText } from '../services/ai/index.js';
+import { resolveIdentity, getPersonProfile, personIdForVisitor } from '../services/identity.js';
 // (sendToConversationVisitors is also used to tell the widget an agent joined.)
 
 const replyBody = z.object({ content: z.string().min(1).max(8000) });
@@ -52,6 +53,11 @@ export async function agentConversationRoutes(app: FastifyInstance): Promise<voi
       });
     if (!updated) return reply.code(404).send({ error: 'Conversation not found' });
     broadcastToAgents({ type: 'conversation:updated', conversation: { id, visitor_name: updated.visitor_name } });
+    // An agent-supplied email is a strong identity signal — fuse it into the
+    // people pool so this person's other-site sessions link up too.
+    if (updated.visitor_email) {
+      void resolveIdentity(updated.visitor_id, { email: updated.visitor_email });
+    }
     return reply.send({ conversation: updated });
   });
 
@@ -64,6 +70,16 @@ export async function agentConversationRoutes(app: FastifyInstance): Promise<voi
       take: 100,
     });
     return reply.send({ ips });
+  });
+
+  // Cross-site people pool: the unified person this visitor id resolves to —
+  // every site, email, IP and conversation fused under one identity. Admin-only.
+  app.get('/api/agent/visitors/:visitorId/person', { preHandler: requireAgent }, async (req, reply) => {
+    const { visitorId } = req.params as { visitorId: string };
+    const personId = await personIdForVisitor(visitorId);
+    if (!personId) return reply.send({ person: null });
+    const person = await getPersonProfile(personId);
+    return reply.send({ person });
   });
 
   // Live translation for the agent: translate any text into a target language.

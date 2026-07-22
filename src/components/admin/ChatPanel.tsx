@@ -42,9 +42,12 @@ import {
   translate,
   updateVisitor,
   listVisitorIps,
+  getVisitorPerson,
   type VisitorIp,
+  type PersonProfile,
 } from '../../lib/adminApi';
 import { Markdown } from '../../lib/markdown';
+import { Badge } from './ui';
 import { VisitorAvatar } from './VisitorAvatar';
 import {
   type AdminConversation,
@@ -63,6 +66,7 @@ interface Props {
   presence: LiveVisitor[];
   magicBrowse?: boolean;
   onWatch?: (visitorId: string) => void;
+  onOpenConversation?: (conversationId: string) => void;
   onChanged: () => void;
 }
 
@@ -88,7 +92,7 @@ function duration(ms: number): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
-export function ChatPanel({ conversationId, meId, liveMessage, typing, presence, magicBrowse, onWatch, onChanged }: Props) {
+export function ChatPanel({ conversationId, meId, liveMessage, typing, presence, magicBrowse, onWatch, onOpenConversation, onChanged }: Props) {
   const [conversation, setConversation] = useState<AdminConversation | null>(null);
   const [messages, setMessages] = useState<AdminMessage[]>([]);
   const [notes, setNotes] = useState<ConversationNote[]>([]);
@@ -107,6 +111,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
   const [editName, setEditName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [ips, setIps] = useState<VisitorIp[]>([]);
+  const [person, setPerson] = useState<PersonProfile | null>(null);
   const [showTranslate, setShowTranslate] = useState(false);
   const [translateTo, setTranslateTo] = useState(() => localStorage.getItem('jetchat_tx_in') || '');
   const [replyLang, setReplyLang] = useState(() => localStorage.getItem('jetchat_tx_out') || '');
@@ -124,7 +129,10 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         setMessages(c.messages);
         setNotes(n);
         const vid = c.conversation.visitor_id;
-        if (vid) listVisitorIps(vid).then((r) => !cancelled && setIps(r)).catch(() => undefined);
+        if (vid) {
+          listVisitorIps(vid).then((r) => !cancelled && setIps(r)).catch(() => undefined);
+          getVisitorPerson(vid).then((p) => !cancelled && setPerson(p)).catch(() => undefined);
+        }
       })
       .catch(() => undefined);
     listCanned().then(setCanned).catch(() => undefined);
@@ -752,6 +760,60 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                     </ul>
                   </div>
                 )}
+                {person &&
+                  (person.sites.length > 1 ||
+                    person.visitor_ids.length > 1 ||
+                    person.conversations.length > 1) && (
+                    <div className="pt-1 mt-1 border-t border-gray-100">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <Globe className="w-3.5 h-3.5 text-blue-600" />
+                        <p className="text-[11px] font-bold tracking-wide text-blue-600">
+                          SAME PERSON — CROSS-SITE
+                        </p>
+                      </div>
+                      {/* Site badges this device has been seen on */}
+                      {person.sites.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {person.sites.map((s) => (
+                            <Badge key={s} tone={s === 'saas' ? 'violet' : 'amber'}>
+                              {conversationSource({ widget_mode: s }).label}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[11px] text-gray-400 mb-1.5">
+                        Matched by device fingerprint
+                        {person.emails.length > 0 ? ' + email' : ''} across{' '}
+                        {person.visitor_ids.length} session
+                        {person.visitor_ids.length === 1 ? '' : 's'}.
+                      </p>
+                      {/* Other conversations under this identity */}
+                      <ul className="space-y-1">
+                        {person.conversations
+                          .filter((c) => c.id !== conversationId)
+                          .slice(0, 8)
+                          .map((c) => (
+                            <li key={c.id}>
+                              <button
+                                onClick={() => onOpenConversation?.(c.id)}
+                                disabled={!onOpenConversation}
+                                className="w-full flex items-center gap-2 text-left text-xs rounded-lg px-2 py-1.5 hover:bg-gray-50 disabled:hover:bg-transparent transition"
+                              >
+                                <Badge tone={c.mode === 'saas' ? 'violet' : 'amber'}>
+                                  {conversationSource({ widget_mode: c.mode ?? undefined }).label}
+                                </Badge>
+                                <span className="truncate text-gray-700 flex-1">
+                                  {c.visitor_name || 'Visitor'} · {c.message_count} msg
+                                </span>
+                                <span className="text-gray-400 shrink-0">
+                                  {new Date(c.updated_at).toLocaleDateString()}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  )}
               </dl>
             )}
 

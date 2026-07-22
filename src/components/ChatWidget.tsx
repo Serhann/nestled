@@ -22,6 +22,7 @@ import {
   type QuickIntent,
 } from '../lib/api';
 import { strings } from '../lib/strings';
+import { getFingerprint } from '../lib/fingerprint';
 import { playChime } from '../lib/sound';
 import { Markdown } from '../lib/markdown';
 import { TriggerEngine } from '../utils/triggerEngine';
@@ -299,6 +300,7 @@ export function ChatWidget() {
   const [leaveSent, setLeaveSent] = useState(false);
 
   const visitorId = useRef(getVisitorId());
+  const fingerprint = useRef(getFingerprint());
   const identity = useRef<Record<string, string>>(readIdentity());
   const preChatRef = useRef<Record<string, string>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -421,6 +423,7 @@ export function ChatWidget() {
   useEffect(() => {
     if (embedded) return;
     const p = openPresenceWS(visitorId.current, {
+      fingerprint: fingerprint.current,
       onProactive: (data) => {
         setConversation({ id: data.conversation_id, token: data.visitor_token });
         setShowPreChat(false);
@@ -559,6 +562,7 @@ export function ChatWidget() {
         // Prefer explicit prechat/leave-form input, else known identity.
         visitor_name: extra?.visitor_name ?? identity.current.name,
         visitor_email: extra?.visitor_email ?? identity.current.email,
+        fingerprint: fingerprint.current,
         metadata: conversationMetadata(),
       });
       const conv = { id: created.conversation_id, token: created.visitor_token };

@@ -261,6 +261,7 @@ export function AdminPanel() {
                   presence={presence}
                   magicBrowse={magicBrowse}
                   onWatch={startWatch}
+                  onOpenConversation={setSelectedId}
                   onChanged={() => setListNonce((n) => n + 1)}
                 />
               ) : (

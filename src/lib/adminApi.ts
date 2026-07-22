@@ -271,6 +271,38 @@ export async function listVisitorIps(visitorId: string): Promise<VisitorIp[]> {
   return (await jsonOrThrow<{ ips: VisitorIp[] }>(r)).ips;
 }
 
+// ── Cross-site people pool ──────────────────────────────────────────────────
+export interface PersonProfile {
+  id: string;
+  display_name: string | null;
+  primary_email: string | null;
+  created_at: string;
+  visitor_ids: string[];
+  sites: string[];
+  emails: string[];
+  fingerprints: number;
+  conversations: {
+    id: string;
+    visitor_id: string;
+    visitor_name: string | null;
+    status: string;
+    mode: string | null;
+    message_count: number;
+    updated_at: string;
+  }[];
+  ips: { ip: string; geo: VisitorGeo | null; hits: number; last_seen: string }[];
+}
+
+/**
+ * The unified cross-site person a visitor id resolves to — every site, email,
+ * IP and conversation fused under one identity via device fingerprint. Returns
+ * null if this visitor has not been pooled yet.
+ */
+export async function getVisitorPerson(visitorId: string): Promise<PersonProfile | null> {
+  const r = await authed(`/api/agent/visitors/${encodeURIComponent(visitorId)}/person`);
+  return (await jsonOrThrow<{ person: PersonProfile | null }>(r)).person;
+}
+
 // ── Assignment ────────────────────────────────────────────────────────────────
 /** Omit agentId to claim for yourself; pass null to release to the pool. */
 export async function assignConversation(id: string, agentId?: string | null): Promise<void> {

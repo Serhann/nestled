@@ -414,3 +414,57 @@ model ai_usage {
 
   @@index([created_at], map: "idx_ai_usage_created")
 }
+
+// ---------------------------------------------------------------------------
+// Cross-site people pool.
+//
+// `visitor_id` is minted in the host page's first-party localStorage, so the
+// same human on two different customer sites (different origins) shows up as
+// two unrelated visitor ids. We reconstruct one canonical *person* server-side
+// from device fingerprints (stable across origins) plus email. This graph is
+// ADMIN-ONLY — it is never exposed to visitor endpoints, so a visitor can still
+// only ever reach a conversation they hold the token for (security rule #7).
+// ---------------------------------------------------------------------------
+model persons {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  display_name  String?
+  primary_email String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  visitors visitor_links[]
+  signals  person_signals[]
+
+  @@index([primary_email], map: "idx_persons_email")
+}
+
+// One row per client-minted visitor_id, pointing at the person it belongs to.
+model visitor_links {
+  visitor_id String   @id
+  person_id  String   @db.Uuid
+  mode       String? // site key this visitor id was seen on
+  first_seen DateTime @default(now()) @db.Timestamptz(6)
+  last_seen  DateTime @default(now()) @db.Timestamptz(6)
+
+  person persons @relation(fields: [person_id], references: [id], onDelete: Cascade)
+
+  @@index([person_id], map: "idx_visitor_links_person")
+}
+
+// Unique identity signals (device fingerprint, email). The @@unique on
+// (kind, value) is what fuses two persons: seeing the same fingerprint again
+// resolves to the same person, and overlapping signals trigger a merge.
+model person_signals {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  person_id  String   @db.Uuid
+  kind       String // 'fingerprint' | 'email'
+  value      String
+  hits       Int      @default(1)
+  first_seen DateTime @default(now()) @db.Timestamptz(6)
+  last_seen  DateTime @default(now()) @db.Timestamptz(6)
+
+  person persons @relation(fields: [person_id], references: [id], onDelete: Cascade)
+
+  @@unique([kind, value], map: "uq_person_signals_kind_value")
+  @@index([person_id], map: "idx_person_signals_person")
+}

@@ -12,11 +12,13 @@ import { notifyNewChat, notifyNewMessage } from '../services/discord.js';
 import { pushNewConversation, pushVisitorMessage, pushToAgents } from '../services/push.js';
 import { generateAIReply, summarizeConversation } from '../services/ai/index.js';
 import { recordVisitorIp } from '../services/visitorTracking.js';
+import { resolveIdentity } from '../services/identity.js';
 
 const createBody = z.object({
   visitor_id: z.string().min(1).max(200),
   visitor_name: z.string().max(200).optional(),
   visitor_email: z.string().email().max(200).optional(),
+  fingerprint: z.string().max(128).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -200,6 +202,15 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     if (!conv) return reply.code(500).send({ error: 'Failed to create conversation' });
 
     void recordVisitorIp(body.visitor_id, ip, geo);
+    // Fuse this visitor into the cross-site people pool (admin-only graph).
+    const convMode = (body.metadata?.widget_mode as string | undefined) ?? null;
+    const fingerprint =
+      body.fingerprint ?? (body.metadata?.fingerprint as string | undefined) ?? null;
+    void resolveIdentity(body.visitor_id, {
+      fingerprint,
+      email: body.visitor_email ?? null,
+      mode: convMode,
+    });
 
     broadcastToAgents({
       type: 'conversation:new',
