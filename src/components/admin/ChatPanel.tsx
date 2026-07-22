@@ -21,6 +21,8 @@ import {
   ArrowRight,
   Eye,
   Languages,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   getConversation,
@@ -92,6 +94,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
   const [noteDraft, setNoteDraft] = useState('');
   // Live translation: inbound = show visitor/AI messages in the agent's
   // language; outbound = send the agent's reply in the customer's language.
+  const [summaryOpen, setSummaryOpen] = useState(true);
   const [showTranslate, setShowTranslate] = useState(false);
   const [translateTo, setTranslateTo] = useState(() => localStorage.getItem('jetchat_tx_in') || '');
   const [replyLang, setReplyLang] = useState(() => localStorage.getItem('jetchat_tx_out') || '');
@@ -455,14 +458,28 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
 
         {/* Timeline */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
-          {/* Bot → human handoff summary (design t3). */}
+          {/* Bot → human handoff summary (design t3). Sticky so the agent always
+              sees it while scrolling; collapsible to reclaim space. */}
           {handoff && (
-            <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+            <div className="sticky top-0 z-20 -mx-4 -mt-4 px-4 pt-3 pb-2 bg-gray-50/95 backdrop-blur">
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 shadow-sm p-4">
+              <button
+                type="button"
+                onClick={() => setSummaryOpen((s) => !s)}
+                className="flex items-center gap-1.5 w-full"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                 <span className="text-[10px] font-bold tracking-wider text-blue-700">BOT SUMMARY</span>
-                {handoff.at && <span className="ml-auto text-[11px] text-gray-400">{new Date(handoff.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
-              </div>
+                {!summaryOpen && handoff.summary && (
+                  <span className="text-xs text-gray-600 truncate ml-1.5 font-normal">{handoff.summary}</span>
+                )}
+                {handoff.at && summaryOpen && (
+                  <span className="ml-auto text-[11px] text-gray-400">{new Date(handoff.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                )}
+                {summaryOpen ? <ChevronUp className="w-4 h-4 text-blue-500 shrink-0 ml-auto" /> : <ChevronDown className="w-4 h-4 text-blue-500 shrink-0 ml-auto" />}
+              </button>
+              {summaryOpen && (
+              <div className="mt-2">
               {handoff.summary && <p className="text-sm text-gray-800 leading-relaxed mb-2">{handoff.summary}</p>}
               <p className="text-sm text-gray-800 leading-relaxed">
                 <span className="font-semibold">{handoff.reason ?? 'Handoff'}</span>
@@ -515,6 +532,9 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                 >
                   <CheckCircle className="w-3.5 h-3.5" /> Mark resolved
                 </button>
+              </div>
+              </div>
+              )}
               </div>
             </div>
           )}
