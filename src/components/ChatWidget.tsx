@@ -22,6 +22,7 @@ import {
   type QuickIntent,
 } from '../lib/api';
 import { strings } from '../lib/strings';
+import { playChime } from '../lib/sound';
 import { TriggerEngine } from '../utils/triggerEngine';
 import type { Trigger } from '../types/chat';
 
@@ -64,9 +65,6 @@ function readIdentity(): Record<string, string> {
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const CONV_KEY = 'jetchat_conv';
 const MUTE_KEY = 'jetchat_muted';
-// Short notification blip.
-const BLIP =
-  'data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 
 interface StoredConversation {
   id: string;
@@ -303,7 +301,6 @@ export function ChatWidget() {
   const identity = useRef<Record<string, string>>(readIdentity());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openRef = useRef(open);
@@ -324,7 +321,6 @@ export function ChatWidget() {
     getWidgetConfig()
       .then((r) => setConfig(r.settings))
       .catch(() => undefined);
-    audioRef.current = new Audio(BLIP);
   }, []);
 
   // ── Keep the online/offline indicator fresh ─────────────────────────────────
@@ -469,9 +465,11 @@ export function ChatWidget() {
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
+  // Ding on an incoming agent/AI reply (respects the mute toggle). Plays even
+  // when the widget is open so the visitor always hears a reply land.
   const playBlip = useCallback(() => {
-    if (muted || openRef.current) return;
-    audioRef.current?.play().catch(() => undefined);
+    if (muted) return;
+    playChime();
   }, [muted]);
 
   // Execute a matched trigger's actions. Proactive messages are shown locally
@@ -489,7 +487,7 @@ export function ChatWidget() {
       setTriggerMessage(t.actions.message_content);
       if (!openRef.current) setUnread((u) => u + 1);
     }
-    if (t.actions.play_sound && !muted) audioRef.current?.play().catch(() => undefined);
+    if (t.actions.play_sound && !muted) playChime();
     engineRef.current?.markTriggerExecuted(t.id);
   }, [muted]);
 
