@@ -318,6 +318,7 @@ model sites {
   widget_title    String?
   welcome_message String?
   widget_position String? // 'left' | 'right'
+  system_prompt   String? // per-site AI system prompt; null = use the global one
   quick_actions   Json     @default("[]") // [{ intent, label? }] — empty = built-in pack
   allowed_domains String[] @default([]) // hostnames allowed to embed; empty = anywhere
   enforce_domains Boolean  @default(false) // hide the widget on unlisted domains

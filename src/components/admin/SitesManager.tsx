@@ -31,6 +31,7 @@ function emptySite(): SiteInput {
     widget_title: null,
     welcome_message: null,
     widget_position: null,
+    system_prompt: null,
     quick_actions: [],
     allowed_domains: [],
     enforce_domains: false,
@@ -165,6 +166,23 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
           </Field>
           <Field label="Welcome message">
             <TextInput placeholder="Inherit global welcome" value={inp.welcome_message ?? ''} onChange={(e) => set({ welcome_message: e.target.value || null })} />
+          </Field>
+        </Card>
+
+        {/* AI */}
+        <Card className="p-5 sm:p-6 space-y-5">
+          <h3 className="font-semibold text-gray-800">AI system prompt</h3>
+          <p className="text-xs text-gray-500 -mt-2">
+            Overrides the global system prompt for conversations on this site — set the assistant's tone,
+            role and boundaries per site. Leave blank to use the global one (Settings &amp; AI).
+          </p>
+          <Field label="System prompt">
+            <TextArea
+              rows={5}
+              placeholder="e.g. You are TryJet's support assistant. Be concise and technical…"
+              value={inp.system_prompt ?? ''}
+              onChange={(e) => set({ system_prompt: e.target.value || null })}
+            />
           </Field>
         </Card>
 
@@ -310,6 +328,7 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
                     {s.quick_actions.length > 0 ? `${s.quick_actions.length} quick actions` : 'built-in actions'}
                   </Badge>
                   {(s.widget_title || s.welcome_message || s.primary_color) && <Badge tone="violet">custom look</Badge>}
+                  {s.system_prompt && <Badge tone="green">custom AI</Badge>}
                   {(() => {
                     const unlisted = domains.filter((d) => d.site_key === s.key && !d.authorized).length;
                     return unlisted > 0 ? <Badge tone="red">⚠ {unlisted} unlisted domain{unlisted === 1 ? '' : 's'}</Badge> : null;

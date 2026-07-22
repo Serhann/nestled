@@ -26,6 +26,7 @@ const siteBody = z.object({
   widget_title: z.string().max(120).nullable().default(null),
   welcome_message: z.string().max(500).nullable().default(null),
   widget_position: z.enum(['left', 'right']).nullable().default(null),
+  system_prompt: z.string().max(8000).nullable().default(null),
   quick_actions: z.array(quickActionCfg).default([]),
   // Hostnames allowed to embed (bare domain or *.wildcard). Empty = anywhere.
   allowed_domains: z.array(z.string().max(253)).default([]),
@@ -60,6 +61,7 @@ export async function siteRoutes(app: FastifyInstance): Promise<void> {
         widget_title: body.widget_title,
         welcome_message: body.welcome_message,
         widget_position: body.widget_position,
+        system_prompt: body.system_prompt,
         quick_actions: body.quick_actions as object,
         allowed_domains: body.allowed_domains,
         enforce_domains: body.enforce_domains,
@@ -87,6 +89,7 @@ export async function siteRoutes(app: FastifyInstance): Promise<void> {
           widget_title: body.widget_title,
           welcome_message: body.welcome_message,
           widget_position: body.widget_position,
+          system_prompt: body.system_prompt,
           quick_actions: body.quick_actions as object,
           allowed_domains: body.allowed_domains,
           enforce_domains: body.enforce_domains,

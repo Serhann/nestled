@@ -309,6 +309,7 @@ export interface Site {
   widget_title: string | null;
   welcome_message: string | null;
   widget_position: 'left' | 'right' | null;
+  system_prompt: string | null;
   quick_actions: SiteQuickAction[];
   allowed_domains: string[];
   enforce_domains: boolean;

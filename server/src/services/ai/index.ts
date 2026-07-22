@@ -73,7 +73,19 @@ export async function generateAIReply(
   const settings = await loadSettings();
   if (!settings) return null;
 
-  const knowledge = await loadKnowledge(await conversationMode(conversationId));
+  const mode = await conversationMode(conversationId);
+  // Per-site system prompt override (Site manager) — falls back to the global one.
+  if (mode) {
+    const site = await prisma.sites.findUnique({
+      where: { key: mode },
+      select: { is_active: true, system_prompt: true },
+    });
+    if (site?.is_active && site.system_prompt && site.system_prompt.trim()) {
+      settings.system_prompt = site.system_prompt;
+    }
+  }
+
+  const knowledge = await loadKnowledge(mode);
   const provider = providers[settings.ai_provider] ?? knowledgeBaseProvider;
 
   let result;

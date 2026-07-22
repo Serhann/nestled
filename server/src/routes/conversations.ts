@@ -96,9 +96,18 @@ async function maybeAIReply(conversationId: string): Promise<void> {
 
     const conv = await prisma.conversations.findUnique({
       where: { id: conversationId },
-      select: { ai_greeted: true, needs_human: true },
+      select: { ai_greeted: true, needs_human: true, assigned_agent_id: true },
     });
     if (conv?.needs_human) return; // already handed off — AI stays silent
+    // A human has taken this conversation over (assigned, or already replied) →
+    // the AI steps aside so it never talks over the agent. This is what lets the
+    // AI keep answering *until* an agent picks the chat up.
+    if (conv?.assigned_agent_id) return;
+    const agentReplied = await prisma.messages.findFirst({
+      where: { conversation_id: conversationId, sender_type: 'agent' },
+      select: { id: true },
+    });
+    if (agentReplied) return;
     if (priv.ai_response_mode === 'first_message' && conv?.ai_greeted) return;
     if (priv.ai_response_mode === 'when_no_agent_online' && anyAgentOnline()) return; // a human is here
 
