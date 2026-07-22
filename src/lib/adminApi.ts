@@ -79,6 +79,8 @@ export interface VisitorGeo {
   country_code: string | null;
   city: string | null;
   region: string | null;
+  isp?: string | null;
+  org?: string | null;
 }
 
 export interface LiveVisitor {

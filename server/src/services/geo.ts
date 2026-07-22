@@ -7,6 +7,21 @@ export interface GeoLocation {
   country_code: string | null;
   city: string | null;
   region: string | null;
+  isp?: string | null; // from GeoIP2 Precision/ISP traits (web service only)
+  org?: string | null;
+}
+
+// Partial shape of a MaxMind GeoIP2 web-service response (only what we read).
+interface MaxmindResponse {
+  country?: { iso_code?: string; names?: Record<string, string> };
+  registered_country?: { iso_code?: string; names?: Record<string, string> };
+  city?: { names?: Record<string, string> };
+  subdivisions?: Array<{ names?: Record<string, string> }>;
+  traits?: {
+    isp?: string;
+    organization?: string;
+    autonomous_system_organization?: string;
+  };
 }
 
 /**
@@ -82,7 +97,9 @@ let webErrorLogs = 0;
  */
 async function lookupGeoWeb(ip: string, diag?: { detail?: string; status?: number }): Promise<GeoLocation | null> {
   const auth = Buffer.from(`${env.MAXMIND_ACCOUNT_ID}:${env.MAXMIND_LICENSE_KEY}`).toString('base64');
-  const url = `${env.MAXMIND_ENDPOINT.replace(/\/$/, '')}/${encodeURIComponent(ip)}`;
+  // Base endpoint, tolerant of a trailing slash or a copied `?pretty` query.
+  const base = env.MAXMIND_ENDPOINT.split('?')[0]!.replace(/\/+$/, '');
+  const url = `${base}/${encodeURIComponent(ip)}`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 4000);
   try {
@@ -103,12 +120,16 @@ async function lookupGeoWeb(ip: string, diag?: { detail?: string; status?: numbe
       }
       return null;
     }
-    const data = (await res.json()) as CityResponse;
+    const data = (await res.json()) as MaxmindResponse;
+    // Anycast/hosting IPs may only carry registered_country — fall back to it.
+    const c = data.country ?? data.registered_country;
     return {
-      country: pickName(data.country?.names),
-      country_code: data.country?.iso_code ?? null,
+      country: pickName(c?.names),
+      country_code: c?.iso_code ?? null,
       city: pickName(data.city?.names),
       region: pickName(data.subdivisions?.[0]?.names),
+      isp: data.traits?.isp ?? data.traits?.autonomous_system_organization ?? null,
+      org: data.traits?.organization ?? null,
     };
   } catch (err) {
     if (diag) diag.detail = (err as Error).message;
@@ -174,9 +195,10 @@ export async function lookupGeo(ip: string): Promise<GeoLocation | null> {
     const record = reader.get(ip);
     if (record) {
       const city = record as CityResponse;
+      const c = city.country ?? city.registered_country;
       result = {
-        country: pickName(city.country?.names),
-        country_code: city.country?.iso_code ?? null,
+        country: pickName(c?.names),
+        country_code: c?.iso_code ?? null,
         city: pickName(city.city?.names),
         region: pickName(city.subdivisions?.[0]?.names),
       };

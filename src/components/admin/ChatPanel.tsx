@@ -274,7 +274,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
   const meta = conversation?.metadata as
     | {
         current_page?: string;
-        location?: { city?: string; region?: string; country?: string; country_code?: string };
+        location?: { city?: string; region?: string; country?: string; country_code?: string; isp?: string; org?: string };
         ip_address?: string;
         user_agent?: string;
         language?: string;
@@ -665,6 +665,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
               <dl className="space-y-2.5">
                 <InfoRow icon={<Globe className="w-3.5 h-3.5" />} label="Location" value={geoText || 'Unknown'} />
                 <InfoRow icon={<span className="font-mono text-[10px]">IP</span>} label="IP address" value={meta?.ip_address ?? 'Unknown'} mono />
+                {meta?.location?.isp && <InfoRow label="ISP" value={meta.location.isp} />}
                 {conversation?.visitor_email && <InfoRow label="Email" value={conversation.visitor_email} />}
                 {meta?.phone && <InfoRow label="Phone" value={meta.phone} />}
                 {meta?.user_id && <InfoRow label="User ID" value={meta.user_id} mono />}

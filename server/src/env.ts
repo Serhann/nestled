@@ -53,12 +53,12 @@ const schema = z.object({
   GEOLITE2_DB_PATH: z.string().optional(),
 
   // MaxMind GeoIP web service (per-IP REST lookup). When the account id + key
-  // are set, IP geo is fetched from MaxMind instead of the local DB. Endpoint
-  // defaults to the free GeoLite2 city service; set it to
-  // https://geoip.maxmind.com/geoip/v2.1/city for GeoIP2 Precision.
+  // are set, IP geo is fetched from MaxMind instead of the local DB. This is the
+  // BASE endpoint (the IP is appended by the app). Default is GeoIP2 Precision
+  // City; for the free GeoLite2 service use https://geolite.info/geoip/v2.1/city.
   MAXMIND_ACCOUNT_ID: z.string().optional(),
   MAXMIND_LICENSE_KEY: z.string().optional(),
-  MAXMIND_ENDPOINT: z.string().default('https://geolite.info/geoip/v2.1/city'),
+  MAXMIND_ENDPOINT: z.string().default('https://geoip.maxmind.com/geoip/v2.1/city'),
 
   // Where uploaded attachments are stored on disk, and the per-file size cap.
   UPLOAD_DIR: z.string().default('./uploads'),
