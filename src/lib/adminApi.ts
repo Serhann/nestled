@@ -244,6 +244,33 @@ export async function setStatus(id: string, status: 'open' | 'pending' | 'resolv
   });
 }
 
+/** Set/rename the visitor's name (and optionally email) on a conversation. */
+export async function updateVisitor(
+  id: string,
+  body: { visitor_name?: string | null; visitor_email?: string | null },
+): Promise<void> {
+  await authed(`/api/agent/conversations/${id}/visitor`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export interface VisitorIp {
+  id: string;
+  visitor_id: string;
+  ip: string;
+  geo: VisitorGeo | null;
+  hits: number;
+  first_seen: string;
+  last_seen: string;
+}
+/** Every IP a visitor has connected from (across sessions / IP changes). */
+export async function listVisitorIps(visitorId: string): Promise<VisitorIp[]> {
+  const r = await authed(`/api/agent/visitors/${encodeURIComponent(visitorId)}/ips`);
+  return (await jsonOrThrow<{ ips: VisitorIp[] }>(r)).ips;
+}
+
 // ── Assignment ────────────────────────────────────────────────────────────────
 /** Omit agentId to claim for yourself; pass null to release to the pool. */
 export async function assignConversation(id: string, agentId?: string | null): Promise<void> {

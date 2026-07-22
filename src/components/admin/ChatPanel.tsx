@@ -23,6 +23,8 @@ import {
   Languages,
   ChevronDown,
   ChevronUp,
+  Check,
+  Pencil,
 } from 'lucide-react';
 import {
   getConversation,
@@ -38,8 +40,12 @@ import {
   assignConversation,
   conversationSource,
   translate,
+  updateVisitor,
+  listVisitorIps,
+  type VisitorIp,
 } from '../../lib/adminApi';
 import { Markdown } from '../../lib/markdown';
+import { VisitorAvatar } from './VisitorAvatar';
 import {
   type AdminConversation,
   type AdminMessage,
@@ -98,6 +104,9 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
   // Live translation: inbound = show visitor/AI messages in the agent's
   // language; outbound = send the agent's reply in the customer's language.
   const [summaryOpen, setSummaryOpen] = useState(true);
+  const [editName, setEditName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [ips, setIps] = useState<VisitorIp[]>([]);
   const [showTranslate, setShowTranslate] = useState(false);
   const [translateTo, setTranslateTo] = useState(() => localStorage.getItem('jetchat_tx_in') || '');
   const [replyLang, setReplyLang] = useState(() => localStorage.getItem('jetchat_tx_out') || '');
@@ -114,6 +123,8 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         setConversation(c.conversation);
         setMessages(c.messages);
         setNotes(n);
+        const vid = c.conversation.visitor_id;
+        if (vid) listVisitorIps(vid).then((r) => !cancelled && setIps(r)).catch(() => undefined);
       })
       .catch(() => undefined);
     listCanned().then(setCanned).catch(() => undefined);
@@ -268,6 +279,18 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
     const note = await addNote(conversationId, content);
     setNotes((prev) => [...prev, note]);
     setNoteDraft('');
+  };
+
+  const startEditName = () => {
+    setNameDraft(conversation?.visitor_name ?? '');
+    setEditName(true);
+  };
+  const saveName = async () => {
+    const next = nameDraft.trim();
+    await updateVisitor(conversationId, { visitor_name: next || null });
+    setConversation((c) => (c ? { ...c, visitor_name: next || null } : c));
+    setEditName(false);
+    onChanged();
   };
 
   const name = conversation?.visitor_name || conversation?.visitor_email || 'Anonymous visitor';
@@ -630,12 +653,35 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
       {/* ── Visitor detail sidebar (Crisp-style, tabbed) ─────────────────── */}
       {showInfo && (
         <aside className="absolute lg:static inset-0 lg:inset-auto z-20 bg-white lg:w-80 shrink-0 lg:border-l border-gray-200 flex flex-col">
-          <div className="flex items-center gap-2 px-4 h-12 border-b border-gray-100">
-            <span className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white flex items-center justify-center text-sm font-semibold shrink-0">
-              {name.charAt(0).toUpperCase()}
-            </span>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-800 truncate">{name}</p>
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100">
+            <VisitorAvatar email={conversation?.visitor_email} name={name} size={32} />
+            <div className="min-w-0 flex-1">
+              {editName ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void saveName();
+                  }}
+                  className="flex items-center gap-1"
+                >
+                  <input
+                    autoFocus
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    onBlur={() => void saveName()}
+                    placeholder="Visitor name"
+                    className="min-w-0 flex-1 text-sm border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  />
+                  <button type="submit" className="text-blue-600 p-1" aria-label="Save name">
+                    <Check className="w-4 h-4" />
+                  </button>
+                </form>
+              ) : (
+                <button onClick={startEditName} className="group flex items-center gap-1 max-w-full" title="Rename visitor">
+                  <span className="text-sm font-semibold text-gray-800 truncate">{name}</span>
+                  <Pencil className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 shrink-0" />
+                </button>
+              )}
               <p className="text-[11px] text-gray-500">
                 {live?.online ? 'Online now' : 'Offline'} · {conversation?.status ?? '—'}
               </p>
@@ -690,6 +736,21 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                       <InfoRow key={k} label={k.replace(/^visitor_/, '').replace(/_/g, ' ')} value={String(v)} />
                     ))}
                   </>
+                )}
+                {ips.length > 0 && (
+                  <div className="pt-1 mt-1 border-t border-gray-100">
+                    <p className="text-[11px] font-bold tracking-wide text-gray-400 mb-1">
+                      IP HISTORY{ips.length > 1 ? ` (${ips.length})` : ''}
+                    </p>
+                    <ul className="space-y-1">
+                      {ips.map((r) => (
+                        <li key={r.id} className="flex items-baseline gap-2 text-xs">
+                          <span className="font-mono text-gray-700 truncate">{r.ip}</span>
+                          <span className="text-gray-400 shrink-0 ml-auto">{new Date(r.last_seen).toLocaleDateString()}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </dl>
             )}

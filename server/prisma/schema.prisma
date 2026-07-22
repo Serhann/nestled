@@ -360,6 +360,20 @@ model quick_actions {
   updated_at       DateTime @default(now()) @db.Timestamptz(6)
 }
 
+/// Every IP a visitor has connected from (tracked across sessions / IP changes).
+model visitor_ips {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  visitor_id String
+  ip         String
+  geo        Json?
+  hits       Int      @default(1)
+  first_seen DateTime @default(now()) @db.Timestamptz(6)
+  last_seen  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([visitor_id, ip])
+  @@index([visitor_id], map: "idx_visitor_ips_visitor")
+}
+
 model canned_responses {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   shortcut   String   @unique

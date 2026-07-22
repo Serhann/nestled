@@ -11,6 +11,7 @@ import { clientIp, lookupGeo } from '../services/geo.js';
 import { notifyNewChat, notifyNewMessage } from '../services/discord.js';
 import { pushNewConversation, pushVisitorMessage, pushToAgents } from '../services/push.js';
 import { generateAIReply, summarizeConversation } from '../services/ai/index.js';
+import { recordVisitorIp } from '../services/visitorTracking.js';
 
 const createBody = z.object({
   visitor_id: z.string().min(1).max(200),
@@ -197,6 +198,8 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
       select: { id: true, created_at: true },
     });
     if (!conv) return reply.code(500).send({ error: 'Failed to create conversation' });
+
+    void recordVisitorIp(body.visitor_id, ip, geo);
 
     broadcastToAgents({
       type: 'conversation:new',
