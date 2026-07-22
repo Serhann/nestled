@@ -406,7 +406,7 @@ export function ChatWidget() {
     const state = open ? (minimized ? 'minimized' : 'open') : 'closed';
     const size =
       state === 'closed'
-        ? { width: 76, height: 76 }
+        ? { width: 96, height: 96 } // room around the launcher so its shadow isn't clipped
         : state === 'minimized'
           ? { width: 384, height: 68 }
           : { width: 384, height: 640 };
@@ -789,17 +789,18 @@ export function ChatWidget() {
 
   // ── Render: launcher (closed) ─────────────────────────────────────────────────
   if (!open) {
-    // In the embed iframe the launcher sits flush (the iframe itself is small
-    // and positioned by the host); standalone it anchors to the configured side.
+    // In the embed iframe the launcher is centred within its small (host-sized)
+    // iframe so its drop shadow has room on every side and isn't clipped into a
+    // square; standalone it anchors to the configured corner.
     const launcherClass = embedded
-      ? 'fixed bottom-2 right-2'
+      ? 'fixed inset-0 m-auto'
       : `fixed bottom-4 ${side === 'left' ? 'left-4' : 'right-4'}`;
     return (
       <button
         onClick={handleOpen}
         aria-label={strings.headerDefaultTitle}
-        className={`${launcherClass} group z-[2147483000] w-16 h-16 rounded-full shadow-xl flex items-center justify-center text-white transition-transform duration-200 hover:scale-110 active:scale-95`}
-        style={{ backgroundColor: primaryColor }}
+        className={`${launcherClass} group z-[2147483000] w-16 h-16 rounded-full flex items-center justify-center text-white transition-transform duration-200 hover:scale-110 active:scale-95`}
+        style={{ backgroundColor: primaryColor, boxShadow: '0 3px 12px rgba(0,0,0,0.22)' }}
       >
         {config?.widget_avatar_url ? (
           <img src={config.widget_avatar_url} alt="" className="w-full h-full rounded-full object-cover" />

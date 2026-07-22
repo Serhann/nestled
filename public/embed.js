@@ -198,10 +198,15 @@
     s.borderRadius = '';
   }
 
-  function resize(container, msg) {
+  function resize(built, msg) {
+    var container = built.container;
+    var iframe = built.iframe;
     var mobileFull = window.innerWidth <= 480 && msg.state === 'open';
     if (mobileFull) {
       applyMobileFull(container);
+      // True full-screen: no rounding/shadow on mobile.
+      container.style.boxShadow = 'none';
+      iframe.style.borderRadius = '0';
       if (!vvHandler && window.visualViewport) {
         vvHandler = function () {
           if (window.innerWidth <= 480) applyMobileFull(container);
@@ -216,6 +221,14 @@
         vvHandler = null;
       }
       restoreDefault(container, msg);
+      // The open/minimized panel is a rounded floating card. border-radius on the
+      // iframe clips its (square) content to rounded corners; the shadow sits on
+      // the (transparent) container so it hugs that rounded shape. The closed
+      // launcher stays unrounded/shadowless — the round button carries its own.
+      var panel = msg.state === 'open' || msg.state === 'minimized';
+      iframe.style.borderRadius = panel ? '16px' : '0';
+      container.style.borderRadius = panel ? '16px' : '0';
+      container.style.boxShadow = panel ? '0 12px 48px rgba(0,0,0,0.18)' : 'none';
     }
   }
 
@@ -247,7 +260,7 @@
     window.addEventListener('message', function (event) {
       if (event.source !== built.iframe.contentWindow) return;
       var data = event.data;
-      if (data && data.type === 'jetchat:resize') resize(built.container, data);
+      if (data && data.type === 'jetchat:resize') resize(built, data);
     });
 
     // Public JS API: JetChat('identify', { email, name, user_id, order_id, ... })
