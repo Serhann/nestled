@@ -20,6 +20,7 @@ import {
   Sparkles,
   ArrowRight,
   Eye,
+  Languages,
 } from 'lucide-react';
 import {
   getConversation,
@@ -34,6 +35,7 @@ import {
   listAgents,
   assignConversation,
   conversationSource,
+  translate,
   type AdminConversation,
   type AdminMessage,
   type ConversationNote,
@@ -59,6 +61,11 @@ type TimelineItem =
 
 type Tab = 'info' | 'activity' | 'notes';
 
+const TRANSLATE_LANGS = [
+  'English', 'Turkish', 'Spanish', 'French', 'German', 'Italian', 'Portuguese',
+  'Arabic', 'Russian', 'Hindi', 'Chinese', 'Japanese', 'Korean', 'Dutch',
+] as const;
+
 function clockTime(ms: number): string {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -83,6 +90,12 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
   const [showInfo, setShowInfo] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
   const [tab, setTab] = useState<Tab>('info');
   const [noteDraft, setNoteDraft] = useState('');
+  // Live translation: inbound = show visitor/AI messages in the agent's
+  // language; outbound = send the agent's reply in the customer's language.
+  const [showTranslate, setShowTranslate] = useState(false);
+  const [translateTo, setTranslateTo] = useState(() => localStorage.getItem('jetchat_tx_in') || '');
+  const [replyLang, setReplyLang] = useState(() => localStorage.getItem('jetchat_tx_out') || '');
+  const [translations, setTranslations] = useState<Record<string, string>>({});
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -124,6 +137,44 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [timeline, typing]);
 
+  // Inbound translation: translate visitor/AI messages into the agent's chosen
+  // language, cached by `${id}|${lang}`. A ref keeps the effect off `translations`
+  // so filling the cache doesn't re-trigger it.
+  const translationsRef = useRef(translations);
+  translationsRef.current = translations;
+  useEffect(() => {
+    if (!translateTo) return;
+    const todo = messages.filter(
+      (m) => m.sender_type !== 'agent' && (m.content ?? '').trim() && !(`${m.id}|${translateTo}` in translationsRef.current),
+    );
+    if (todo.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      for (const m of todo) {
+        try {
+          const t = await translate(m.content, translateTo);
+          if (cancelled) return;
+          setTranslations((prev) => ({ ...prev, [`${m.id}|${translateTo}`]: t }));
+        } catch {
+          /* leave original */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, translateTo]);
+
+  const setTx = (dir: 'in' | 'out', lang: string) => {
+    if (dir === 'in') {
+      setTranslateTo(lang);
+      localStorage.setItem('jetchat_tx_in', lang);
+    } else {
+      setReplyLang(lang);
+      localStorage.setItem('jetchat_tx_out', lang);
+    }
+  };
+
   const visitorTyping = typing?.conversationId === conversationId && typing.isTyping;
 
   const cannedMatches = useMemo(() => {
@@ -150,7 +201,16 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         const note = await addNote(conversationId, content);
         setNotes((prev) => [...prev, note]);
       } else {
-        const m = await apiReply(conversationId, content);
+        // Outbound translation: send the reply in the customer's language.
+        let toSend = content;
+        if (replyLang) {
+          try {
+            toSend = await translate(content, replyLang);
+          } catch {
+            /* fall back to the original */
+          }
+        }
+        const m = await apiReply(conversationId, toSend);
         setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
         onChanged();
       }
@@ -222,6 +282,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
           by?: string;
           intent?: string;
           reason?: string;
+          summary?: string;
           suggestion?: string;
           request?: string;
           order?: { id?: string; status?: string; eta?: string; restaurant?: string; total?: string } | null;
@@ -281,6 +342,50 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2 shrink-0">
+            {/* Live translation */}
+            <div className="relative">
+              <button
+                onClick={() => setShowTranslate((s) => !s)}
+                title="Live translation"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition ${
+                  translateTo || replyLang ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}
+              >
+                <Languages className="w-4 h-4" />
+                <span className="hidden sm:inline">{translateTo || replyLang ? 'Translating' : 'Translate'}</span>
+              </button>
+              {showTranslate && (
+                <div className="absolute right-0 mt-1 w-64 bg-white rounded-2xl shadow-lg border border-gray-100 p-3 z-20 space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-bold tracking-wide text-gray-500 mb-1">SHOW MESSAGES IN</label>
+                    <select
+                      value={translateTo}
+                      onChange={(e) => setTx('in', e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm"
+                    >
+                      <option value="">Off (original)</option>
+                      {TRANSLATE_LANGS.map((l) => (
+                        <option key={l} value={l}>{l}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold tracking-wide text-gray-500 mb-1">SEND MY REPLIES IN</label>
+                    <select
+                      value={replyLang}
+                      onChange={(e) => setTx('out', e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm"
+                    >
+                      <option value="">Off (as typed)</option>
+                      {TRANSLATE_LANGS.map((l) => (
+                        <option key={l} value={l}>{l}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-[11px] text-gray-400">Powered by your configured AI provider.</p>
+                </div>
+              )}
+            </div>
             {magicBrowse && onWatch && conversation?.visitor_id && (
               <button
                 onClick={() => onWatch(conversation.visitor_id)}
@@ -357,6 +462,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                 <span className="text-[10px] font-bold tracking-wider text-blue-700">BOT SUMMARY</span>
                 {handoff.at && <span className="ml-auto text-[11px] text-gray-400">{new Date(handoff.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
               </div>
+              {handoff.summary && <p className="text-sm text-gray-800 leading-relaxed mb-2">{handoff.summary}</p>}
               <p className="text-sm text-gray-800 leading-relaxed">
                 <span className="font-semibold">{handoff.reason ?? 'Handoff'}</span>
                 {handoff.order?.id && (
@@ -418,7 +524,15 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                 <p className="whitespace-pre-wrap break-words">{item.data.content}</p>
               </div>
             ) : (
-              <Bubble key={`m-${item.data.id}`} m={item.data} />
+              <Bubble
+                key={`m-${item.data.id}`}
+                m={item.data}
+                translated={
+                  translateTo && item.data.sender_type !== 'agent'
+                    ? translations[`${item.data.id}|${translateTo}`]
+                    : undefined
+                }
+              />
             ),
           )}
           {visitorTyping && (
@@ -707,9 +821,10 @@ function deviceLabel(ua: string): string {
   return [browser, os].filter(Boolean).join(' · ');
 }
 
-function Bubble({ m }: { m: AdminMessage }) {
+function Bubble({ m, translated }: { m: AdminMessage; translated?: string }) {
   const isAgent = m.sender_type === 'agent';
   const attachment = m.metadata?.attachment;
+  const showTx = translated != null && translated !== m.content;
   return (
     <div className={`flex ${isAgent ? 'justify-end' : 'justify-start'}`}>
       <div
@@ -734,6 +849,13 @@ function Bubble({ m }: { m: AdminMessage }) {
               <span className="truncate">{attachment.filename}</span>
             </a>
           )
+        ) : showTx ? (
+          <>
+            <p className="whitespace-pre-wrap break-words">{translated}</p>
+            <p className="mt-1 text-[11px] italic opacity-70 flex items-center gap-1 border-t border-black/5 pt-1">
+              <Languages className="w-3 h-3 shrink-0" /> {m.content}
+            </p>
+          </>
         ) : (
           <p className="whitespace-pre-wrap break-words">{m.content}</p>
         )}

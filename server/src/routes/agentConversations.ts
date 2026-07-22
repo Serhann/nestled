@@ -5,9 +5,11 @@ import { requireAgent } from '../plugins/auth.js';
 import { parseBody } from '../lib/validate.js';
 import { insertMessage } from '../lib/messages.js';
 import { broadcastToAgents, sendToConversationVisitors } from '../realtime/hub.js';
+import { translateText } from '../services/ai/index.js';
 // (sendToConversationVisitors is also used to tell the widget an agent joined.)
 
 const replyBody = z.object({ content: z.string().min(1).max(8000) });
+const translateBody = z.object({ text: z.string().min(1).max(8000), to: z.string().min(1).max(40) });
 const statusBody = z.object({ status: z.enum(['open', 'pending', 'resolved']) });
 const assignBody = z.object({ agent_id: z.string().uuid().nullable().optional() });
 const noteBody = z.object({ content: z.string().min(1).max(4000) });
@@ -30,6 +32,14 @@ const conversationSelect = {
 
 /** Agent-facing conversation endpoints. Any authenticated agent may access. */
 export async function agentConversationRoutes(app: FastifyInstance): Promise<void> {
+  // Live translation for the agent: translate any text into a target language.
+  app.post('/api/agent/translate', { preHandler: requireAgent }, async (req, reply) => {
+    const body = parseBody(translateBody, req.body, reply);
+    if (!body) return;
+    const text = await translateText(body.text, body.to);
+    return reply.send({ text });
+  });
+
   app.get('/api/agent/conversations', { preHandler: requireAgent }, async (req, reply) => {
     const status = (req.query as { status?: string }).status;
     // Include a last-message preview (content + sender) for the list UI via the

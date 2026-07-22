@@ -398,6 +398,16 @@ export async function deleteQuickAction(id: string): Promise<void> {
   await authed(`/api/quick-actions/${id}`, { method: 'DELETE' });
 }
 
+// ── Live translation (agent) ──────────────────────────────────────────────────
+export async function translate(text: string, to: string): Promise<string> {
+  const r = await authed('/api/agent/translate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, to }),
+  });
+  return (await jsonOrThrow<{ text: string }>(r)).text;
+}
+
 // ── Settings + AI usage (admin) ───────────────────────────────────────────────
 export interface AdminSettings {
   public: Record<string, unknown>;
