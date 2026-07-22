@@ -23,6 +23,7 @@ import {
 } from '../lib/api';
 import { strings } from '../lib/strings';
 import { playChime } from '../lib/sound';
+import { Markdown } from '../lib/markdown';
 import { TriggerEngine } from '../utils/triggerEngine';
 import type { Trigger } from '../types/chat';
 
@@ -1371,14 +1372,14 @@ function MessageBubble({ message, primaryColor, token }: { message: WidgetMessag
     );
   } else if (isVisitor) {
     content = (
-      <div className="px-3.5 py-2.5 text-sm text-white rounded-[18px] rounded-br-[6px] shadow-sm" style={{ backgroundColor: primaryColor }}>
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+      <div className="px-3.5 py-2.5 text-sm text-white rounded-[18px] rounded-br-[6px] shadow-sm [&_a]:text-white" style={{ backgroundColor: primaryColor }}>
+        <Markdown text={message.content} />
       </div>
     );
   } else {
     content = (
       <div className="px-3.5 py-2.5 text-sm bg-white text-gray-800 rounded-[18px] rounded-bl-[6px] border border-gray-200">
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        <Markdown text={message.content} />
       </div>
     );
   }

@@ -163,14 +163,59 @@
     return { container: container, iframe: iframe };
   }
 
+  // On mobile the open chat should be true full-screen AND track the visual
+  // viewport so it shrinks above the on-screen keyboard (100vh/dvh don't shrink
+  // when the keyboard opens, which otherwise hides the composer).
+  var vvHandler = null;
+
+  function applyMobileFull(container) {
+    var vv = window.visualViewport;
+    var s = container.style;
+    s.transition = 'none'; // no animation while following the keyboard
+    s.top = (vv ? vv.offsetTop : 0) + 'px';
+    s.left = (vv ? vv.offsetLeft : 0) + 'px';
+    s.right = 'auto';
+    s.bottom = 'auto';
+    s.width = (vv ? vv.width : window.innerWidth) + 'px';
+    s.height = (vv ? vv.height : window.innerHeight) + 'px';
+    s.maxWidth = 'none';
+    s.maxHeight = 'none';
+    s.borderRadius = '0';
+  }
+
+  function restoreDefault(container, msg) {
+    var s = container.style;
+    s.transition = 'width 0.25s ease, height 0.25s ease';
+    s.top = 'auto';
+    s.left = 'auto';
+    s.right = 'auto';
+    s.bottom = '16px';
+    s[position] = '16px';
+    s.width = (msg.width || LAUNCHER) + 'px';
+    s.height = (msg.height || LAUNCHER) + 'px';
+    s.maxWidth = 'calc(100vw - 32px)';
+    s.maxHeight = 'calc(100vh - 32px)';
+    s.borderRadius = '';
+  }
+
   function resize(container, msg) {
     var mobileFull = window.innerWidth <= 480 && msg.state === 'open';
     if (mobileFull) {
-      container.style.width = 'calc(100vw - 24px)';
-      container.style.height = 'calc(100vh - 24px)';
+      applyMobileFull(container);
+      if (!vvHandler && window.visualViewport) {
+        vvHandler = function () {
+          if (window.innerWidth <= 480) applyMobileFull(container);
+        };
+        window.visualViewport.addEventListener('resize', vvHandler);
+        window.visualViewport.addEventListener('scroll', vvHandler);
+      }
     } else {
-      container.style.width = (msg.width || LAUNCHER) + 'px';
-      container.style.height = (msg.height || LAUNCHER) + 'px';
+      if (vvHandler && window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', vvHandler);
+        window.visualViewport.removeEventListener('scroll', vvHandler);
+        vvHandler = null;
+      }
+      restoreDefault(container, msg);
     }
   }
 

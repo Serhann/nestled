@@ -38,6 +38,9 @@ import {
   assignConversation,
   conversationSource,
   translate,
+} from '../../lib/adminApi';
+import { Markdown } from '../../lib/markdown';
+import {
   type AdminConversation,
   type AdminMessage,
   type ConversationNote,
@@ -880,13 +883,13 @@ function Bubble({ m, translated }: { m: AdminMessage; translated?: string }) {
           )
         ) : showTx ? (
           <>
-            <p className="whitespace-pre-wrap break-words">{translated}</p>
+            <Markdown text={translated ?? ''} />
             <p className="mt-1 text-[11px] italic opacity-70 flex items-center gap-1 border-t border-black/5 pt-1">
               <Languages className="w-3 h-3 shrink-0" /> {m.content}
             </p>
           </>
         ) : (
-          <p className="whitespace-pre-wrap break-words">{m.content}</p>
+          <Markdown text={m.content} />
         )}
       </div>
     </div>
