@@ -92,10 +92,9 @@ let webErrorLogs = 0;
 /**
  * Per-IP lookup via the MaxMind GeoIP web service (Basic auth). Best-effort:
  * returns null on any error but logs the reason (first few times) so misconfig
- * (401 auth, wrong endpoint) is visible in the app logs. When `throwOnError` is
- * set (the /geo-test diagnostic), it returns the error detail instead.
+ * (401 auth, wrong endpoint) is visible in the app logs.
  */
-async function lookupGeoWeb(ip: string, diag?: { detail?: string; status?: number }): Promise<GeoLocation | null> {
+async function lookupGeoWeb(ip: string): Promise<GeoLocation | null> {
   const auth = Buffer.from(`${env.MAXMIND_ACCOUNT_ID}:${env.MAXMIND_LICENSE_KEY}`).toString('base64');
   // Base endpoint, tolerant of a trailing slash or a copied `?pretty` query.
   const base = env.MAXMIND_ENDPOINT.split('?')[0]!.replace(/\/+$/, '');
@@ -109,10 +108,6 @@ async function lookupGeoWeb(ip: string, diag?: { detail?: string; status?: numbe
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      if (diag) {
-        diag.status = res.status;
-        diag.detail = body.slice(0, 300);
-      }
       if (webErrorLogs < 5) {
         webErrorLogs++;
         // eslint-disable-next-line no-console
@@ -132,7 +127,6 @@ async function lookupGeoWeb(ip: string, diag?: { detail?: string; status?: numbe
       org: data.traits?.organization ?? null,
     };
   } catch (err) {
-    if (diag) diag.detail = (err as Error).message;
     if (webErrorLogs < 5) {
       webErrorLogs++;
       // eslint-disable-next-line no-console
@@ -142,34 +136,6 @@ async function lookupGeoWeb(ip: string, diag?: { detail?: string; status?: numbe
   } finally {
     clearTimeout(timer);
   }
-}
-
-/** Diagnostic used by the admin /geo-test endpoint. Bypasses cache, surfaces the
- *  error detail, and reports why a lookup did/didn't hit MaxMind. */
-export async function geoDiagnose(ip: string): Promise<{
-  ip: string;
-  source: 'maxmind' | 'local-db' | 'disabled';
-  enabled: boolean;
-  endpoint: string | null;
-  private: boolean;
-  result: GeoLocation | null;
-  status?: number;
-  detail?: string;
-}> {
-  const base = {
-    ip,
-    enabled: maxmindEnabled,
-    endpoint: maxmindEnabled ? env.MAXMIND_ENDPOINT : null,
-    private: isPrivateIp(ip),
-  };
-  if (maxmindEnabled) {
-    if (isPrivateIp(ip)) return { ...base, source: 'maxmind', result: null, detail: 'private/local IP — skipped' };
-    const diag: { detail?: string; status?: number } = {};
-    const result = await lookupGeoWeb(ip, diag);
-    return { ...base, source: 'maxmind', result, status: diag.status, detail: diag.detail };
-  }
-  const result = await lookupGeo(ip);
-  return { ...base, source: env.GEOLITE2_DB_PATH ? 'local-db' : 'disabled', result };
 }
 
 export async function lookupGeo(ip: string): Promise<GeoLocation | null> {
