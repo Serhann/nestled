@@ -278,6 +278,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         order_id?: string;
         user_id?: string;
         phone?: string;
+        prechat?: Record<string, string>;
         handoff?: {
           by?: string;
           intent?: string;
@@ -658,6 +659,14 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                 {conversation && <InfoRow label="First seen" value={new Date(conversation.created_at).toLocaleString()} />}
                 <InfoRow label="Messages" value={String(conversation?.message_count ?? messages.length)} />
                 <InfoRow label="Visitor ID" value={conversation?.visitor_id ?? ''} mono truncate />
+                {meta?.prechat && Object.keys(meta.prechat).length > 0 && (
+                  <>
+                    <div className="pt-1 mt-1 border-t border-gray-100 text-[11px] font-bold tracking-wide text-gray-400">PRE-CHAT</div>
+                    {Object.entries(meta.prechat).map(([k, v]) => (
+                      <InfoRow key={k} label={k.replace(/^visitor_/, '').replace(/_/g, ' ')} value={String(v)} />
+                    ))}
+                  </>
+                )}
               </dl>
             )}
 

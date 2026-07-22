@@ -299,6 +299,7 @@ export function ChatWidget() {
 
   const visitorId = useRef(getVisitorId());
   const identity = useRef<Record<string, string>>(readIdentity());
+  const preChatRef = useRef<Record<string, string>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -543,6 +544,8 @@ export function ChatWidget() {
     ...(activeTriggerId ? { trigger_id: activeTriggerId } : {}),
     // The visitor's current order, so agents see the context in the profile.
     ...(orderRef.current.id ? { order: orderRef.current } : {}),
+    // Pre-chat answers (site-configured lead capture), shown in the agent profile.
+    ...(Object.keys(preChatRef.current).length ? { prechat: preChatRef.current, ...preChatRef.current } : {}),
     // Known visitor identity (user_id, order_id, and any custom traits).
     ...identity.current,
   });
@@ -746,6 +749,14 @@ export function ChatWidget() {
     }
     setPreChatErrors(errors);
     if (Object.keys(errors).length > 0) return;
+    // Keep every answer (trimmed, non-empty) so it lands in the conversation
+    // metadata for the agent — not just name/email.
+    const answers: Record<string, string> = {};
+    for (const f of fields) {
+      const v = (preChat[f.name] ?? '').trim();
+      if (v) answers[f.name] = v;
+    }
+    preChatRef.current = answers;
     setShowPreChat(false);
     await ensureConversation({
       visitor_name: preChat.visitor_name,

@@ -90,6 +90,14 @@ export async function widgetRoutes(app: FastifyInstance): Promise<void> {
         if (site.widget_position === 'left' || site.widget_position === 'right') {
           settings.widget_position = site.widget_position;
         }
+        // Per-site pre-chat (lead capture): null = inherit global; true = ask the
+        // site's fields; false = no pre-chat on this site.
+        if (site.pre_chat_enabled === true) {
+          settings.pre_chat_enabled = true;
+          settings.pre_chat_fields = (Array.isArray(site.pre_chat_fields) ? site.pre_chat_fields : []) as typeof settings.pre_chat_fields;
+        } else if (site.pre_chat_enabled === false) {
+          settings.pre_chat_enabled = false;
+        }
         // Resolve the site's chosen action keys against the managed quick_actions
         // catalog so the widget gets each action's label, kind and intake fields.
         const chosen = (Array.isArray(site.quick_actions) ? site.quick_actions : []) as { intent: string; label?: string }[];

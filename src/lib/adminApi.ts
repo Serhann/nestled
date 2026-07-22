@@ -310,9 +310,18 @@ export interface Site {
   welcome_message: string | null;
   widget_position: 'left' | 'right' | null;
   system_prompt: string | null;
+  pre_chat_enabled: boolean | null; // null = inherit global; true = site fields; false = off
+  pre_chat_fields: SitePreChatField[];
   quick_actions: SiteQuickAction[];
   allowed_domains: string[];
   enforce_domains: boolean;
+}
+export interface SitePreChatField {
+  name: string;
+  label: string;
+  type: 'text' | 'email' | 'tel';
+  required: boolean;
+  placeholder: string;
 }
 export type SiteInput = Omit<Site, 'id'>;
 

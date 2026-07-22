@@ -319,6 +319,8 @@ model sites {
   welcome_message String?
   widget_position String? // 'left' | 'right'
   system_prompt   String? // per-site AI system prompt; null = use the global one
+  pre_chat_enabled Boolean? // null = inherit global; true = ask site fields; false = off
+  pre_chat_fields Json     @default("[]") // [{ name, label, type, required, placeholder }]
   quick_actions   Json     @default("[]") // [{ intent, label? }] — empty = built-in pack
   allowed_domains String[] @default([]) // hostnames allowed to embed; empty = anywhere
   enforce_domains Boolean  @default(false) // hide the widget on unlisted domains

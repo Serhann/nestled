@@ -11,6 +11,7 @@ import {
   type SiteInput,
   type QuickActionDef,
   type SiteDomain,
+  type SitePreChatField,
 } from '../../lib/adminApi';
 import { ManagePage, PageHeader, Card, PrimaryButton, EmptyState, Field, TextInput, TextArea, Select, Toggle, Badge } from './ui';
 
@@ -32,6 +33,8 @@ function emptySite(): SiteInput {
     welcome_message: null,
     widget_position: null,
     system_prompt: null,
+    pre_chat_enabled: null,
+    pre_chat_fields: [],
     quick_actions: [],
     allowed_domains: [],
     enforce_domains: false,
@@ -167,6 +170,76 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
           <Field label="Welcome message">
             <TextInput placeholder="Inherit global welcome" value={inp.welcome_message ?? ''} onChange={(e) => set({ welcome_message: e.target.value || null })} />
           </Field>
+        </Card>
+
+        {/* Pre-chat form */}
+        <Card className="p-5 sm:p-6 space-y-4">
+          <h3 className="font-semibold text-gray-800">Pre-chat form</h3>
+          <p className="text-xs text-gray-500 -mt-2">
+            Ask the visitor for details (name, email, phone…) before the chat starts. Answers are attached
+            to the conversation so agents see them.
+          </p>
+          <Field label="Behaviour">
+            <Select
+              value={inp.pre_chat_enabled === null ? 'inherit' : inp.pre_chat_enabled ? 'custom' : 'off'}
+              onChange={(e) => {
+                const v = e.target.value;
+                set({ pre_chat_enabled: v === 'inherit' ? null : v === 'custom' });
+              }}
+            >
+              <option value="inherit">Inherit global setting</option>
+              <option value="off">Don't ask</option>
+              <option value="custom">Ask these fields</option>
+            </Select>
+          </Field>
+          {inp.pre_chat_enabled === true && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-700">Fields</span>
+                <button
+                  type="button"
+                  onClick={() => set({ pre_chat_fields: [...inp.pre_chat_fields, { name: '', label: '', type: 'text', required: true, placeholder: '' }] })}
+                  className="inline-flex items-center gap-1 rounded-full bg-white border border-gray-200 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:bg-gray-50"
+                >
+                  <Plus className="w-4 h-4" /> Add field
+                </button>
+              </div>
+              {inp.pre_chat_fields.length === 0 && <p className="text-sm text-gray-400">No fields yet.</p>}
+              {inp.pre_chat_fields.map((f, i) => {
+                const setF = (p: Partial<SitePreChatField>) =>
+                  set({ pre_chat_fields: inp.pre_chat_fields.map((x, idx) => (idx === i ? { ...x, ...p } : x)) });
+                return (
+                  <div key={i} className="rounded-2xl border border-gray-200 p-2.5 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <TextInput placeholder="name (email)" className="!py-2 font-mono max-w-[150px]" value={f.name}
+                        onChange={(e) => setF({ name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') })} />
+                      <TextInput placeholder="Label (Email address)" className="!py-2 flex-1" value={f.label} onChange={(e) => setF({ label: e.target.value })} />
+                      <button type="button" onClick={() => set({ pre_chat_fields: inp.pre_chat_fields.filter((_, idx) => idx !== i) })}
+                        className="shrink-0 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg" aria-label="Remove field">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Select className="!py-2 max-w-[120px]" value={f.type} onChange={(e) => setF({ type: e.target.value as SitePreChatField['type'] })}>
+                        <option value="text">Text</option>
+                        <option value="email">Email</option>
+                        <option value="tel">Phone</option>
+                      </Select>
+                      <TextInput placeholder="Placeholder" className="!py-2 flex-1" value={f.placeholder} onChange={(e) => setF({ placeholder: e.target.value })} />
+                      <button type="button" onClick={() => setF({ required: !f.required })}
+                        className={`shrink-0 rounded-full px-2.5 py-1.5 text-[11px] font-semibold ${f.required ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {f.required ? 'required' : 'optional'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-gray-400">
+                Tip: name a field <code className="font-mono">visitor_name</code> or <code className="font-mono">visitor_email</code> to
+                fill the conversation's name/email; others are saved as visitor details.
+              </p>
+            </div>
+          )}
         </Card>
 
         {/* AI */}
