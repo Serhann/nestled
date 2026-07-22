@@ -23,9 +23,12 @@ services:
     restart: unless-stopped
     depends_on:
       - app
+    expose:
+      - '80'
     environment:
-      # Coolify binds a domain to this service's port 80. Set the actual URL in
-      # the Coolify UI (or here) as SERVICE_FQDN_WEB=https://staging.your-domain
+      # Coolify routes the domain to this service on port 80. Set the URL in the
+      # Coolify UI's domain field, or here e.g.
+      #   SERVICE_FQDN_WEB_80=chat-staging.iydo.com
       - SERVICE_FQDN_WEB_80
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost:80/']
@@ -94,7 +97,9 @@ services:
     volumes:
       - jetchat_pgdata_staging:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-jetchat}']
+      # Target the actual DB (defaults to the user name otherwise, which spams
+      # "database ... does not exist" in the logs).
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-jetchat} -d ${POSTGRES_DB:-jetchat_staging}']
       interval: 5s
       timeout: 5s
       retries: 10
