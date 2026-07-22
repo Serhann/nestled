@@ -54,9 +54,65 @@ function pickName(names?: unknown): string | null {
   return n.en ?? Object.values(n).find((v): v is string => typeof v === 'string') ?? null;
 }
 
+/** Private / loopback / link-local IPs never have public geo — skip the lookup. */
+function isPrivateIp(ip: string): boolean {
+  return (
+    ip === '127.0.0.1' ||
+    ip === '::1' ||
+    ip.startsWith('10.') ||
+    ip.startsWith('192.168.') ||
+    ip.startsWith('169.254.') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ||
+    /^(fc|fd|fe80)/i.test(ip)
+  );
+}
+
+const maxmindEnabled = Boolean(env.MAXMIND_ACCOUNT_ID && env.MAXMIND_LICENSE_KEY);
+
+/** Per-IP lookup via the MaxMind GeoIP web service (Basic auth). Best-effort. */
+async function lookupGeoWeb(ip: string): Promise<GeoLocation | null> {
+  const auth = Buffer.from(`${env.MAXMIND_ACCOUNT_ID}:${env.MAXMIND_LICENSE_KEY}`).toString('base64');
+  const url = `${env.MAXMIND_ENDPOINT.replace(/\/$/, '')}/${encodeURIComponent(ip)}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      if (!warned) {
+        // eslint-disable-next-line no-console
+        console.warn(`[geo] MaxMind web service returned ${res.status}`);
+        warned = true;
+      }
+      return null;
+    }
+    const data = (await res.json()) as CityResponse;
+    return {
+      country: pickName(data.country?.names),
+      country_code: data.country?.iso_code ?? null,
+      city: pickName(data.city?.names),
+      region: pickName(data.subdivisions?.[0]?.names),
+    };
+  } catch {
+    return null; // network/timeout/parse — degrade to no geo
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function lookupGeo(ip: string): Promise<GeoLocation | null> {
   if (!ip || ip === 'unknown') return null;
   if (cache.has(ip)) return cache.get(ip) ?? null;
+
+  // Prefer the MaxMind web service when configured (skip un-geolocatable IPs).
+  if (maxmindEnabled) {
+    const result = isPrivateIp(ip) ? null : await lookupGeoWeb(ip);
+    if (cache.size >= CACHE_MAX) cache.clear();
+    cache.set(ip, result);
+    return result;
+  }
 
   const reader = await getReader();
   if (!reader) {

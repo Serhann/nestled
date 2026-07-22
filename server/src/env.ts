@@ -48,8 +48,17 @@ const schema = z.object({
   VAPID_SUBJECT: z.string().default('mailto:admin@jetfood.com'),
 
   // Path to a local MaxMind GeoLite2 .mmdb (Country or City). When unset or
-  // missing, geo lookups return null gracefully (no external API is ever hit).
+  // missing, geo lookups fall back to the MaxMind web service (below) or, if
+  // that's also unset, return null gracefully (no external API is ever hit).
   GEOLITE2_DB_PATH: z.string().optional(),
+
+  // MaxMind GeoIP web service (per-IP REST lookup). When the account id + key
+  // are set, IP geo is fetched from MaxMind instead of the local DB. Endpoint
+  // defaults to the free GeoLite2 city service; set it to
+  // https://geoip.maxmind.com/geoip/v2.1/city for GeoIP2 Precision.
+  MAXMIND_ACCOUNT_ID: z.string().optional(),
+  MAXMIND_LICENSE_KEY: z.string().optional(),
+  MAXMIND_ENDPOINT: z.string().default('https://geolite.info/geoip/v2.1/city'),
 
   // Where uploaded attachments are stored on disk, and the per-file size cap.
   UPLOAD_DIR: z.string().default('./uploads'),

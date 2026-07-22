@@ -68,6 +68,11 @@ services:
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@jetfood.com}
       GEOLITE2_DB_PATH: ${GEOLITE2_DB_PATH:-}
+      # MaxMind GeoIP web service (per-IP location lookup). When set, used instead
+      # of the local DB. Endpoint defaults to the free GeoLite2 city service.
+      MAXMIND_ACCOUNT_ID: ${MAXMIND_ACCOUNT_ID:-}
+      MAXMIND_LICENSE_KEY: ${MAXMIND_LICENSE_KEY:-}
+      MAXMIND_ENDPOINT: ${MAXMIND_ENDPOINT:-https://geolite.info/geoip/v2.1/city}
       UPLOAD_DIR: /data/uploads
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
       SENTRY_DSN: ${SENTRY_DSN:-}
