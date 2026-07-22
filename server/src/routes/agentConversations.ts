@@ -6,6 +6,7 @@ import { parseBody } from '../lib/validate.js';
 import { insertMessage } from '../lib/messages.js';
 import { broadcastToAgents, sendToConversationVisitors } from '../realtime/hub.js';
 import { translateText } from '../services/ai/index.js';
+import { geoDiagnose } from '../services/geo.js';
 // (sendToConversationVisitors is also used to tell the widget an agent joined.)
 
 const replyBody = z.object({ content: z.string().min(1).max(8000) });
@@ -32,6 +33,13 @@ const conversationSelect = {
 
 /** Agent-facing conversation endpoints. Any authenticated agent may access. */
 export async function agentConversationRoutes(app: FastifyInstance): Promise<void> {
+  // Geo diagnostic: verify the MaxMind web service against a specific IP.
+  //   GET /api/agent/geo-test?ip=8.8.8.8
+  app.get('/api/agent/geo-test', { preHandler: requireAgent }, async (req, reply) => {
+    const ip = ((req.query as { ip?: string }).ip || '8.8.8.8').trim();
+    return reply.send(await geoDiagnose(ip));
+  });
+
   // Live translation for the agent: translate any text into a target language.
   app.post('/api/agent/translate', { preHandler: requireAgent }, async (req, reply) => {
     const body = parseBody(translateBody, req.body, reply);

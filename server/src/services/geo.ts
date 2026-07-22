@@ -68,9 +68,19 @@ function isPrivateIp(ip: string): boolean {
 }
 
 const maxmindEnabled = Boolean(env.MAXMIND_ACCOUNT_ID && env.MAXMIND_LICENSE_KEY);
+if (maxmindEnabled) {
+  // eslint-disable-next-line no-console
+  console.log(`[geo] MaxMind web service enabled → ${env.MAXMIND_ENDPOINT}`);
+}
+let webErrorLogs = 0;
 
-/** Per-IP lookup via the MaxMind GeoIP web service (Basic auth). Best-effort. */
-async function lookupGeoWeb(ip: string): Promise<GeoLocation | null> {
+/**
+ * Per-IP lookup via the MaxMind GeoIP web service (Basic auth). Best-effort:
+ * returns null on any error but logs the reason (first few times) so misconfig
+ * (401 auth, wrong endpoint) is visible in the app logs. When `throwOnError` is
+ * set (the /geo-test diagnostic), it returns the error detail instead.
+ */
+async function lookupGeoWeb(ip: string, diag?: { detail?: string; status?: number }): Promise<GeoLocation | null> {
   const auth = Buffer.from(`${env.MAXMIND_ACCOUNT_ID}:${env.MAXMIND_LICENSE_KEY}`).toString('base64');
   const url = `${env.MAXMIND_ENDPOINT.replace(/\/$/, '')}/${encodeURIComponent(ip)}`;
   const ctrl = new AbortController();
@@ -81,10 +91,15 @@ async function lookupGeoWeb(ip: string): Promise<GeoLocation | null> {
       signal: ctrl.signal,
     });
     if (!res.ok) {
-      if (!warned) {
+      const body = await res.text().catch(() => '');
+      if (diag) {
+        diag.status = res.status;
+        diag.detail = body.slice(0, 300);
+      }
+      if (webErrorLogs < 5) {
+        webErrorLogs++;
         // eslint-disable-next-line no-console
-        console.warn(`[geo] MaxMind web service returned ${res.status}`);
-        warned = true;
+        console.warn(`[geo] MaxMind ${res.status} for ${ip}: ${body.slice(0, 200)}`);
       }
       return null;
     }
@@ -95,11 +110,45 @@ async function lookupGeoWeb(ip: string): Promise<GeoLocation | null> {
       city: pickName(data.city?.names),
       region: pickName(data.subdivisions?.[0]?.names),
     };
-  } catch {
+  } catch (err) {
+    if (diag) diag.detail = (err as Error).message;
+    if (webErrorLogs < 5) {
+      webErrorLogs++;
+      // eslint-disable-next-line no-console
+      console.warn(`[geo] MaxMind request failed for ${ip}: ${(err as Error).message}`);
+    }
     return null; // network/timeout/parse — degrade to no geo
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Diagnostic used by the admin /geo-test endpoint. Bypasses cache, surfaces the
+ *  error detail, and reports why a lookup did/didn't hit MaxMind. */
+export async function geoDiagnose(ip: string): Promise<{
+  ip: string;
+  source: 'maxmind' | 'local-db' | 'disabled';
+  enabled: boolean;
+  endpoint: string | null;
+  private: boolean;
+  result: GeoLocation | null;
+  status?: number;
+  detail?: string;
+}> {
+  const base = {
+    ip,
+    enabled: maxmindEnabled,
+    endpoint: maxmindEnabled ? env.MAXMIND_ENDPOINT : null,
+    private: isPrivateIp(ip),
+  };
+  if (maxmindEnabled) {
+    if (isPrivateIp(ip)) return { ...base, source: 'maxmind', result: null, detail: 'private/local IP — skipped' };
+    const diag: { detail?: string; status?: number } = {};
+    const result = await lookupGeoWeb(ip, diag);
+    return { ...base, source: 'maxmind', result, status: diag.status, detail: diag.detail };
+  }
+  const result = await lookupGeo(ip);
+  return { ...base, source: env.GEOLITE2_DB_PATH ? 'local-db' : 'disabled', result };
 }
 
 export async function lookupGeo(ip: string): Promise<GeoLocation | null> {
