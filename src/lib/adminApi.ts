@@ -95,6 +95,8 @@ export interface LiveVisitor {
   geo: VisitorGeo | null;
   conversationId: string | null;
   mode?: string;
+  name?: string | null; // identified customer (from verified host context)
+  email?: string | null;
   online: boolean;
   timeOnSite: number;
 }

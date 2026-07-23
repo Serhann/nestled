@@ -30,6 +30,8 @@ export interface PresenceEntry {
   geo: GeoLocation | null;
   conversationId: string | null; // set if this visitor has an open conversation
   mode: string; // which site / scenario pack this visitor is on (site key)
+  name: string | null; // identified customer name (from verified host context)
+  email: string | null; // identified customer email (from verified host context)
   lastSeen: number;
 }
 
@@ -92,6 +94,8 @@ export function registerPresenceSocket(
         geo,
         conversationId: null,
         mode: hello.mode || 'food',
+        name: null,
+        email: null,
         lastSeen: now,
       },
     };
@@ -131,6 +135,26 @@ export function updatePresence(visitorId: string, patch: Partial<HelloData>): vo
   }
   if (patch.utm) t.entry.utm = patch.utm;
   scheduleBroadcast();
+}
+
+/** Set the identified customer name/email on a present visitor (from verified
+ *  host context) so the Live Visitors board shows who they are, not "anonymous". */
+export function setPresenceIdentity(
+  visitorId: string,
+  identity: { name?: string | null; email?: string | null },
+): void {
+  const t = visitors.get(visitorId);
+  if (!t) return;
+  let changed = false;
+  if (identity.name && identity.name !== t.entry.name) {
+    t.entry.name = identity.name;
+    changed = true;
+  }
+  if (identity.email && identity.email !== t.entry.email) {
+    t.entry.email = identity.email;
+    changed = true;
+  }
+  if (changed) scheduleBroadcast();
 }
 
 /** Link a conversation to a present visitor (shows the green dot in the list). */

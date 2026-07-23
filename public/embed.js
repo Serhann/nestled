@@ -333,6 +333,7 @@
           apiBase: apiBase,
           visitorId: visitorId,
           fingerprint: fingerprint,
+          contextToken: contextToken,
           mode: mode,
           onProactive: onProactive,
           // rrweb recorder is served from the widget origin (host-page context).

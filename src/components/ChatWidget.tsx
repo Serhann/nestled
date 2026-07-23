@@ -133,6 +133,53 @@ function readOrder(): OrderContext {
   return o;
 }
 
+// The signed context JWT (from the host, e.g. JetFood) carries the customer's
+// order data. The server verifies its signature for the agent side; here we
+// only decode the payload to render the visitor THEIR OWN orders — no trust
+// needed for that, so no signature check. Returns null on any decode failure.
+interface ContextOrder {
+  id?: string | number;
+  status?: string;
+  eta?: string;
+  restaurant?: string;
+  total?: string | number;
+  currency?: string;
+  date?: string;
+  url?: string;
+}
+interface ContextPayload {
+  current_order?: ContextOrder;
+  recent_orders?: ContextOrder[];
+}
+function decodeContextPayload(token: string): ContextPayload | null {
+  try {
+    const part = token.split('.')[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes)) as ContextPayload;
+  } catch {
+    return null;
+  }
+}
+function orderFromContext(o: ContextOrder | undefined): OrderContext | null {
+  if (!o) return null;
+  const total =
+    o.total != null && o.total !== '' ? `${o.currency ?? ''}${o.total}`.trim() : undefined;
+  const mapped: OrderContext = {
+    id: o.id != null ? String(o.id) : undefined,
+    status: o.status,
+    eta: o.eta,
+    restaurant: o.restaurant,
+    url: o.url,
+    total,
+    placed: o.date,
+  };
+  // Drop empty keys so merges don't clobber existing values with undefined.
+  (Object.keys(mapped) as (keyof OrderContext)[]).forEach((k) => mapped[k] == null && delete mapped[k]);
+  return mapped;
+}
+
 type OrderPhase = 'in_progress' | 'delivered' | 'other';
 function orderPhase(status?: string): OrderPhase {
   const s = (status || '').toLowerCase();
@@ -427,6 +474,7 @@ export function ChatWidget() {
     if (embedded) return;
     const p = openPresenceWS(visitorId.current, {
       fingerprint: fingerprint.current,
+      contextToken: contextToken.current,
       onProactive: (data) => {
         setConversation({ id: data.conversation_id, token: data.visitor_token });
         setShowPreChat(false);
@@ -437,6 +485,32 @@ export function ChatWidget() {
     });
     return () => p.stop();
   }, [embedded]);
+
+  // ── Seed order UI from the signed host context ───────────────────────────────
+  // JetFood signs the customer's current + recent orders into the context JWT.
+  // Decode it here to drive the order card and the "which order?" picker, so the
+  // host doesn't also have to call JetChat('order' | 'orders') separately.
+  useEffect(() => {
+    const payload = contextToken.current ? decodeContextPayload(contextToken.current) : null;
+    if (!payload) return;
+    const cur = orderFromContext(payload.current_order);
+    const recent = (payload.recent_orders ?? [])
+      .map(orderFromContext)
+      .filter((o): o is OrderContext => o !== null);
+    if (recent.length) setOrders(recent);
+    // Explicit URL/data-order hints (prev) win over the context; otherwise adopt
+    // the current order, or fall back to the most relevant recent one.
+    if (cur) {
+      setOrder((prev) => ({ ...cur, ...prev }));
+    } else if (recent.length) {
+      setOrder((prev) => {
+        if (prev.id) return prev;
+        const active = recent.find((o) => orderPhase(o.status) === 'in_progress') ?? recent[0];
+        return active ? { ...active, ...prev } : prev;
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Proactive: the embed forwards an agent-initiated chat ────────────────────
   useEffect(() => {
@@ -457,6 +531,15 @@ export function ChatWidget() {
       } else if (data && data.type === 'jetchat:context' && typeof data.token === 'string') {
         // Refreshed signed context token (e.g. issued after the visitor logs in).
         contextToken.current = data.token;
+        const payload = decodeContextPayload(data.token);
+        if (payload) {
+          const cur = orderFromContext(payload.current_order);
+          const recent = (payload.recent_orders ?? [])
+            .map(orderFromContext)
+            .filter((o): o is OrderContext => o !== null);
+          if (recent.length) setOrders(recent);
+          if (cur) setOrder((prev) => ({ ...prev, ...cur })); // fresh runtime data wins
+        }
       } else if (data && data.type === 'jetchat:order' && data.order && typeof data.order === 'object') {
         // Live order update from the host site (status changed, delivered, …).
         setOrder((prev) => ({ ...prev, ...data.order }));

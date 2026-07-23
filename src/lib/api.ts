@@ -214,7 +214,11 @@ export interface PresenceProactive {
  */
 export function openPresenceWS(
   visitorId: string,
-  handlers: { onProactive?: (p: PresenceProactive) => void; fingerprint?: string } = {},
+  handlers: {
+    onProactive?: (p: PresenceProactive) => void;
+    fingerprint?: string;
+    contextToken?: string;
+  } = {},
 ): { stop: () => void } {
   let ws: WebSocket | null = null;
   let hb: ReturnType<typeof setInterval> | null = null;
@@ -244,6 +248,7 @@ export function openPresenceWS(
       sessionStart,
       mode: param('mode') || 'food',
       fingerprint: handlers.fingerprint || param('fp') || '',
+      context_token: handlers.contextToken || param('ctx') || '',
     });
 
   const connect = () => {
