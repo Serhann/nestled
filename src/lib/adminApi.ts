@@ -382,6 +382,7 @@ export interface Site {
   quick_actions: SiteQuickAction[];
   allowed_domains: string[];
   enforce_domains: boolean;
+  context_secret: string | null; // shared HMAC secret for signed host context
 }
 export interface SitePreChatField {
   name: string;

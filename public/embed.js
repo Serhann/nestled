@@ -180,6 +180,16 @@
   }
   var order = readOrder();
 
+  // Signed visitor context (JWT) — the host's server (e.g. JetFood PHP) signs the
+  // logged-in customer + orders and hands us the token. It is verified server-side
+  // with the site's shared secret, so the data is trusted (not spoofable). Sources:
+  // data-context attribute, window.JetChatContext global, or JetChat('context', token).
+  function readContextToken() {
+    var t = (self && self.getAttribute('data-context')) || window.JetChatContext || '';
+    return typeof t === 'string' ? t : '';
+  }
+  var contextToken = readContextToken();
+
   function identityParams() {
     var p = '';
     if (identity.email) p += '&ue=' + encodeURIComponent(identity.email);
@@ -233,6 +243,7 @@
       // Host page URL, so the widget can evaluate page-based triggers.
       '&href=' +
       encodeURIComponent(window.location.href) +
+      (contextToken ? '&ctx=' + encodeURIComponent(contextToken) : '') +
       identityParams();
     var is = iframe.style;
     is.width = '100%';
@@ -360,6 +371,10 @@
       } else if (cmd === 'orders' && Array.isArray(payload)) {
         // Full list of the visitor's recent orders (drives the order picker).
         built.iframe.contentWindow.postMessage({ type: 'jetchat:orders', orders: payload }, '*');
+      } else if (cmd === 'context' && typeof payload === 'string') {
+        // Signed context token issued/refreshed at runtime (e.g. after login).
+        contextToken = payload;
+        built.iframe.contentWindow.postMessage({ type: 'jetchat:context', token: payload }, '*');
       }
     }
     var queued = window.JetChat && window.JetChat.q ? window.JetChat.q : [];

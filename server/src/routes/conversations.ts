@@ -13,12 +13,15 @@ import { pushNewConversation, pushVisitorMessage, pushToAgents } from '../servic
 import { generateAIReply, summarizeConversation } from '../services/ai/index.js';
 import { recordVisitorIp } from '../services/visitorTracking.js';
 import { resolveIdentity } from '../services/identity.js';
+import { verifyContextToken } from '../services/siteContext.js';
 
 const createBody = z.object({
   visitor_id: z.string().min(1).max(200),
   visitor_name: z.string().max(200).optional(),
   visitor_email: z.string().email().max(200).optional(),
   fingerprint: z.string().max(128).optional(),
+  // Signed visitor context (JWT) from the host site — verified server-side.
+  context_token: z.string().max(8000).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -183,17 +186,31 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     const ip = clientIp(req.headers, req.ip);
     const geo = await lookupGeo(ip);
 
+    const convMode = (body.metadata?.widget_mode as string | undefined) ?? null;
+
+    // Verify the host site's signed context (if any). A valid signature makes
+    // this customer/order data TRUSTED — the visitor can't have forged it. We
+    // then prefer the verified name/email over anything the browser supplied.
+    const verifiedContext = await verifyContextToken(convMode, body.context_token);
+    const trustedEmail = verifiedContext?.customer?.email ?? null;
+    const trustedName = verifiedContext?.customer?.name ?? null;
+    const visitorName = trustedName ?? body.visitor_name ?? null;
+    const visitorEmail = trustedEmail ?? body.visitor_email ?? null;
+
     const metadata = {
       ...(body.metadata ?? {}),
       ip_address: ip,
       location: geo,
+      // Store only signature-verified context under a trusted key; unsigned
+      // client hints stay in whatever the widget already put in metadata.
+      ...(verifiedContext ? { verified_context: verifiedContext } : {}),
     };
 
     const conv = await prisma.conversations.create({
       data: {
         visitor_id: body.visitor_id,
-        visitor_name: body.visitor_name ?? null,
-        visitor_email: body.visitor_email ?? null,
+        visitor_name: visitorName,
+        visitor_email: visitorEmail,
         visitor_token_hash: hash,
         metadata: metadata as object,
       },
@@ -202,13 +219,13 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     if (!conv) return reply.code(500).send({ error: 'Failed to create conversation' });
 
     void recordVisitorIp(body.visitor_id, ip, geo);
-    // Fuse this visitor into the cross-site people pool (admin-only graph).
-    const convMode = (body.metadata?.widget_mode as string | undefined) ?? null;
+    // Fuse this visitor into the cross-site people pool (admin-only graph). Only
+    // a signature-verified email is a trustworthy identity signal.
     const fingerprint =
       body.fingerprint ?? (body.metadata?.fingerprint as string | undefined) ?? null;
     void resolveIdentity(body.visitor_id, {
       fingerprint,
-      email: body.visitor_email ?? null,
+      email: trustedEmail,
       mode: convMode,
     });
 
@@ -217,7 +234,7 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
       conversation: {
         id: conv.id,
         visitor_id: body.visitor_id,
-        visitor_name: body.visitor_name ?? null,
+        visitor_name: visitorName,
         created_at: conv.created_at,
       },
     });
@@ -232,7 +249,7 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     attachConversationToVisitor(body.visitor_id, conv.id);
     void notifyNewChat(conv.id);
     const page = (body.metadata?.current_page as string | undefined) ?? null;
-    void pushNewConversation(conv.id, body.visitor_name ?? null, page);
+    void pushNewConversation(conv.id, visitorName, page);
 
     return reply.code(201).send({ conversation_id: conv.id, visitor_token: token });
   });

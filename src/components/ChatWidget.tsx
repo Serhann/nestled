@@ -301,6 +301,9 @@ export function ChatWidget() {
 
   const visitorId = useRef(getVisitorId());
   const fingerprint = useRef(getFingerprint());
+  // Signed host context (JWT). The embed passes it as `ctx`; the host may refresh
+  // it at runtime via jetchat:context. Verified server-side on conversation create.
+  const contextToken = useRef(new URLSearchParams(window.location.search).get('ctx') || '');
   const identity = useRef<Record<string, string>>(readIdentity());
   const preChatRef = useRef<Record<string, string>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -451,6 +454,9 @@ export function ChatWidget() {
         if (data.traits.order && typeof data.traits.order === 'object') {
           setOrder((prev) => ({ ...prev, ...data.traits.order }));
         }
+      } else if (data && data.type === 'jetchat:context' && typeof data.token === 'string') {
+        // Refreshed signed context token (e.g. issued after the visitor logs in).
+        contextToken.current = data.token;
       } else if (data && data.type === 'jetchat:order' && data.order && typeof data.order === 'object') {
         // Live order update from the host site (status changed, delivered, …).
         setOrder((prev) => ({ ...prev, ...data.order }));
@@ -563,6 +569,7 @@ export function ChatWidget() {
         visitor_name: extra?.visitor_name ?? identity.current.name,
         visitor_email: extra?.visitor_email ?? identity.current.email,
         fingerprint: fingerprint.current,
+        context_token: contextToken.current || undefined,
         metadata: conversationMetadata(),
       });
       const conv = { id: created.conversation_id, token: created.visitor_token };

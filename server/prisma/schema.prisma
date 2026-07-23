@@ -324,6 +324,10 @@ model sites {
   quick_actions   Json     @default("[]") // [{ intent, label? }] — empty = built-in pack
   allowed_domains String[] @default([]) // hostnames allowed to embed; empty = anywhere
   enforce_domains Boolean  @default(false) // hide the widget on unlisted domains
+  // Shared HMAC secret for signed visitor context (e.g. JetFood's PHP signs the
+  // logged-in customer + order data into a JWT; we verify it here so the data is
+  // trusted, not client-spoofable). Admin-only; never sent to the public widget.
+  context_secret  String? // null = signed context disabled for this site
   created_at      DateTime @default(now()) @db.Timestamptz(6)
   updated_at      DateTime @default(now()) @db.Timestamptz(6)
 }

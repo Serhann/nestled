@@ -117,6 +117,7 @@ export function createConversation(body: {
   visitor_name?: string;
   visitor_email?: string;
   fingerprint?: string;
+  context_token?: string;
   metadata?: Record<string, unknown>;
 }): Promise<{ conversation_id: string; visitor_token: string }> {
   return fetch(`${apiBase()}/api/conversations`, {
