@@ -11,6 +11,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Globe,
+  ShieldCheck,
   Monitor,
   Smartphone,
   Clock,
@@ -316,6 +317,11 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         user_id?: string;
         phone?: string;
         prechat?: Record<string, string>;
+        verified_context?: {
+          customer?: { id?: string | number; name?: string; email?: string; phone?: string; orders_count?: number; since?: string };
+          current_order?: { id?: string; status?: string; eta?: string; restaurant?: string; total?: string | number; currency?: string; date?: string; url?: string };
+          recent_orders?: { id?: string; status?: string; total?: string | number; date?: string; restaurant?: string }[];
+        };
         handoff?: {
           by?: string;
           intent?: string;
@@ -717,6 +723,64 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
           <div className="flex-1 overflow-y-auto p-4 text-sm">
             {tab === 'info' && (
               <dl className="space-y-2.5">
+                {meta?.verified_context && (() => {
+                  const vc = meta.verified_context!;
+                  const cust = vc.customer;
+                  const ord = vc.current_order;
+                  const money = (t?: string | number, c?: string) =>
+                    t == null ? null : `${t}${c ? ' ' + c : ''}`;
+                  return (
+                    <div className="mb-1 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-3">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                        <p className="text-[11px] font-bold tracking-wide text-emerald-700">
+                          VERIFIED CONTEXT
+                        </p>
+                      </div>
+                      {cust && (
+                        <div className="mb-2 text-xs text-gray-700 space-y-0.5">
+                          {cust.name && <p className="font-semibold text-gray-800">{cust.name}</p>}
+                          {cust.email && <p className="truncate">{cust.email}</p>}
+                          {cust.phone && <p>{cust.phone}</p>}
+                          {typeof cust.orders_count === 'number' && (
+                            <p className="text-gray-500">{cust.orders_count} orders total</p>
+                          )}
+                        </div>
+                      )}
+                      {ord && (
+                        <div className="rounded-xl bg-white border border-emerald-100 p-2.5 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-gray-800">
+                              {ord.id ? `Order #${ord.id}` : 'Current order'}
+                            </span>
+                            {ord.status && <Badge tone="green">{ord.status}</Badge>}
+                          </div>
+                          <div className="mt-1 text-gray-600 space-y-0.5">
+                            {ord.restaurant && <p>{ord.restaurant}</p>}
+                            {ord.eta && <p>ETA {ord.eta}</p>}
+                            {money(ord.total, ord.currency) && <p>{money(ord.total, ord.currency)}</p>}
+                          </div>
+                        </div>
+                      )}
+                      {vc.recent_orders && vc.recent_orders.length > 0 && (
+                        <details className="mt-2 text-xs">
+                          <summary className="cursor-pointer text-emerald-700 font-medium">
+                            Recent orders ({vc.recent_orders.length})
+                          </summary>
+                          <ul className="mt-1 space-y-1">
+                            {vc.recent_orders.slice(0, 10).map((o, i) => (
+                              <li key={o.id ?? i} className="flex items-baseline gap-2 text-gray-600">
+                                <span className="font-mono truncate">{o.id ? `#${o.id}` : '—'}</span>
+                                {o.status && <span className="text-gray-400">{o.status}</span>}
+                                {o.date && <span className="ml-auto text-gray-400 shrink-0">{o.date}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </div>
+                  );
+                })()}
                 <InfoRow icon={<Globe className="w-3.5 h-3.5" />} label="Location" value={geoText || 'Unknown'} />
                 <InfoRow icon={<span className="font-mono text-[10px]">IP</span>} label="IP address" value={meta?.ip_address ?? 'Unknown'} mono />
                 {meta?.location?.isp && <InfoRow label="ISP" value={meta.location.isp} />}

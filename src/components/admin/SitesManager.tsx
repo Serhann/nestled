@@ -38,6 +38,7 @@ function emptySite(): SiteInput {
     quick_actions: [],
     allowed_domains: [],
     enforce_domains: false,
+    context_secret: null,
   };
 }
 function toInput(s: Site): SiteInput {
@@ -304,6 +305,41 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
               );
             })()
           )}
+        </Card>
+
+        {/* Signed visitor context */}
+        <Card className="p-5 sm:p-6 space-y-4">
+          <h3 className="font-semibold text-gray-800">Signed visitor context</h3>
+          <p className="text-xs text-gray-500 -mt-2">
+            Let this site pass <b>trusted</b> customer &amp; order data into the chat. The host server signs
+            a JWT with this shared secret; we verify it, so the data can't be spoofed from the browser.
+            Paste the same secret into your site's integration. Leave blank to disable.
+          </p>
+          <Field label="Shared secret (HMAC)">
+            <div className="flex gap-2">
+              <TextInput
+                type="text"
+                placeholder="e.g. a long random string"
+                value={inp.context_secret ?? ''}
+                onChange={(e) => set({ context_secret: e.target.value || null })}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const bytes = new Uint8Array(24);
+                  crypto.getRandomValues(bytes);
+                  const secret = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+                  set({ context_secret: secret });
+                }}
+                className="shrink-0 px-3 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Generate
+              </button>
+            </div>
+          </Field>
+          <p className="text-[11px] text-gray-400">
+            Keep it secret — anyone with it can assert customer identity to your chat.
+          </p>
         </Card>
 
         {/* Quick actions */}

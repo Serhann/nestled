@@ -41,6 +41,8 @@ const siteBody = z.object({
   // Hostnames allowed to embed (bare domain or *.wildcard). Empty = anywhere.
   allowed_domains: z.array(z.string().max(253)).default([]),
   enforce_domains: z.boolean().default(false),
+  // Shared HMAC secret for signed visitor context (empty string clears it).
+  context_secret: z.string().max(200).nullable().default(null),
 });
 
 /** Site manager (admin): per-site widget appearance + quick-action config. */
@@ -77,6 +79,7 @@ export async function siteRoutes(app: FastifyInstance): Promise<void> {
         quick_actions: body.quick_actions as object,
         allowed_domains: body.allowed_domains,
         enforce_domains: body.enforce_domains,
+        context_secret: body.context_secret || null,
       },
     });
     await audit(req, { action: 'site.create', targetType: 'site', targetId: created.id });
@@ -107,6 +110,7 @@ export async function siteRoutes(app: FastifyInstance): Promise<void> {
           quick_actions: body.quick_actions as object,
           allowed_domains: body.allowed_domains,
           enforce_domains: body.enforce_domains,
+          context_secret: body.context_secret || null,
           updated_at: new Date(),
         },
       })
