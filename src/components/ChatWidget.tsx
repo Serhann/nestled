@@ -123,13 +123,19 @@ export interface OrderContext {
 function readOrder(): OrderContext {
   const p = new URLSearchParams(window.location.search);
   const o: OrderContext = {};
-  const get = (k: string) => p.get(k) || undefined;
-  o.id = get('o_id');
-  o.status = get('o_status');
-  o.eta = get('o_eta');
-  o.restaurant = get('o_rest');
-  o.url = get('o_url');
-  o.total = get('o_total');
+  // Only assign keys that actually have a value — never set them to `undefined`,
+  // or a later `{ ...context, ...order }` merge would clobber real context data
+  // with these empty keys.
+  const set = (param: string, key: keyof OrderContext) => {
+    const v = p.get(param);
+    if (v) o[key] = v;
+  };
+  set('o_id', 'id');
+  set('o_status', 'status');
+  set('o_eta', 'eta');
+  set('o_rest', 'restaurant');
+  set('o_url', 'url');
+  set('o_total', 'total');
   return o;
 }
 
@@ -183,8 +189,14 @@ function orderFromContext(o: ContextOrder | undefined): OrderContext | null {
 type OrderPhase = 'in_progress' | 'delivered' | 'other';
 function orderPhase(status?: string): OrderPhase {
   const s = (status || '').toLowerCase();
-  if (/deliver|complete|arrived|received|done/.test(s)) return 'delivered';
-  if (/prepar|cook|way|transit|out for|pick|route|assign|accept|confirm|process|delay|late/.test(s)) return 'in_progress';
+  if (/cancel|refund|reject|fail|void/.test(s)) return 'other'; // terminal, no tracking
+  if (/deliver|complete|arrived|received|done|fulfil/.test(s)) return 'delivered';
+  if (
+    /prepar|cook|way|transit|out for|pick|route|assign|accept|confirm|process|delay|late|pending|placed|await|queue|dispatch|rider|driver|courier|ship|ready|kitchen|making|new/.test(
+      s,
+    )
+  )
+    return 'in_progress';
   return 'other';
 }
 
@@ -296,10 +308,10 @@ const ORDER_STEPS = ['Placed', 'Preparing', 'On the way', 'Delivered'] as const;
  */
 function orderStep(status?: string): number {
   const s = (status || '').toLowerCase();
-  if (/deliver|complete|arrived|received at|dropped|done/.test(s)) return 3;
-  if (/way|transit|out for|pick|route|en route|dispatch|rider|driver|courier|delay|late/.test(s)) return 2;
-  if (/prepar|cook|accept|confirm|process|kitchen|making/.test(s)) return 1;
-  return 0;
+  if (/deliver|complete|arrived|received at|dropped|done|fulfil/.test(s)) return 3;
+  if (/way|transit|out for|pick|route|en route|dispatch|rider|driver|courier|delay|late|ship/.test(s)) return 2;
+  if (/prepar|cook|accept|confirm|process|kitchen|making|ready/.test(s)) return 1;
+  return 0; // placed / pending / new / queued / cancelled / unknown
 }
 
 /** Quick tags offered on the rate-your-delivery screen (design 2d). */
