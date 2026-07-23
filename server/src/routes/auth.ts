@@ -24,7 +24,10 @@ const credentials = z.object({
   password: z.string().min(8, 'Password must be at least 8 characters'),
 });
 
-const registerBody = credentials.extend({ name: z.string().min(1).max(120) });
+const changePasswordBody = z.object({
+  current_password: z.string().min(1),
+  new_password: z.string().min(8, 'Password must be at least 8 characters'),
+});
 
 async function issueTokens(agent: { id: string; role: AgentRole; email: string }) {
   const accessToken = signAccessToken({ sub: agent.id, role: agent.role, email: agent.email });
@@ -36,38 +39,9 @@ async function issueTokens(agent: { id: string; role: AgentRole; email: string }
 }
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  // Bootstrap the first admin. Open only while zero agents exist; afterwards
-  // agent creation is admin-only (POST /api/agents). This closes the old
-  // open-signup trigger that auto-created an agent for any auth user.
-  app.post('/api/auth/register', {
-    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
-  }, async (req, reply) => {
-    const body = registerBody.safeParse(req.body);
-    if (!body.success) {
-      return reply.code(400).send({ error: 'Invalid request', details: body.error.issues });
-    }
-
-    const existing = await prisma.agents.count();
-    if (existing > 0) {
-      return reply
-        .code(403)
-        .send({ error: 'Registration is closed. Ask an admin to create your account.' });
-    }
-
-    const password_hash = await hashPassword(body.data.password);
-    const created = (await prisma.agents.create({
-      data: { name: body.data.name, email: body.data.email.toLowerCase(), password_hash, role: 'admin' },
-      select: { id: true, name: true, email: true, password_hash: true, role: true },
-    })) as AgentRow;
-    if (!created) return reply.code(500).send({ error: 'Failed to create account' });
-
-    const tokens = await issueTokens(created);
-    return reply.code(201).send({
-      access_token: tokens.accessToken,
-      refresh_token: tokens.refreshToken,
-      agent: { id: created.id, name: created.name, email: created.email, role: created.role },
-    });
-  });
+  // Public self-registration is closed. The first admin is bootstrapped from the
+  // SEED_ADMIN_* env vars on boot (see ensureSeedAdmin); every other account is
+  // created by an admin via POST /api/agents. There is no open signup endpoint.
 
   app.post('/api/auth/login', {
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
@@ -165,5 +139,43 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     });
     if (!agent) return reply.code(404).send({ error: 'Agent not found' });
     return reply.send({ agent });
+  });
+
+  // Change your own password. Requires the current password; on success every
+  // refresh token for this agent is revoked so all devices are signed out (the
+  // caller's current access token keeps working until it expires, then they
+  // re-login) — standard, safe behaviour after a credential change.
+  app.post('/api/auth/change-password', {
+    preHandler: requireAgent,
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const body = changePasswordBody.safeParse(req.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'Invalid request', details: body.error.issues });
+    }
+    const agentId = req.agent!.id;
+    const agent = await prisma.agents.findUnique({
+      where: { id: agentId },
+      select: { password_hash: true },
+    });
+    if (!agent) return reply.code(404).send({ error: 'Agent not found' });
+
+    if (!(await verifyPassword(body.data.current_password, agent.password_hash))) {
+      return reply.code(400).send({ error: 'Current password is incorrect' });
+    }
+    if (body.data.new_password === body.data.current_password) {
+      return reply.code(400).send({ error: 'New password must be different' });
+    }
+
+    const password_hash = await hashPassword(body.data.new_password);
+    await prisma.agents.update({ where: { id: agentId }, data: { password_hash } });
+    // Sign out other devices (best-effort): revoke all this agent's refresh
+    // tokens. The current access token stays valid until it expires, then its
+    // refresh token is gone too — expected after a password change.
+    await prisma.refresh_tokens
+      .updateMany({ where: { agent_id: agentId, revoked_at: null }, data: { revoked_at: new Date() } })
+      .catch(() => undefined);
+
+    return reply.send({ ok: true });
   });
 }
