@@ -5,6 +5,8 @@ import { registerAgentSocket, registerVisitorSocket } from './hub.js';
 import { registerPresenceSocket, updatePresence } from './presence.js';
 import { ingestReplayEvents, clearReplay } from './replay.js';
 import { clientIp, lookupGeo } from '../services/geo.js';
+import { recordVisitorIp } from '../services/visitorTracking.js';
+import { resolveIdentity } from '../services/identity.js';
 
 /**
  * WebSocket endpoints. Both authenticate on connect via a `token` query param
@@ -71,6 +73,13 @@ export async function registerRealtime(app: FastifyInstance): Promise<void> {
       }
       if (msg.type === 'hello') {
         registerPresenceSocket(socket, visitorId, ip, geo, msg as Record<string, never>);
+        void recordVisitorIp(visitorId, ip, geo); // track every IP this visitor uses
+        // Fuse anonymous visitors into the cross-site people pool as soon as
+        // they land, well before any conversation exists (admin-only graph).
+        void resolveIdentity(visitorId, {
+          fingerprint: typeof msg.fingerprint === 'string' ? msg.fingerprint : null,
+          mode: typeof msg.mode === 'string' ? msg.mode : null,
+        });
       } else if (msg.type === 'update') {
         updatePresence(visitorId, msg as Record<string, never>);
       } else if (msg.type === 'ping') {

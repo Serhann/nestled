@@ -116,6 +116,7 @@ export function createConversation(body: {
   visitor_id: string;
   visitor_name?: string;
   visitor_email?: string;
+  fingerprint?: string;
   metadata?: Record<string, unknown>;
 }): Promise<{ conversation_id: string; visitor_token: string }> {
   return fetch(`${apiBase()}/api/conversations`, {
@@ -212,7 +213,7 @@ export interface PresenceProactive {
  */
 export function openPresenceWS(
   visitorId: string,
-  handlers: { onProactive?: (p: PresenceProactive) => void } = {},
+  handlers: { onProactive?: (p: PresenceProactive) => void; fingerprint?: string } = {},
 ): { stop: () => void } {
   let ws: WebSocket | null = null;
   let hb: ReturnType<typeof setInterval> | null = null;
@@ -241,6 +242,7 @@ export function openPresenceWS(
       returning,
       sessionStart,
       mode: param('mode') || 'food',
+      fingerprint: handlers.fingerprint || param('fp') || '',
     });
 
   const connect = () => {

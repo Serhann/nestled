@@ -49,6 +49,87 @@
   }
   var visitorId = getVisitorId();
 
+  // ── Cross-site device fingerprint ──────────────────────────────────────────
+  // The visitor id lives in this site's first-party localStorage, so the same
+  // human on another of our customer sites (different origin) mints a brand-new
+  // id. To pool them we compute a device-level fingerprint that is identical
+  // across origins (UA, languages, platform, screen, timezone, canvas, WebGL)
+  // and hand it to the backend, which fuses matching visitors into one person.
+  // Kept lightweight and synchronous; the server only ever sees the hash.
+  function cyrb53(str) {
+    var h1 = 0xdeadbeef,
+      h2 = 0x41c6ce57;
+    for (var i = 0, ch; i < str.length; i++) {
+      ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+  }
+  function canvasSignal() {
+    try {
+      var c = document.createElement('canvas');
+      c.width = 240;
+      c.height = 60;
+      var ctx = c.getContext('2d');
+      if (!ctx) return '';
+      ctx.textBaseline = 'top';
+      ctx.font = "14px 'Arial'";
+      ctx.fillStyle = '#f60';
+      ctx.fillRect(125, 1, 62, 20);
+      ctx.fillStyle = '#069';
+      ctx.fillText('JetChat 🚀 fp', 2, 15);
+      ctx.fillStyle = 'rgba(102,204,0,0.7)';
+      ctx.fillText('JetChat 🚀 fp', 4, 17);
+      return c.toDataURL();
+    } catch (e) {
+      return '';
+    }
+  }
+  function webglSignal() {
+    try {
+      var c = document.createElement('canvas');
+      var gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl) return '';
+      var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      var vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+      var renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      return String(vendor) + '~' + String(renderer);
+    } catch (e) {
+      return '';
+    }
+  }
+  function computeFingerprint() {
+    try {
+      var n = navigator;
+      var s = window.screen;
+      var tz = '';
+      try {
+        tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      } catch (e) {}
+      var parts = [
+        n.userAgent || '',
+        (n.languages || [n.language]).join(','),
+        n.platform || '',
+        n.hardwareConcurrency || '',
+        n.deviceMemory || '',
+        n.maxTouchPoints || '',
+        s ? s.width + 'x' + s.height + 'x' + s.colorDepth : '',
+        window.devicePixelRatio || '',
+        tz,
+        new Date().getTimezoneOffset(),
+        canvasSignal(),
+        webglSignal(),
+      ];
+      return cyrb53(parts.join('||'));
+    } catch (e) {
+      return '';
+    }
+  }
+  var fingerprint = computeFingerprint();
+
   // Visitor identity (Crisp's user:email / user:nickname equivalent). Sources,
   // in order: script data attributes, host URL params, and the JetChat() API.
   function readIdentity() {
@@ -143,6 +224,8 @@
       encodeURIComponent(apiBase) +
       '&vid=' +
       encodeURIComponent(visitorId) +
+      '&fp=' +
+      encodeURIComponent(fingerprint) +
       '&pos=' +
       position +
       '&mode=' +
@@ -163,14 +246,72 @@
     return { container: container, iframe: iframe };
   }
 
-  function resize(container, msg) {
+  // On mobile the open chat should be true full-screen AND track the visual
+  // viewport so it shrinks above the on-screen keyboard (100vh/dvh don't shrink
+  // when the keyboard opens, which otherwise hides the composer).
+  var vvHandler = null;
+
+  function applyMobileFull(container) {
+    var vv = window.visualViewport;
+    var s = container.style;
+    s.transition = 'none'; // no animation while following the keyboard
+    s.top = (vv ? vv.offsetTop : 0) + 'px';
+    s.left = (vv ? vv.offsetLeft : 0) + 'px';
+    s.right = 'auto';
+    s.bottom = 'auto';
+    s.width = (vv ? vv.width : window.innerWidth) + 'px';
+    s.height = (vv ? vv.height : window.innerHeight) + 'px';
+    s.maxWidth = 'none';
+    s.maxHeight = 'none';
+    s.borderRadius = '0';
+  }
+
+  function restoreDefault(container, msg) {
+    var s = container.style;
+    s.transition = 'width 0.25s ease, height 0.25s ease';
+    s.top = 'auto';
+    s.left = 'auto';
+    s.right = 'auto';
+    s.bottom = '16px';
+    s[position] = '16px';
+    s.width = (msg.width || LAUNCHER) + 'px';
+    s.height = (msg.height || LAUNCHER) + 'px';
+    s.maxWidth = 'calc(100vw - 32px)';
+    s.maxHeight = 'calc(100vh - 32px)';
+    s.borderRadius = '';
+  }
+
+  function resize(built, msg) {
+    var container = built.container;
+    var iframe = built.iframe;
     var mobileFull = window.innerWidth <= 480 && msg.state === 'open';
     if (mobileFull) {
-      container.style.width = 'calc(100vw - 24px)';
-      container.style.height = 'calc(100vh - 24px)';
+      applyMobileFull(container);
+      // True full-screen: no rounding/shadow on mobile.
+      container.style.boxShadow = 'none';
+      iframe.style.borderRadius = '0';
+      if (!vvHandler && window.visualViewport) {
+        vvHandler = function () {
+          if (window.innerWidth <= 480) applyMobileFull(container);
+        };
+        window.visualViewport.addEventListener('resize', vvHandler);
+        window.visualViewport.addEventListener('scroll', vvHandler);
+      }
     } else {
-      container.style.width = (msg.width || LAUNCHER) + 'px';
-      container.style.height = (msg.height || LAUNCHER) + 'px';
+      if (vvHandler && window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', vvHandler);
+        window.visualViewport.removeEventListener('scroll', vvHandler);
+        vvHandler = null;
+      }
+      restoreDefault(container, msg);
+      // The open/minimized panel is a rounded floating card. border-radius on the
+      // iframe clips its (square) content to rounded corners; the shadow sits on
+      // the (transparent) container so it hugs that rounded shape. The closed
+      // launcher stays unrounded/shadowless — the round button carries its own.
+      var panel = msg.state === 'open' || msg.state === 'minimized';
+      iframe.style.borderRadius = panel ? '16px' : '0';
+      container.style.borderRadius = panel ? '16px' : '0';
+      container.style.boxShadow = panel ? '0 12px 48px rgba(0,0,0,0.18)' : 'none';
     }
   }
 
@@ -180,6 +321,7 @@
         window.JetChatPresence.init({
           apiBase: apiBase,
           visitorId: visitorId,
+          fingerprint: fingerprint,
           mode: mode,
           onProactive: onProactive,
           // rrweb recorder is served from the widget origin (host-page context).
@@ -202,7 +344,7 @@
     window.addEventListener('message', function (event) {
       if (event.source !== built.iframe.contentWindow) return;
       var data = event.data;
-      if (data && data.type === 'jetchat:resize') resize(built.container, data);
+      if (data && data.type === 'jetchat:resize') resize(built, data);
     });
 
     // Public JS API: JetChat('identify', { email, name, user_id, order_id, ... })

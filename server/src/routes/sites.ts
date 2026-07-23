@@ -18,6 +18,14 @@ const quickActionCfg = z.object({
   label: z.string().max(60).optional(),
 });
 
+const preChatField = z.object({
+  name: z.string().min(1).max(60).regex(/^[a-z0-9_]+$/, 'Lowercase letters, numbers, underscore'),
+  label: z.string().min(1).max(80),
+  type: z.enum(['text', 'email', 'tel']).default('text'),
+  required: z.boolean().default(false),
+  placeholder: z.string().max(120).default(''),
+});
+
 const siteBody = z.object({
   key: z.string().min(1).max(40).regex(/^[a-z0-9-]+$/, 'Lowercase letters, numbers and dashes'),
   name: z.string().min(1).max(120),
@@ -26,6 +34,9 @@ const siteBody = z.object({
   widget_title: z.string().max(120).nullable().default(null),
   welcome_message: z.string().max(500).nullable().default(null),
   widget_position: z.enum(['left', 'right']).nullable().default(null),
+  system_prompt: z.string().max(8000).nullable().default(null),
+  pre_chat_enabled: z.boolean().nullable().default(null),
+  pre_chat_fields: z.array(preChatField).default([]),
   quick_actions: z.array(quickActionCfg).default([]),
   // Hostnames allowed to embed (bare domain or *.wildcard). Empty = anywhere.
   allowed_domains: z.array(z.string().max(253)).default([]),
@@ -60,6 +71,9 @@ export async function siteRoutes(app: FastifyInstance): Promise<void> {
         widget_title: body.widget_title,
         welcome_message: body.welcome_message,
         widget_position: body.widget_position,
+        system_prompt: body.system_prompt,
+        pre_chat_enabled: body.pre_chat_enabled,
+        pre_chat_fields: body.pre_chat_fields as object,
         quick_actions: body.quick_actions as object,
         allowed_domains: body.allowed_domains,
         enforce_domains: body.enforce_domains,
@@ -87,6 +101,9 @@ export async function siteRoutes(app: FastifyInstance): Promise<void> {
           widget_title: body.widget_title,
           welcome_message: body.welcome_message,
           widget_position: body.widget_position,
+          system_prompt: body.system_prompt,
+          pre_chat_enabled: body.pre_chat_enabled,
+          pre_chat_fields: body.pre_chat_fields as object,
           quick_actions: body.quick_actions as object,
           allowed_domains: body.allowed_domains,
           enforce_domains: body.enforce_domains,

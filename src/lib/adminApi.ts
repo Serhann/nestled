@@ -79,6 +79,8 @@ export interface VisitorGeo {
   country_code: string | null;
   city: string | null;
   region: string | null;
+  isp?: string | null;
+  org?: string | null;
 }
 
 export interface LiveVisitor {
@@ -242,6 +244,65 @@ export async function setStatus(id: string, status: 'open' | 'pending' | 'resolv
   });
 }
 
+/** Set/rename the visitor's name (and optionally email) on a conversation. */
+export async function updateVisitor(
+  id: string,
+  body: { visitor_name?: string | null; visitor_email?: string | null },
+): Promise<void> {
+  await authed(`/api/agent/conversations/${id}/visitor`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export interface VisitorIp {
+  id: string;
+  visitor_id: string;
+  ip: string;
+  geo: VisitorGeo | null;
+  hits: number;
+  first_seen: string;
+  last_seen: string;
+}
+/** Every IP a visitor has connected from (across sessions / IP changes). */
+export async function listVisitorIps(visitorId: string): Promise<VisitorIp[]> {
+  const r = await authed(`/api/agent/visitors/${encodeURIComponent(visitorId)}/ips`);
+  return (await jsonOrThrow<{ ips: VisitorIp[] }>(r)).ips;
+}
+
+// ── Cross-site people pool ──────────────────────────────────────────────────
+export interface PersonProfile {
+  id: string;
+  display_name: string | null;
+  primary_email: string | null;
+  created_at: string;
+  visitor_ids: string[];
+  sites: string[];
+  emails: string[];
+  fingerprints: number;
+  conversations: {
+    id: string;
+    visitor_id: string;
+    visitor_name: string | null;
+    status: string;
+    mode: string | null;
+    message_count: number;
+    updated_at: string;
+  }[];
+  ips: { ip: string; geo: VisitorGeo | null; hits: number; last_seen: string }[];
+}
+
+/**
+ * The unified cross-site person a visitor id resolves to — every site, email,
+ * IP and conversation fused under one identity via device fingerprint. Returns
+ * null if this visitor has not been pooled yet.
+ */
+export async function getVisitorPerson(visitorId: string): Promise<PersonProfile | null> {
+  const r = await authed(`/api/agent/visitors/${encodeURIComponent(visitorId)}/person`);
+  return (await jsonOrThrow<{ person: PersonProfile | null }>(r)).person;
+}
+
 // ── Assignment ────────────────────────────────────────────────────────────────
 /** Omit agentId to claim for yourself; pass null to release to the pool. */
 export async function assignConversation(id: string, agentId?: string | null): Promise<void> {
@@ -309,9 +370,19 @@ export interface Site {
   widget_title: string | null;
   welcome_message: string | null;
   widget_position: 'left' | 'right' | null;
+  system_prompt: string | null;
+  pre_chat_enabled: boolean | null; // null = inherit global; true = site fields; false = off
+  pre_chat_fields: SitePreChatField[];
   quick_actions: SiteQuickAction[];
   allowed_domains: string[];
   enforce_domains: boolean;
+}
+export interface SitePreChatField {
+  name: string;
+  label: string;
+  type: 'text' | 'email' | 'tel';
+  required: boolean;
+  placeholder: string;
 }
 export type SiteInput = Omit<Site, 'id'>;
 
@@ -395,6 +466,16 @@ export async function updateQuickAction(id: string, body: QuickActionInput): Pro
 }
 export async function deleteQuickAction(id: string): Promise<void> {
   await authed(`/api/quick-actions/${id}`, { method: 'DELETE' });
+}
+
+// ── Live translation (agent) ──────────────────────────────────────────────────
+export async function translate(text: string, to: string): Promise<string> {
+  const r = await authed('/api/agent/translate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, to }),
+  });
+  return (await jsonOrThrow<{ text: string }>(r)).text;
 }
 
 // ── Settings + AI usage (admin) ───────────────────────────────────────────────

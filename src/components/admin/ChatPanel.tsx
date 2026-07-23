@@ -20,6 +20,11 @@ import {
   Sparkles,
   ArrowRight,
   Eye,
+  Languages,
+  ChevronDown,
+  ChevronUp,
+  Check,
+  Pencil,
 } from 'lucide-react';
 import {
   getConversation,
@@ -34,6 +39,17 @@ import {
   listAgents,
   assignConversation,
   conversationSource,
+  translate,
+  updateVisitor,
+  listVisitorIps,
+  getVisitorPerson,
+  type VisitorIp,
+  type PersonProfile,
+} from '../../lib/adminApi';
+import { Markdown } from '../../lib/markdown';
+import { Badge } from './ui';
+import { VisitorAvatar } from './VisitorAvatar';
+import {
   type AdminConversation,
   type AdminMessage,
   type ConversationNote,
@@ -50,6 +66,7 @@ interface Props {
   presence: LiveVisitor[];
   magicBrowse?: boolean;
   onWatch?: (visitorId: string) => void;
+  onOpenConversation?: (conversationId: string) => void;
   onChanged: () => void;
 }
 
@@ -58,6 +75,11 @@ type TimelineItem =
   | { kind: 'note'; at: string; data: ConversationNote };
 
 type Tab = 'info' | 'activity' | 'notes';
+
+const TRANSLATE_LANGS = [
+  'English', 'Turkish', 'Spanish', 'French', 'German', 'Italian', 'Portuguese',
+  'Arabic', 'Russian', 'Hindi', 'Chinese', 'Japanese', 'Korean', 'Dutch',
+] as const;
 
 function clockTime(ms: number): string {
   const d = new Date(ms);
@@ -70,7 +92,7 @@ function duration(ms: number): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
-export function ChatPanel({ conversationId, meId, liveMessage, typing, presence, magicBrowse, onWatch, onChanged }: Props) {
+export function ChatPanel({ conversationId, meId, liveMessage, typing, presence, magicBrowse, onWatch, onOpenConversation, onChanged }: Props) {
   const [conversation, setConversation] = useState<AdminConversation | null>(null);
   const [messages, setMessages] = useState<AdminMessage[]>([]);
   const [notes, setNotes] = useState<ConversationNote[]>([]);
@@ -83,6 +105,17 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
   const [showInfo, setShowInfo] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
   const [tab, setTab] = useState<Tab>('info');
   const [noteDraft, setNoteDraft] = useState('');
+  // Live translation: inbound = show visitor/AI messages in the agent's
+  // language; outbound = send the agent's reply in the customer's language.
+  const [summaryOpen, setSummaryOpen] = useState(true);
+  const [editName, setEditName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [ips, setIps] = useState<VisitorIp[]>([]);
+  const [person, setPerson] = useState<PersonProfile | null>(null);
+  const [showTranslate, setShowTranslate] = useState(false);
+  const [translateTo, setTranslateTo] = useState(() => localStorage.getItem('jetchat_tx_in') || '');
+  const [replyLang, setReplyLang] = useState(() => localStorage.getItem('jetchat_tx_out') || '');
+  const [translations, setTranslations] = useState<Record<string, string>>({});
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -95,6 +128,11 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         setConversation(c.conversation);
         setMessages(c.messages);
         setNotes(n);
+        const vid = c.conversation.visitor_id;
+        if (vid) {
+          listVisitorIps(vid).then((r) => !cancelled && setIps(r)).catch(() => undefined);
+          getVisitorPerson(vid).then((p) => !cancelled && setPerson(p)).catch(() => undefined);
+        }
       })
       .catch(() => undefined);
     listCanned().then(setCanned).catch(() => undefined);
@@ -124,6 +162,44 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [timeline, typing]);
 
+  // Inbound translation: translate visitor/AI messages into the agent's chosen
+  // language, cached by `${id}|${lang}`. A ref keeps the effect off `translations`
+  // so filling the cache doesn't re-trigger it.
+  const translationsRef = useRef(translations);
+  translationsRef.current = translations;
+  useEffect(() => {
+    if (!translateTo) return;
+    const todo = messages.filter(
+      (m) => m.sender_type !== 'agent' && (m.content ?? '').trim() && !(`${m.id}|${translateTo}` in translationsRef.current),
+    );
+    if (todo.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      for (const m of todo) {
+        try {
+          const t = await translate(m.content, translateTo);
+          if (cancelled) return;
+          setTranslations((prev) => ({ ...prev, [`${m.id}|${translateTo}`]: t }));
+        } catch {
+          /* leave original */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, translateTo]);
+
+  const setTx = (dir: 'in' | 'out', lang: string) => {
+    if (dir === 'in') {
+      setTranslateTo(lang);
+      localStorage.setItem('jetchat_tx_in', lang);
+    } else {
+      setReplyLang(lang);
+      localStorage.setItem('jetchat_tx_out', lang);
+    }
+  };
+
   const visitorTyping = typing?.conversationId === conversationId && typing.isTyping;
 
   const cannedMatches = useMemo(() => {
@@ -150,7 +226,16 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         const note = await addNote(conversationId, content);
         setNotes((prev) => [...prev, note]);
       } else {
-        const m = await apiReply(conversationId, content);
+        // Outbound translation: send the reply in the customer's language.
+        let toSend = content;
+        if (replyLang) {
+          try {
+            toSend = await translate(content, replyLang);
+          } catch {
+            /* fall back to the original */
+          }
+        }
+        const m = await apiReply(conversationId, toSend);
         setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
         onChanged();
       }
@@ -204,11 +289,23 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
     setNoteDraft('');
   };
 
+  const startEditName = () => {
+    setNameDraft(conversation?.visitor_name ?? '');
+    setEditName(true);
+  };
+  const saveName = async () => {
+    const next = nameDraft.trim();
+    await updateVisitor(conversationId, { visitor_name: next || null });
+    setConversation((c) => (c ? { ...c, visitor_name: next || null } : c));
+    setEditName(false);
+    onChanged();
+  };
+
   const name = conversation?.visitor_name || conversation?.visitor_email || 'Anonymous visitor';
   const meta = conversation?.metadata as
     | {
         current_page?: string;
-        location?: { city?: string; region?: string; country?: string; country_code?: string };
+        location?: { city?: string; region?: string; country?: string; country_code?: string; isp?: string; org?: string };
         ip_address?: string;
         user_agent?: string;
         language?: string;
@@ -218,10 +315,12 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         order_id?: string;
         user_id?: string;
         phone?: string;
+        prechat?: Record<string, string>;
         handoff?: {
           by?: string;
           intent?: string;
           reason?: string;
+          summary?: string;
           suggestion?: string;
           request?: string;
           order?: { id?: string; status?: string; eta?: string; restaurant?: string; total?: string } | null;
@@ -281,6 +380,50 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2 shrink-0">
+            {/* Live translation */}
+            <div className="relative">
+              <button
+                onClick={() => setShowTranslate((s) => !s)}
+                title="Live translation"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition ${
+                  translateTo || replyLang ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}
+              >
+                <Languages className="w-4 h-4" />
+                <span className="hidden sm:inline">{translateTo || replyLang ? 'Translating' : 'Translate'}</span>
+              </button>
+              {showTranslate && (
+                <div className="absolute right-0 mt-1 w-64 bg-white rounded-2xl shadow-lg border border-gray-100 p-3 z-20 space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-bold tracking-wide text-gray-500 mb-1">SHOW MESSAGES IN</label>
+                    <select
+                      value={translateTo}
+                      onChange={(e) => setTx('in', e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm"
+                    >
+                      <option value="">Off (original)</option>
+                      {TRANSLATE_LANGS.map((l) => (
+                        <option key={l} value={l}>{l}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold tracking-wide text-gray-500 mb-1">SEND MY REPLIES IN</label>
+                    <select
+                      value={replyLang}
+                      onChange={(e) => setTx('out', e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm"
+                    >
+                      <option value="">Off (as typed)</option>
+                      {TRANSLATE_LANGS.map((l) => (
+                        <option key={l} value={l}>{l}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-[11px] text-gray-400">Powered by your configured AI provider.</p>
+                </div>
+              )}
+            </div>
             {magicBrowse && onWatch && conversation?.visitor_id && (
               <button
                 onClick={() => onWatch(conversation.visitor_id)}
@@ -349,14 +492,29 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
 
         {/* Timeline */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
-          {/* Bot → human handoff summary (design t3). */}
+          {/* Bot → human handoff summary (design t3). Sticky so the agent always
+              sees it while scrolling; collapsible to reclaim space. */}
           {handoff && (
-            <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+            <div className="sticky top-0 z-20 -mx-4 -mt-4 px-4 pt-3 pb-2 bg-gray-50/95 backdrop-blur">
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 shadow-sm p-4">
+              <button
+                type="button"
+                onClick={() => setSummaryOpen((s) => !s)}
+                className="flex items-center gap-1.5 w-full"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                 <span className="text-[10px] font-bold tracking-wider text-blue-700">BOT SUMMARY</span>
-                {handoff.at && <span className="ml-auto text-[11px] text-gray-400">{new Date(handoff.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
-              </div>
+                {!summaryOpen && handoff.summary && (
+                  <span className="text-xs text-gray-600 truncate ml-1.5 font-normal">{handoff.summary}</span>
+                )}
+                {handoff.at && summaryOpen && (
+                  <span className="ml-auto text-[11px] text-gray-400">{new Date(handoff.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                )}
+                {summaryOpen ? <ChevronUp className="w-4 h-4 text-blue-500 shrink-0 ml-auto" /> : <ChevronDown className="w-4 h-4 text-blue-500 shrink-0 ml-auto" />}
+              </button>
+              {summaryOpen && (
+              <div className="mt-2">
+              {handoff.summary && <p className="text-sm text-gray-800 leading-relaxed mb-2">{handoff.summary}</p>}
               <p className="text-sm text-gray-800 leading-relaxed">
                 <span className="font-semibold">{handoff.reason ?? 'Handoff'}</span>
                 {handoff.order?.id && (
@@ -409,6 +567,9 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                   <CheckCircle className="w-3.5 h-3.5" /> Mark resolved
                 </button>
               </div>
+              </div>
+              )}
+              </div>
             </div>
           )}
           {timeline.map((item) =>
@@ -418,7 +579,15 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                 <p className="whitespace-pre-wrap break-words">{item.data.content}</p>
               </div>
             ) : (
-              <Bubble key={`m-${item.data.id}`} m={item.data} />
+              <Bubble
+                key={`m-${item.data.id}`}
+                m={item.data}
+                translated={
+                  translateTo && item.data.sender_type !== 'agent'
+                    ? translations[`${item.data.id}|${translateTo}`]
+                    : undefined
+                }
+              />
             ),
           )}
           {visitorTyping && (
@@ -492,12 +661,35 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
       {/* ── Visitor detail sidebar (Crisp-style, tabbed) ─────────────────── */}
       {showInfo && (
         <aside className="absolute lg:static inset-0 lg:inset-auto z-20 bg-white lg:w-80 shrink-0 lg:border-l border-gray-200 flex flex-col">
-          <div className="flex items-center gap-2 px-4 h-12 border-b border-gray-100">
-            <span className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white flex items-center justify-center text-sm font-semibold shrink-0">
-              {name.charAt(0).toUpperCase()}
-            </span>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-800 truncate">{name}</p>
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100">
+            <VisitorAvatar email={conversation?.visitor_email} name={name} size={32} />
+            <div className="min-w-0 flex-1">
+              {editName ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void saveName();
+                  }}
+                  className="flex items-center gap-1"
+                >
+                  <input
+                    autoFocus
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    onBlur={() => void saveName()}
+                    placeholder="Visitor name"
+                    className="min-w-0 flex-1 text-sm border border-blue-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  />
+                  <button type="submit" className="text-blue-600 p-1" aria-label="Save name">
+                    <Check className="w-4 h-4" />
+                  </button>
+                </form>
+              ) : (
+                <button onClick={startEditName} className="group flex items-center gap-1 max-w-full" title="Rename visitor">
+                  <span className="text-sm font-semibold text-gray-800 truncate">{name}</span>
+                  <Pencil className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 shrink-0" />
+                </button>
+              )}
               <p className="text-[11px] text-gray-500">
                 {live?.online ? 'Online now' : 'Offline'} · {conversation?.status ?? '—'}
               </p>
@@ -527,6 +719,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
               <dl className="space-y-2.5">
                 <InfoRow icon={<Globe className="w-3.5 h-3.5" />} label="Location" value={geoText || 'Unknown'} />
                 <InfoRow icon={<span className="font-mono text-[10px]">IP</span>} label="IP address" value={meta?.ip_address ?? 'Unknown'} mono />
+                {meta?.location?.isp && <InfoRow label="ISP" value={meta.location.isp} />}
                 {conversation?.visitor_email && <InfoRow label="Email" value={conversation.visitor_email} />}
                 {meta?.phone && <InfoRow label="Phone" value={meta.phone} />}
                 {meta?.user_id && <InfoRow label="User ID" value={meta.user_id} mono />}
@@ -544,6 +737,83 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                 {conversation && <InfoRow label="First seen" value={new Date(conversation.created_at).toLocaleString()} />}
                 <InfoRow label="Messages" value={String(conversation?.message_count ?? messages.length)} />
                 <InfoRow label="Visitor ID" value={conversation?.visitor_id ?? ''} mono truncate />
+                {meta?.prechat && Object.keys(meta.prechat).length > 0 && (
+                  <>
+                    <div className="pt-1 mt-1 border-t border-gray-100 text-[11px] font-bold tracking-wide text-gray-400">PRE-CHAT</div>
+                    {Object.entries(meta.prechat).map(([k, v]) => (
+                      <InfoRow key={k} label={k.replace(/^visitor_/, '').replace(/_/g, ' ')} value={String(v)} />
+                    ))}
+                  </>
+                )}
+                {ips.length > 0 && (
+                  <div className="pt-1 mt-1 border-t border-gray-100">
+                    <p className="text-[11px] font-bold tracking-wide text-gray-400 mb-1">
+                      IP HISTORY{ips.length > 1 ? ` (${ips.length})` : ''}
+                    </p>
+                    <ul className="space-y-1">
+                      {ips.map((r) => (
+                        <li key={r.id} className="flex items-baseline gap-2 text-xs">
+                          <span className="font-mono text-gray-700 truncate">{r.ip}</span>
+                          <span className="text-gray-400 shrink-0 ml-auto">{new Date(r.last_seen).toLocaleDateString()}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {person &&
+                  (person.sites.length > 1 ||
+                    person.visitor_ids.length > 1 ||
+                    person.conversations.length > 1) && (
+                    <div className="pt-1 mt-1 border-t border-gray-100">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <Globe className="w-3.5 h-3.5 text-blue-600" />
+                        <p className="text-[11px] font-bold tracking-wide text-blue-600">
+                          SAME PERSON — CROSS-SITE
+                        </p>
+                      </div>
+                      {/* Site badges this device has been seen on */}
+                      {person.sites.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {person.sites.map((s) => (
+                            <Badge key={s} tone={s === 'saas' ? 'violet' : 'amber'}>
+                              {conversationSource({ widget_mode: s }).label}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[11px] text-gray-400 mb-1.5">
+                        Matched by device fingerprint
+                        {person.emails.length > 0 ? ' + email' : ''} across{' '}
+                        {person.visitor_ids.length} session
+                        {person.visitor_ids.length === 1 ? '' : 's'}.
+                      </p>
+                      {/* Other conversations under this identity */}
+                      <ul className="space-y-1">
+                        {person.conversations
+                          .filter((c) => c.id !== conversationId)
+                          .slice(0, 8)
+                          .map((c) => (
+                            <li key={c.id}>
+                              <button
+                                onClick={() => onOpenConversation?.(c.id)}
+                                disabled={!onOpenConversation}
+                                className="w-full flex items-center gap-2 text-left text-xs rounded-lg px-2 py-1.5 hover:bg-gray-50 disabled:hover:bg-transparent transition"
+                              >
+                                <Badge tone={c.mode === 'saas' ? 'violet' : 'amber'}>
+                                  {conversationSource({ widget_mode: c.mode ?? undefined }).label}
+                                </Badge>
+                                <span className="truncate text-gray-700 flex-1">
+                                  {c.visitor_name || 'Visitor'} · {c.message_count} msg
+                                </span>
+                                <span className="text-gray-400 shrink-0">
+                                  {new Date(c.updated_at).toLocaleDateString()}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  )}
               </dl>
             )}
 
@@ -707,9 +977,10 @@ function deviceLabel(ua: string): string {
   return [browser, os].filter(Boolean).join(' · ');
 }
 
-function Bubble({ m }: { m: AdminMessage }) {
+function Bubble({ m, translated }: { m: AdminMessage; translated?: string }) {
   const isAgent = m.sender_type === 'agent';
   const attachment = m.metadata?.attachment;
+  const showTx = translated != null && translated !== m.content;
   return (
     <div className={`flex ${isAgent ? 'justify-end' : 'justify-start'}`}>
       <div
@@ -734,8 +1005,15 @@ function Bubble({ m }: { m: AdminMessage }) {
               <span className="truncate">{attachment.filename}</span>
             </a>
           )
+        ) : showTx ? (
+          <>
+            <Markdown text={translated ?? ''} />
+            <p className="mt-1 text-[11px] italic opacity-70 flex items-center gap-1 border-t border-black/5 pt-1">
+              <Languages className="w-3 h-3 shrink-0" /> {m.content}
+            </p>
+          </>
         ) : (
-          <p className="whitespace-pre-wrap break-words">{m.content}</p>
+          <Markdown text={m.content} />
         )}
       </div>
     </div>

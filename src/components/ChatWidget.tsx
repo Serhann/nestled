@@ -22,6 +22,9 @@ import {
   type QuickIntent,
 } from '../lib/api';
 import { strings } from '../lib/strings';
+import { getFingerprint } from '../lib/fingerprint';
+import { playChime } from '../lib/sound';
+import { Markdown } from '../lib/markdown';
 import { TriggerEngine } from '../utils/triggerEngine';
 import type { Trigger } from '../types/chat';
 
@@ -64,9 +67,6 @@ function readIdentity(): Record<string, string> {
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const CONV_KEY = 'jetchat_conv';
 const MUTE_KEY = 'jetchat_muted';
-// Short notification blip.
-const BLIP =
-  'data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
 
 interface StoredConversation {
   id: string;
@@ -300,10 +300,11 @@ export function ChatWidget() {
   const [leaveSent, setLeaveSent] = useState(false);
 
   const visitorId = useRef(getVisitorId());
+  const fingerprint = useRef(getFingerprint());
   const identity = useRef<Record<string, string>>(readIdentity());
+  const preChatRef = useRef<Record<string, string>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openRef = useRef(open);
@@ -324,7 +325,6 @@ export function ChatWidget() {
     getWidgetConfig()
       .then((r) => setConfig(r.settings))
       .catch(() => undefined);
-    audioRef.current = new Audio(BLIP);
   }, []);
 
   // ── Keep the online/offline indicator fresh ─────────────────────────────────
@@ -408,7 +408,7 @@ export function ChatWidget() {
     const state = open ? (minimized ? 'minimized' : 'open') : 'closed';
     const size =
       state === 'closed'
-        ? { width: 76, height: 76 }
+        ? { width: 96, height: 96 } // room around the launcher so its shadow isn't clipped
         : state === 'minimized'
           ? { width: 384, height: 68 }
           : { width: 384, height: 640 };
@@ -423,6 +423,7 @@ export function ChatWidget() {
   useEffect(() => {
     if (embedded) return;
     const p = openPresenceWS(visitorId.current, {
+      fingerprint: fingerprint.current,
       onProactive: (data) => {
         setConversation({ id: data.conversation_id, token: data.visitor_token });
         setShowPreChat(false);
@@ -469,9 +470,11 @@ export function ChatWidget() {
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
+  // Ding on an incoming agent/AI reply (respects the mute toggle). Plays even
+  // when the widget is open so the visitor always hears a reply land.
   const playBlip = useCallback(() => {
-    if (muted || openRef.current) return;
-    audioRef.current?.play().catch(() => undefined);
+    if (muted) return;
+    playChime();
   }, [muted]);
 
   // Execute a matched trigger's actions. Proactive messages are shown locally
@@ -489,7 +492,7 @@ export function ChatWidget() {
       setTriggerMessage(t.actions.message_content);
       if (!openRef.current) setUnread((u) => u + 1);
     }
-    if (t.actions.play_sound && !muted) audioRef.current?.play().catch(() => undefined);
+    if (t.actions.play_sound && !muted) playChime();
     engineRef.current?.markTriggerExecuted(t.id);
   }, [muted]);
 
@@ -545,6 +548,8 @@ export function ChatWidget() {
     ...(activeTriggerId ? { trigger_id: activeTriggerId } : {}),
     // The visitor's current order, so agents see the context in the profile.
     ...(orderRef.current.id ? { order: orderRef.current } : {}),
+    // Pre-chat answers (site-configured lead capture), shown in the agent profile.
+    ...(Object.keys(preChatRef.current).length ? { prechat: preChatRef.current, ...preChatRef.current } : {}),
     // Known visitor identity (user_id, order_id, and any custom traits).
     ...identity.current,
   });
@@ -557,6 +562,7 @@ export function ChatWidget() {
         // Prefer explicit prechat/leave-form input, else known identity.
         visitor_name: extra?.visitor_name ?? identity.current.name,
         visitor_email: extra?.visitor_email ?? identity.current.email,
+        fingerprint: fingerprint.current,
         metadata: conversationMetadata(),
       });
       const conv = { id: created.conversation_id, token: created.visitor_token };
@@ -748,6 +754,14 @@ export function ChatWidget() {
     }
     setPreChatErrors(errors);
     if (Object.keys(errors).length > 0) return;
+    // Keep every answer (trimmed, non-empty) so it lands in the conversation
+    // metadata for the agent — not just name/email.
+    const answers: Record<string, string> = {};
+    for (const f of fields) {
+      const v = (preChat[f.name] ?? '').trim();
+      if (v) answers[f.name] = v;
+    }
+    preChatRef.current = answers;
     setShowPreChat(false);
     await ensureConversation({
       visitor_name: preChat.visitor_name,
@@ -779,17 +793,18 @@ export function ChatWidget() {
 
   // ── Render: launcher (closed) ─────────────────────────────────────────────────
   if (!open) {
-    // In the embed iframe the launcher sits flush (the iframe itself is small
-    // and positioned by the host); standalone it anchors to the configured side.
+    // In the embed iframe the launcher is centred within its small (host-sized)
+    // iframe so its drop shadow has room on every side and isn't clipped into a
+    // square; standalone it anchors to the configured corner.
     const launcherClass = embedded
-      ? 'fixed bottom-2 right-2'
+      ? 'fixed inset-0 m-auto'
       : `fixed bottom-4 ${side === 'left' ? 'left-4' : 'right-4'}`;
     return (
       <button
         onClick={handleOpen}
         aria-label={strings.headerDefaultTitle}
-        className={`${launcherClass} group z-[2147483000] w-16 h-16 rounded-full shadow-xl flex items-center justify-center text-white transition-transform duration-200 hover:scale-110 active:scale-95`}
-        style={{ backgroundColor: primaryColor }}
+        className={`${launcherClass} group z-[2147483000] w-16 h-16 rounded-full flex items-center justify-center text-white transition-transform duration-200 hover:scale-110 active:scale-95`}
+        style={{ backgroundColor: primaryColor, boxShadow: '0 3px 12px rgba(0,0,0,0.22)' }}
       >
         {config?.widget_avatar_url ? (
           <img src={config.widget_avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
@@ -1362,14 +1377,14 @@ function MessageBubble({ message, primaryColor, token }: { message: WidgetMessag
     );
   } else if (isVisitor) {
     content = (
-      <div className="px-3.5 py-2.5 text-sm text-white rounded-[18px] rounded-br-[6px] shadow-sm" style={{ backgroundColor: primaryColor }}>
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+      <div className="px-3.5 py-2.5 text-sm text-white rounded-[18px] rounded-br-[6px] shadow-sm [&_a]:text-white" style={{ backgroundColor: primaryColor }}>
+        <Markdown text={message.content} />
       </div>
     );
   } else {
     content = (
       <div className="px-3.5 py-2.5 text-sm bg-white text-gray-800 rounded-[18px] rounded-bl-[6px] border border-gray-200">
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        <Markdown text={message.content} />
       </div>
     );
   }

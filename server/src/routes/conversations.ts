@@ -10,12 +10,15 @@ import { attachConversationToVisitor } from '../realtime/presence.js';
 import { clientIp, lookupGeo } from '../services/geo.js';
 import { notifyNewChat, notifyNewMessage } from '../services/discord.js';
 import { pushNewConversation, pushVisitorMessage, pushToAgents } from '../services/push.js';
-import { generateAIReply } from '../services/ai/index.js';
+import { generateAIReply, summarizeConversation } from '../services/ai/index.js';
+import { recordVisitorIp } from '../services/visitorTracking.js';
+import { resolveIdentity } from '../services/identity.js';
 
 const createBody = z.object({
   visitor_id: z.string().min(1).max(200),
   visitor_name: z.string().max(200).optional(),
   visitor_email: z.string().email().max(200).optional(),
+  fingerprint: z.string().max(128).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -96,9 +99,18 @@ async function maybeAIReply(conversationId: string): Promise<void> {
 
     const conv = await prisma.conversations.findUnique({
       where: { id: conversationId },
-      select: { ai_greeted: true, needs_human: true },
+      select: { ai_greeted: true, needs_human: true, assigned_agent_id: true },
     });
     if (conv?.needs_human) return; // already handed off — AI stays silent
+    // A human has taken this conversation over (assigned, or already replied) →
+    // the AI steps aside so it never talks over the agent. This is what lets the
+    // AI keep answering *until* an agent picks the chat up.
+    if (conv?.assigned_agent_id) return;
+    const agentReplied = await prisma.messages.findFirst({
+      where: { conversation_id: conversationId, sender_type: 'agent' },
+      select: { id: true },
+    });
+    if (agentReplied) return;
     if (priv.ai_response_mode === 'first_message' && conv?.ai_greeted) return;
     if (priv.ai_response_mode === 'when_no_agent_online' && anyAgentOnline()) return; // a human is here
 
@@ -122,10 +134,25 @@ async function maybeAIReply(conversationId: string): Promise<void> {
     }
 
     // Handoff: flag the conversation, notify agents, and stop future AI replies.
+    // Stamp an AI-written summary so the agent picking it up sees what the
+    // customer wants (design t3 BOT SUMMARY card).
     if (result.needsHuman) {
+      const summary = await summarizeConversation(conversationId);
+      const existing = await prisma.conversations.findUnique({
+        where: { id: conversationId },
+        select: { metadata: true },
+      });
+      const prevMeta = (existing?.metadata as Record<string, unknown> | null) ?? {};
+      const handoff = {
+        by: 'ai' as const,
+        reason: 'AI handed off',
+        summary: summary ?? undefined,
+        request: last.content,
+        at: new Date().toISOString(),
+      };
       const updated = await prisma.conversations.update({
         where: { id: conversationId },
-        data: { needs_human: true, status: 'open' },
+        data: { needs_human: true, status: 'open', metadata: { ...prevMeta, handoff } as object },
         select: { id: true, needs_human: true, status: true },
       });
       broadcastToAgents({ type: 'conversation:updated', conversation: updated });
@@ -133,7 +160,7 @@ async function maybeAIReply(conversationId: string): Promise<void> {
         type: 'message',
         conversationId,
         title: 'Handoff requested',
-        body: 'A visitor needs a human.',
+        body: summary ? summary.slice(0, 120) : 'A visitor needs a human.',
         url: `/admin?conversation=${conversationId}`,
       });
     }
@@ -173,6 +200,17 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
       select: { id: true, created_at: true },
     });
     if (!conv) return reply.code(500).send({ error: 'Failed to create conversation' });
+
+    void recordVisitorIp(body.visitor_id, ip, geo);
+    // Fuse this visitor into the cross-site people pool (admin-only graph).
+    const convMode = (body.metadata?.widget_mode as string | undefined) ?? null;
+    const fingerprint =
+      body.fingerprint ?? (body.metadata?.fingerprint as string | undefined) ?? null;
+    void resolveIdentity(body.visitor_id, {
+      fingerprint,
+      email: body.visitor_email ?? null,
+      mode: convMode,
+    });
 
     broadcastToAgents({
       type: 'conversation:new',
@@ -294,10 +332,12 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
         select: { metadata: true },
       });
       const prevMeta = (existing?.metadata as Record<string, unknown> | null) ?? {};
+      const summary = await summarizeConversation(id);
       const handoff = {
         by: 'bot' as const,
         intent: body.intent,
         reason: def.label,
+        summary: summary ?? undefined,
         suggestion: def.suggestion ?? undefined,
         request: visitorText,
         order: order.id ? order : null,

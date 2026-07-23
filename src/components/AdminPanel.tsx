@@ -7,6 +7,8 @@ import {
   LogOut,
   Bell,
   BellOff,
+  Volume2,
+  VolumeX,
   LayoutDashboard,
   Users2,
   MessageSquareText,
@@ -42,6 +44,7 @@ import {
   type AgentSocket,
 } from '../lib/adminApi';
 import { enablePush, disablePush, isPushSupported } from '../lib/push';
+import { playChime } from '../lib/sound';
 
 type Section =
   | 'dashboard'
@@ -91,9 +94,12 @@ export function AdminPanel() {
   const [watching, setWatching] = useState<string | null>(null);
   const [replayFeed, setReplayFeed] = useState<ReplayFeed | null>(null);
 
+  const [sound, setSound] = useState(() => typeof localStorage !== 'undefined' && localStorage.getItem('jetchat_admin_sound') !== '0');
   const socketRef = useRef<AgentSocket | null>(null);
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedId;
+  const soundRef = useRef(sound);
+  soundRef.current = sound;
   const replayNonce = useRef(0);
 
   // Agent realtime socket (single connection for the whole panel).
@@ -104,6 +110,8 @@ export function AdminPanel() {
       onConversationUpdated: () => setListNonce((n) => n + 1),
       onMessage: (conversationId, message) => {
         setListNonce((n) => n + 1);
+        // Audible ding on any incoming visitor message (respects the mute rail).
+        if (message.sender_type === 'visitor' && soundRef.current) playChime();
         if (conversationId === selectedRef.current) {
           setLiveMessage({ conversationId, message });
         } else if (message.sender_type === 'visitor') {
@@ -177,6 +185,15 @@ export function AdminPanel() {
     setSelectedId(null);
   }, []);
 
+  const toggleSound = () => {
+    setSound((s) => {
+      const next = !s;
+      localStorage.setItem('jetchat_admin_sound', next ? '1' : '0');
+      if (next) playChime(); // confirm + unlock the audio context on enable
+      return next;
+    });
+  };
+
   const togglePush = async () => {
     if (pushState === 'on') {
       await disablePush({ apiBase: apiBase(), getAccessToken: tokens.access });
@@ -244,6 +261,7 @@ export function AdminPanel() {
                   presence={presence}
                   magicBrowse={magicBrowse}
                   onWatch={startWatch}
+                  onOpenConversation={setSelectedId}
                   onChanged={() => setListNonce((n) => n + 1)}
                 />
               ) : (
@@ -304,6 +322,13 @@ export function AdminPanel() {
             <RailButton key={n.id} item={n} active={section === n.id} onGo={go} badge={0} />
           ))}
         <div className="flex-1" />
+        <button
+          onClick={toggleSound}
+          title={sound ? 'Sound on — new messages ding' : 'Sound off'}
+          className="w-11 h-11 rounded-2xl flex items-center justify-center text-white/50 hover:bg-white/10 hover:text-white/80 transition"
+        >
+          {sound ? <Volume2 className="w-5 h-5 text-blue-400" /> : <VolumeX className="w-5 h-5" />}
+        </button>
         <button
           onClick={togglePush}
           disabled={!isPushSupported()}

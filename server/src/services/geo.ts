@@ -7,6 +7,21 @@ export interface GeoLocation {
   country_code: string | null;
   city: string | null;
   region: string | null;
+  isp?: string | null; // from GeoIP2 Precision/ISP traits (web service only)
+  org?: string | null;
+}
+
+// Partial shape of a MaxMind GeoIP2 web-service response (only what we read).
+interface MaxmindResponse {
+  country?: { iso_code?: string; names?: Record<string, string> };
+  registered_country?: { iso_code?: string; names?: Record<string, string> };
+  city?: { names?: Record<string, string> };
+  subdivisions?: Array<{ names?: Record<string, string> }>;
+  traits?: {
+    isp?: string;
+    organization?: string;
+    autonomous_system_organization?: string;
+  };
 }
 
 /**
@@ -54,9 +69,86 @@ function pickName(names?: unknown): string | null {
   return n.en ?? Object.values(n).find((v): v is string => typeof v === 'string') ?? null;
 }
 
+/** Private / loopback / link-local IPs never have public geo — skip the lookup. */
+function isPrivateIp(ip: string): boolean {
+  return (
+    ip === '127.0.0.1' ||
+    ip === '::1' ||
+    ip.startsWith('10.') ||
+    ip.startsWith('192.168.') ||
+    ip.startsWith('169.254.') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ||
+    /^(fc|fd|fe80)/i.test(ip)
+  );
+}
+
+const maxmindEnabled = Boolean(env.MAXMIND_ACCOUNT_ID && env.MAXMIND_LICENSE_KEY);
+if (maxmindEnabled) {
+  // eslint-disable-next-line no-console
+  console.log(`[geo] MaxMind web service enabled → ${env.MAXMIND_ENDPOINT}`);
+}
+let webErrorLogs = 0;
+
+/**
+ * Per-IP lookup via the MaxMind GeoIP web service (Basic auth). Best-effort:
+ * returns null on any error but logs the reason (first few times) so misconfig
+ * (401 auth, wrong endpoint) is visible in the app logs.
+ */
+async function lookupGeoWeb(ip: string): Promise<GeoLocation | null> {
+  const auth = Buffer.from(`${env.MAXMIND_ACCOUNT_ID}:${env.MAXMIND_LICENSE_KEY}`).toString('base64');
+  // Base endpoint, tolerant of a trailing slash or a copied `?pretty` query.
+  const base = env.MAXMIND_ENDPOINT.split('?')[0]!.replace(/\/+$/, '');
+  const url = `${base}/${encodeURIComponent(ip)}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      if (webErrorLogs < 5) {
+        webErrorLogs++;
+        // eslint-disable-next-line no-console
+        console.warn(`[geo] MaxMind ${res.status} for ${ip}: ${body.slice(0, 200)}`);
+      }
+      return null;
+    }
+    const data = (await res.json()) as MaxmindResponse;
+    // Anycast/hosting IPs may only carry registered_country — fall back to it.
+    const c = data.country ?? data.registered_country;
+    return {
+      country: pickName(c?.names),
+      country_code: c?.iso_code ?? null,
+      city: pickName(data.city?.names),
+      region: pickName(data.subdivisions?.[0]?.names),
+      isp: data.traits?.isp ?? data.traits?.autonomous_system_organization ?? null,
+      org: data.traits?.organization ?? null,
+    };
+  } catch (err) {
+    if (webErrorLogs < 5) {
+      webErrorLogs++;
+      // eslint-disable-next-line no-console
+      console.warn(`[geo] MaxMind request failed for ${ip}: ${(err as Error).message}`);
+    }
+    return null; // network/timeout/parse — degrade to no geo
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function lookupGeo(ip: string): Promise<GeoLocation | null> {
   if (!ip || ip === 'unknown') return null;
   if (cache.has(ip)) return cache.get(ip) ?? null;
+
+  // Prefer the MaxMind web service when configured (skip un-geolocatable IPs).
+  if (maxmindEnabled) {
+    const result = isPrivateIp(ip) ? null : await lookupGeoWeb(ip);
+    if (cache.size >= CACHE_MAX) cache.clear();
+    cache.set(ip, result);
+    return result;
+  }
 
   const reader = await getReader();
   if (!reader) {
@@ -69,9 +161,10 @@ export async function lookupGeo(ip: string): Promise<GeoLocation | null> {
     const record = reader.get(ip);
     if (record) {
       const city = record as CityResponse;
+      const c = city.country ?? city.registered_country;
       result = {
-        country: pickName(city.country?.names),
-        country_code: city.country?.iso_code ?? null,
+        country: pickName(c?.names),
+        country_code: c?.iso_code ?? null,
         city: pickName(city.city?.names),
         region: pickName(city.subdivisions?.[0]?.names),
       };

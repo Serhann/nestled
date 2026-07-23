@@ -318,6 +318,9 @@ model sites {
   widget_title    String?
   welcome_message String?
   widget_position String? // 'left' | 'right'
+  system_prompt   String? // per-site AI system prompt; null = use the global one
+  pre_chat_enabled Boolean? // null = inherit global; true = ask site fields; false = off
+  pre_chat_fields Json     @default("[]") // [{ name, label, type, required, placeholder }]
   quick_actions   Json     @default("[]") // [{ intent, label? }] — empty = built-in pack
   allowed_domains String[] @default([]) // hostnames allowed to embed; empty = anywhere
   enforce_domains Boolean  @default(false) // hide the widget on unlisted domains
@@ -355,6 +358,20 @@ model quick_actions {
   is_active        Boolean  @default(true)
   created_at       DateTime @default(now()) @db.Timestamptz(6)
   updated_at       DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// Every IP a visitor has connected from (tracked across sessions / IP changes).
+model visitor_ips {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  visitor_id String
+  ip         String
+  geo        Json?
+  hits       Int      @default(1)
+  first_seen DateTime @default(now()) @db.Timestamptz(6)
+  last_seen  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([visitor_id, ip])
+  @@index([visitor_id], map: "idx_visitor_ips_visitor")
 }
 
 model canned_responses {
@@ -396,4 +413,58 @@ model ai_usage {
   conversation conversations? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
 
   @@index([created_at], map: "idx_ai_usage_created")
+}
+
+// ---------------------------------------------------------------------------
+// Cross-site people pool.
+//
+// `visitor_id` is minted in the host page's first-party localStorage, so the
+// same human on two different customer sites (different origins) shows up as
+// two unrelated visitor ids. We reconstruct one canonical *person* server-side
+// from device fingerprints (stable across origins) plus email. This graph is
+// ADMIN-ONLY — it is never exposed to visitor endpoints, so a visitor can still
+// only ever reach a conversation they hold the token for (security rule #7).
+// ---------------------------------------------------------------------------
+model persons {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  display_name  String?
+  primary_email String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  visitors visitor_links[]
+  signals  person_signals[]
+
+  @@index([primary_email], map: "idx_persons_email")
+}
+
+// One row per client-minted visitor_id, pointing at the person it belongs to.
+model visitor_links {
+  visitor_id String   @id
+  person_id  String   @db.Uuid
+  mode       String? // site key this visitor id was seen on
+  first_seen DateTime @default(now()) @db.Timestamptz(6)
+  last_seen  DateTime @default(now()) @db.Timestamptz(6)
+
+  person persons @relation(fields: [person_id], references: [id], onDelete: Cascade)
+
+  @@index([person_id], map: "idx_visitor_links_person")
+}
+
+// Unique identity signals (device fingerprint, email). The @@unique on
+// (kind, value) is what fuses two persons: seeing the same fingerprint again
+// resolves to the same person, and overlapping signals trigger a merge.
+model person_signals {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  person_id  String   @db.Uuid
+  kind       String // 'fingerprint' | 'email'
+  value      String
+  hits       Int      @default(1)
+  first_seen DateTime @default(now()) @db.Timestamptz(6)
+  last_seen  DateTime @default(now()) @db.Timestamptz(6)
+
+  person persons @relation(fields: [person_id], references: [id], onDelete: Cascade)
+
+  @@unique([kind, value], map: "uq_person_signals_kind_value")
+  @@index([person_id], map: "idx_person_signals_person")
 }

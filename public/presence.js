@@ -87,6 +87,7 @@
     // Prefer a shared visitor id (the embed passes the same one to the widget
     // iframe) so presence, conversations, and proactive all agree on identity.
     var visitorId = options.visitorId || getVisitorId();
+    var fingerprint = options.fingerprint || ''; // cross-site device hash (embed-supplied)
     var sessionStart = Date.now();
     var returning = isReturning();
     var ws = null;
@@ -105,6 +106,7 @@
         returning: returning,
         sessionStart: sessionStart,
         mode: mode,
+        fingerprint: fingerprint,
       });
     }
 

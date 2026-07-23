@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Sparkles, Inbox, Radio } from 'lucide-react';
 import { listConversations, conversationSource, type AdminConversation, type LiveVisitor } from '../../lib/adminApi';
+import { VisitorAvatar } from './VisitorAvatar';
 
 const SOURCE_TONE: Record<'food' | 'saas' | 'web', string> = {
   food: 'bg-blue-100 text-blue-700',
@@ -182,9 +183,7 @@ export function ConversationsList({ selectedId, onSelect, reloadNonce, unread, p
               }`}
             >
               <div className="relative shrink-0 mt-0.5">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 text-white flex items-center justify-center text-sm font-bold shadow-sm">
-                  {name.charAt(0).toUpperCase()}
-                </div>
+                <VisitorAvatar email={c.visitor_email} name={name} size={40} className="shadow-sm" />
                 {online && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 border-2 border-white rounded-full" />}
               </div>
               <div className="min-w-0 flex-1">

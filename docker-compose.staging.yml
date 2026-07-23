@@ -1,0 +1,119 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# JetChat — STAGING stack for Coolify
+#
+# Three services on one private network:
+#   web  – nginx serving the built frontend + proxying /api and /ws  (PUBLIC)
+#   app  – Fastify backend (Prisma migrate deploy runs on boot)       (internal)
+#   db   – Postgres 16                                                (internal)
+#
+# Coolify setup:
+#   1. New Resource → Docker Compose → point at this file.
+#   2. Set the domain on the `web` service (or edit SERVICE_FQDN_WEB below) e.g.
+#      https://staging.jetchat.example.com
+#   3. Add the environment variables listed under `app` in Coolify's env UI
+#      (secrets: JWT_*, ANTHROPIC_API_KEY, VAPID_*, POSTGRES_PASSWORD, …).
+#   4. Deploy. Seed the first admin via SEED_ADMIN_* (runs once) or:
+#        coolify exec app npm run seed
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      - app
+    expose:
+      - '80'
+    environment:
+      # Coolify routes the domain to this service on port 80. IMPORTANT: include
+      # the https:// scheme so Coolify provisions a Let's Encrypt certificate —
+      # a bare domain is treated as HTTP-only (no SSL). Set it in Coolify's env:
+      #   SERVICE_FQDN_WEB_80=https://chat-staging.iydo.com
+      - SERVICE_FQDN_WEB_80
+    healthcheck:
+      # 127.0.0.1 (not localhost) — localhost can resolve to ::1 while nginx
+      # listens on IPv4, which makes the check fail and the proxy drop the site.
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:80/']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  app:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      APP_ENV: staging
+      PORT: 4000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://${POSTGRES_USER:-jetchat}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jetchat_staging}
+      # Secrets — set these in Coolify (let it generate strong values).
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      # Origins allowed to call the API / open sockets (the widget's host sites).
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://staging.jetfood.com,https://staging.tryjet.io}
+      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
+      AI_MODEL: ${AI_MODEL:-claude-opus-4-8}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@jetfood.com}
+      GEOLITE2_DB_PATH: ${GEOLITE2_DB_PATH:-}
+      # MaxMind GeoIP web service (per-IP location lookup). When set, used instead
+      # of the local DB. Endpoint defaults to GeoIP2 Precision City (geoip.maxmind.com).
+      MAXMIND_ACCOUNT_ID: ${MAXMIND_ACCOUNT_ID:-}
+      MAXMIND_LICENSE_KEY: ${MAXMIND_LICENSE_KEY:-}
+      MAXMIND_ENDPOINT: ${MAXMIND_ENDPOINT:-https://geoip.maxmind.com/geoip/v2.1/city}
+      UPLOAD_DIR: /data/uploads
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      RETENTION_DAYS: ${RETENTION_DAYS:-30}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      # First-admin bootstrap (no-op once any agent exists).
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin}
+    volumes:
+      - jetchat_uploads_staging:/data/uploads
+      # Optional GeoLite2 DB (read-only); set GEOLITE2_DB_PATH to enable.
+      - ./server/geoip:/data/geoip:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jetchat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-jetchat_staging}
+    volumes:
+      - jetchat_pgdata_staging:/var/lib/postgresql/data
+    healthcheck:
+      # Target the actual DB (defaults to the user name otherwise, which spams
+      # "database ... does not exist" in the logs).
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-jetchat} -d ${POSTGRES_DB:-jetchat_staging}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  jetchat_pgdata_staging:
+  jetchat_uploads_staging:
