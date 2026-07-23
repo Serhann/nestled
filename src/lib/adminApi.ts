@@ -187,18 +187,24 @@ export async function login(email: string, password: string): Promise<AdminAgent
   return data.agent;
 }
 
-/** Bootstrap the first admin (only works while zero agents exist). */
-export async function registerFirstAdmin(name: string, email: string, password: string): Promise<AdminAgent> {
-  const res = await fetch(`${apiBase()}/api/auth/register`, {
+/**
+ * Change your own password. Requires the current password. On success the
+ * server revokes other sessions; the current one keeps working until its access
+ * token expires.
+ */
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const res = await authed(`/api/auth/change-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   });
-  if (res.status === 403) throw new Error('Registration is closed — ask an admin to create your account.');
-  if (!res.ok) throw new Error('Could not create account');
-  const data = (await res.json()) as { access_token: string; refresh_token: string; agent: AdminAgent };
-  tokens.set(data.access_token, data.refresh_token, data.agent);
-  return data.agent;
+  if (!res.ok) {
+    const msg = await res
+      .json()
+      .then((d: { error?: string }) => d.error)
+      .catch(() => undefined);
+    throw new Error(msg || 'Could not change password');
+  }
 }
 
 export async function logout(): Promise<void> {

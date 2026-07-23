@@ -106,22 +106,66 @@ test('public widget config never leaks secrets', async () => {
 let adminAccess = '';
 let agentAccess = '';
 
-test('first register bootstraps an admin; second is closed', async () => {
-  const first = await app.inject({
-    method: 'POST',
-    url: '/api/auth/register',
-    payload: { name: 'Boss', email: 'boss@jetfood.com', password: 'supersecret1' },
-  });
-  assert.equal(first.statusCode, 201);
-  assert.equal(first.json().agent.role, 'admin');
-  adminAccess = first.json().access_token;
+test('the first admin is seeded from env; public register is closed', async () => {
+  // Bootstrap the first admin via the SEED_ADMIN_* path (how production does it).
+  const { ensureSeedAdmin } = await import('../db/seedAdmin.js');
+  process.env.SEED_ADMIN_EMAIL = 'boss@jetfood.com';
+  process.env.SEED_ADMIN_PASSWORD = 'supersecret1';
+  process.env.SEED_ADMIN_NAME = 'Boss';
+  await ensureSeedAdmin();
 
-  const second = await app.inject({
+  // There is no open signup endpoint anymore — the route is gone.
+  const register = await app.inject({
     method: 'POST',
     url: '/api/auth/register',
     payload: { name: 'X', email: 'x@x.com', password: 'supersecret1' },
   });
-  assert.equal(second.statusCode, 403, 'registration must close after the first admin');
+  assert.equal(register.statusCode, 404, 'self-registration must not exist');
+
+  // The seeded admin can log in and gets an admin token.
+  const login = await app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    payload: { email: 'boss@jetfood.com', password: 'supersecret1' },
+  });
+  assert.equal(login.statusCode, 200);
+  assert.equal(login.json().agent.role, 'admin');
+  adminAccess = login.json().access_token;
+});
+
+test('change-password: wrong current rejected, correct rotates and revokes sessions', async () => {
+  // Wrong current password is rejected.
+  const bad = await app.inject({
+    method: 'POST',
+    url: '/api/auth/change-password',
+    headers: { authorization: `Bearer ${adminAccess}` },
+    payload: { current_password: 'nope-wrong', new_password: 'brandnew12' },
+  });
+  assert.equal(bad.statusCode, 400);
+
+  // Correct current password changes it.
+  const ok = await app.inject({
+    method: 'POST',
+    url: '/api/auth/change-password',
+    headers: { authorization: `Bearer ${adminAccess}` },
+    payload: { current_password: 'supersecret1', new_password: 'brandnew12' },
+  });
+  assert.equal(ok.statusCode, 200);
+
+  // Old password no longer works; new one does.
+  const oldLogin = await app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    payload: { email: 'boss@jetfood.com', password: 'supersecret1' },
+  });
+  assert.equal(oldLogin.statusCode, 401);
+  const newLogin = await app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    payload: { email: 'boss@jetfood.com', password: 'brandnew12' },
+  });
+  assert.equal(newLogin.statusCode, 200);
+  adminAccess = newLogin.json().access_token;
 });
 
 test('login rejects a wrong password', async () => {

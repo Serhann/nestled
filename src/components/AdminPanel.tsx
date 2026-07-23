@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Globe2,
   MousePointerClick,
+  KeyRound,
 } from 'lucide-react';
 import { LoginPanel } from './admin/LoginPanel';
 import { ConversationsList } from './admin/ConversationsList';
@@ -35,6 +36,7 @@ import { Dashboard } from './admin/Dashboard';
 import {
   tokens,
   logout,
+  changePassword,
   openAgentWS,
   getPresence,
   apiBase,
@@ -517,10 +519,135 @@ function AccountView({
           </p>
         </div>
       </button>
+      <ChangePasswordCard />
+
       <button onClick={onLogout} className="w-full bg-white rounded-xl p-4 shadow-sm flex items-center gap-3 text-red-600">
         <LogOut className="w-5 h-5" />
         <span className="font-medium">Sign out</span>
       </button>
     </div>
+  );
+}
+
+function ChangePasswordCard() {
+  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const reset = () => {
+    setCurrent('');
+    setNext('');
+    setConfirm('');
+    setError('');
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (next.length < 8) return setError('New password must be at least 8 characters.');
+    if (next !== confirm) return setError('New passwords do not match.');
+    if (next === current) return setError('New password must be different from the current one.');
+    setSaving(true);
+    try {
+      await changePassword(current, next);
+      setDone(true);
+      reset();
+      setOpen(false);
+      setTimeout(() => setDone(false), 4000);
+    } catch (err) {
+      setError((err as Error).message || 'Could not change password');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputClass =
+    'w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder:text-gray-400 focus:bg-white focus:ring-4 focus:ring-blue-500/15 focus:border-blue-400 outline-none transition text-sm';
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => {
+          reset();
+          setOpen(true);
+        }}
+        className="w-full bg-white rounded-xl p-4 shadow-sm flex items-center gap-3 text-left"
+      >
+        <KeyRound className="w-5 h-5 text-gray-500" />
+        <div className="flex-1">
+          <p className="font-medium text-gray-800">Change password</p>
+          <p className="text-sm text-gray-500">
+            {done ? 'Password updated ✓' : 'Update your account password.'}
+          </p>
+        </div>
+        <ChevronRight className="w-4 h-4 text-gray-400" />
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="bg-white rounded-xl p-4 shadow-sm space-y-3">
+      <div className="flex items-center gap-3">
+        <KeyRound className="w-5 h-5 text-gray-500" />
+        <p className="font-medium text-gray-800">Change password</p>
+      </div>
+      <input
+        type="password"
+        value={current}
+        onChange={(e) => setCurrent(e.target.value)}
+        placeholder="Current password"
+        autoComplete="current-password"
+        required
+        className={inputClass}
+      />
+      <input
+        type="password"
+        value={next}
+        onChange={(e) => setNext(e.target.value)}
+        placeholder="New password (min 8 characters)"
+        autoComplete="new-password"
+        required
+        minLength={8}
+        className={inputClass}
+      />
+      <input
+        type="password"
+        value={confirm}
+        onChange={(e) => setConfirm(e.target.value)}
+        placeholder="Confirm new password"
+        autoComplete="new-password"
+        required
+        minLength={8}
+        className={inputClass}
+      />
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-xl text-sm">
+          {error}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="flex-1 bg-blue-600 text-white py-2.5 rounded-xl font-semibold hover:bg-blue-700 active:scale-[0.98] transition disabled:opacity-50 text-sm"
+        >
+          {saving ? 'Saving…' : 'Update password'}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            reset();
+            setOpen(false);
+          }}
+          className="px-4 py-2.5 rounded-xl font-semibold text-gray-600 hover:bg-gray-100 transition text-sm"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
