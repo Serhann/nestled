@@ -387,6 +387,47 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
+  // Refresh the signed host context on a live conversation (visitor-scoped).
+  // The host (JetFood) re-signs a fresh JWT when the order status changes and
+  // the widget POSTs it here; we re-verify it and update the trusted context on
+  // the conversation so the agent sees the new status in real time.
+  app.post('/api/conversations/:id/context', {
+    preHandler: requireVisitor('id'),
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parseBody(z.object({ token: z.string().max(8000) }), req.body, reply);
+    if (!body) return;
+
+    const existing = await prisma.conversations.findUnique({
+      where: { id },
+      select: { metadata: true },
+    });
+    if (!existing) return reply.code(404).send({ error: 'Conversation not found' });
+
+    const prevMeta = (existing.metadata as Record<string, unknown> | null) ?? {};
+    const mode = (prevMeta.widget_mode as string | undefined) ?? null;
+    const ctx = await verifyContextToken(mode, body.token);
+    // Invalid/expired/tampered → ignore quietly, keep the existing context.
+    if (!ctx) return reply.send({ ok: false });
+
+    const trustedName = ctx.customer?.name ?? null;
+    const trustedEmail = ctx.customer?.email ?? null;
+    const updated = await prisma.conversations.update({
+      where: { id },
+      data: {
+        metadata: { ...prevMeta, verified_context: ctx } as object,
+        ...(trustedName ? { visitor_name: trustedName } : {}),
+        ...(trustedEmail ? { visitor_email: trustedEmail } : {}),
+      },
+      select: { id: true, visitor_id: true, visitor_name: true },
+    });
+    // Nudge every agent to refresh this conversation (VERIFIED CONTEXT card).
+    broadcastToAgents({ type: 'conversation:updated', conversation: { id: updated.id, visitor_name: updated.visitor_name } });
+    if (trustedEmail) void resolveIdentity(updated.visitor_id, { email: trustedEmail, mode });
+    return reply.send({ ok: true });
+  });
+
   // Visitor typing indicator (visitor-scoped) → forwarded to agents.
   app.post('/api/conversations/:id/typing', {
     preHandler: requireVisitor('id'),

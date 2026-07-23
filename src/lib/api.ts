@@ -127,6 +127,22 @@ export function createConversation(body: {
   }).then((r) => json<{ conversation_id: string; visitor_token: string }>(r));
 }
 
+/** Push a refreshed signed host-context token to a live conversation so the
+ *  agent sees the new order status. Fire-and-forget; resolves to ok/false. */
+export function updateConversationContext(
+  convId: string,
+  token: string,
+  contextToken: string,
+): Promise<boolean> {
+  return fetch(`${apiBase()}/api/conversations/${convId}/context`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ token: contextToken }),
+  })
+    .then((r) => r.ok)
+    .catch(() => false);
+}
+
 export function getMessages(convId: string, token: string): Promise<{ messages: WidgetMessage[] }> {
   return fetch(`${apiBase()}/api/conversations/${convId}/messages`, {
     headers: { Authorization: `Bearer ${token}` },

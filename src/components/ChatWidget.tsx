@@ -4,6 +4,7 @@ import {
   apiBase,
   attachmentUrl,
   createConversation,
+  updateConversationContext,
   getAgentStatus,
   getActiveTriggers,
   getGeo,
@@ -375,6 +376,8 @@ export function ChatWidget() {
   const triggersRan = useRef(false);
   const orderRef = useRef(order);
   orderRef.current = order;
+  const convRef = useRef(conversation);
+  convRef.current = conversation;
 
   const primaryColor = config?.primary_color || '#c67139';
   const embedded = isEmbedded();
@@ -552,6 +555,10 @@ export function ChatWidget() {
           if (recent.length) setOrders(recent);
           if (cur) setOrder((prev) => ({ ...prev, ...cur })); // fresh runtime data wins
         }
+        // If a conversation is live, push the fresh token so the AGENT panel's
+        // verified context (order status) updates in real time too.
+        const conv = convRef.current;
+        if (conv) void updateConversationContext(conv.id, conv.token, data.token);
       } else if (data && data.type === 'jetchat:order' && data.order && typeof data.order === 'object') {
         // Live order update from the host site (status changed, delivered, …).
         setOrder((prev) => ({ ...prev, ...data.order }));

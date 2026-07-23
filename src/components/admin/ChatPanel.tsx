@@ -68,6 +68,7 @@ interface Props {
   magicBrowse?: boolean;
   onWatch?: (visitorId: string) => void;
   onOpenConversation?: (conversationId: string) => void;
+  refreshSignal?: number; // bump → refetch this conversation (live metadata change)
   onChanged: () => void;
 }
 
@@ -93,7 +94,7 @@ function duration(ms: number): string {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
-export function ChatPanel({ conversationId, meId, liveMessage, typing, presence, magicBrowse, onWatch, onOpenConversation, onChanged }: Props) {
+export function ChatPanel({ conversationId, meId, liveMessage, typing, presence, magicBrowse, onWatch, onOpenConversation, refreshSignal, onChanged }: Props) {
   const [conversation, setConversation] = useState<AdminConversation | null>(null);
   const [messages, setMessages] = useState<AdminMessage[]>([]);
   const [notes, setNotes] = useState<ConversationNote[]>([]);
@@ -142,6 +143,20 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
       cancelled = true;
     };
   }, [conversationId]);
+
+  // Live refresh: an agent-firehose "conversation:updated" for THIS conversation
+  // (e.g. the host re-signed a fresh order status). Refetch the conversation only
+  // — leave messages/scroll untouched — so the VERIFIED CONTEXT card updates.
+  useEffect(() => {
+    if (!refreshSignal) return;
+    let cancelled = false;
+    getConversation(conversationId)
+      .then((c) => !cancelled && setConversation(c.conversation))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshSignal, conversationId]);
 
   useEffect(() => {
     if (liveMessage && liveMessage.conversationId === conversationId) {
