@@ -34,7 +34,8 @@ services:
     healthcheck:
       # 127.0.0.1 (not localhost) — localhost can resolve to ::1 while nginx
       # listens on IPv4, which makes the check fail and the proxy drop the site.
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:80/']
+      # Hit /up (nginx returns 200) — the bare `/` is a 404 (no landing page).
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:80/up']
       interval: 15s
       timeout: 5s
       retries: 5
