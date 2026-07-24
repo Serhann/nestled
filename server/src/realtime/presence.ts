@@ -67,6 +67,21 @@ interface HelloData {
   mode?: string;
 }
 
+/**
+ * Record a page visit if the URL actually changed. Shared by the hello path
+ * (full page loads — the only navigation signal on non-SPA sites like JetFood)
+ * and the SPA `update` path. Returns true if a new page was recorded. Guards
+ * against duplicates so a WS reconnect on the same page never inflates counts.
+ */
+function recordPageVisit(entry: PresenceEntry, url: string | null | undefined, now: number): boolean {
+  if (!url || url === entry.url) return false;
+  entry.url = url;
+  entry.pagesViewed += 1;
+  entry.pages.push({ url, at: now });
+  if (entry.pages.length > MAX_PAGES) entry.pages = entry.pages.slice(-MAX_PAGES);
+  return true;
+}
+
 export function registerPresenceSocket(
   ws: WebSocket,
   visitorId: string,
@@ -101,11 +116,14 @@ export function registerPresenceSocket(
     };
     visitors.set(visitorId, tracked);
   } else {
-    // Reconnect / second tab: refresh but keep counters.
+    // Reconnect / second tab / a NEW full-page load (non-SPA sites navigate by
+    // reloading, so each page arrives as a fresh hello) — refresh, keep counters,
+    // and record the new page if the URL changed.
     tracked.entry.ip = ip;
     if (geo) tracked.entry.geo = geo;
     if (hello.mode) tracked.entry.mode = hello.mode;
     tracked.entry.lastSeen = now;
+    recordPageVisit(tracked.entry, hello.url, now);
   }
   tracked.sockets.add(ws);
 
@@ -124,14 +142,10 @@ export function registerPresenceSocket(
 export function updatePresence(visitorId: string, patch: Partial<HelloData>): void {
   const t = visitors.get(visitorId);
   if (!t) return;
-  t.entry.lastSeen = Date.now();
-  if (patch.url !== undefined && patch.url !== t.entry.url) {
-    t.entry.url = patch.url;
-    t.entry.pagesViewed += 1; // count each distinct navigation
-    if (patch.url) {
-      t.entry.pages.push({ url: patch.url, at: Date.now() });
-      if (t.entry.pages.length > MAX_PAGES) t.entry.pages = t.entry.pages.slice(-MAX_PAGES);
-    }
+  const now = Date.now();
+  t.entry.lastSeen = now;
+  if (patch.url !== undefined) {
+    recordPageVisit(t.entry, patch.url, now);
   }
   if (patch.utm) t.entry.utm = patch.utm;
   scheduleBroadcast();
