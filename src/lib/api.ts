@@ -143,6 +143,19 @@ export function updateConversationContext(
     .catch(() => false);
 }
 
+/** Submit a post-chat rating. Recorded without reopening a resolved chat. */
+export function rateConversation(
+  convId: string,
+  token: string,
+  rating: { stars: number; tags: string[]; comment: string },
+): Promise<{ message: WidgetMessage }> {
+  return fetch(`${apiBase()}/api/conversations/${convId}/rating`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(rating),
+  }).then((r) => json<{ message: WidgetMessage }>(r));
+}
+
 export function getMessages(convId: string, token: string): Promise<{ messages: WidgetMessage[] }> {
   return fetch(`${apiBase()}/api/conversations/${convId}/messages`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -212,6 +225,7 @@ export interface WSHandlers {
   onTyping?: (isTyping: boolean) => void;
   onAgentStatus?: (online: boolean) => void;
   onAgentJoined?: (agentName: string | null) => void;
+  onResolved?: () => void;
 }
 
 export interface PresenceProactive {
@@ -319,6 +333,7 @@ export function openConversationWS(convId: string, token: string, handlers: WSHa
     else if (e.type === 'typing' && e.from === 'agent') handlers.onTyping?.(Boolean(e.isTyping));
     else if (e.type === 'agent:status') handlers.onAgentStatus?.(Boolean(e.online));
     else if (e.type === 'agent:joined') handlers.onAgentJoined?.((e.agentName as string | null) ?? null);
+    else if (e.type === 'conversation:resolved') handlers.onResolved?.();
   };
   return ws;
 }

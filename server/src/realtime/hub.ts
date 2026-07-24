@@ -23,7 +23,10 @@ export type RealtimeEvent =
   | { type: 'agent:status'; online: boolean }
   // Sent to a conversation's visitor when an agent claims/joins it, so the widget
   // can release its "waiting for an agent" hold.
-  | { type: 'agent:joined'; conversationId: string; agentName: string | null };
+  | { type: 'agent:joined'; conversationId: string; agentName: string | null }
+  // Sent to a conversation's visitor when an agent resolves it, so the widget
+  // clears the chat and the next message starts a brand-new conversation.
+  | { type: 'conversation:resolved'; conversationId: string };
 
 interface AgentSocketState {
   agentId: string;

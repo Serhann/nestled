@@ -428,6 +428,40 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ ok: true });
   });
 
+  // Post-chat rating (visitor-scoped). Recorded as a visitor message so it lands
+  // in the agent inbox, but WITHOUT the reopen-on-activity behaviour — a rating
+  // arrives after the chat is closed and must not revive it.
+  app.post('/api/conversations/:id/rating', {
+    preHandler: requireVisitor('id'),
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = parseBody(
+      z.object({
+        stars: z.number().int().min(1).max(5),
+        tags: z.array(z.string().max(60)).max(20).optional(),
+        comment: z.string().max(2000).optional(),
+      }),
+      req.body,
+      reply,
+    );
+    if (!body) return;
+    const stars = '★'.repeat(body.stars) + '☆'.repeat(5 - body.stars);
+    const parts = [
+      `Rating: ${stars} (${body.stars}/5)`,
+      body.tags && body.tags.length ? `What stood out: ${body.tags.join(', ')}.` : '',
+      (body.comment ?? '').trim(),
+    ].filter(Boolean);
+    const msg = await insertMessage({
+      conversationId: id,
+      content: parts.join('\n'),
+      senderType: 'visitor',
+      metadata: { rating: { stars: body.stars, tags: body.tags ?? [], comment: body.comment ?? '' } },
+    });
+    if (!msg) return reply.code(404).send({ error: 'Conversation not found' });
+    return reply.code(201).send({ message: msg });
+  });
+
   // Visitor typing indicator (visitor-scoped) → forwarded to agents.
   app.post('/api/conversations/:id/typing', {
     preHandler: requireVisitor('id'),

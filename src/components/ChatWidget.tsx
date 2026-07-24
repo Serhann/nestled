@@ -5,6 +5,7 @@ import {
   attachmentUrl,
   createConversation,
   updateConversationContext,
+  rateConversation,
   getAgentStatus,
   getActiveTriggers,
   getGeo,
@@ -345,8 +346,13 @@ export function ChatWidget() {
   // agent joining/replying), stop offering the quick-action chips — the visitor
   // is now talking to a person.
   const [escalated, setEscalated] = useState(false);
-  // Rate-your-delivery end state (design 2d). Null = not rating.
+  // Post-chat review state. Null = not reviewing.
   const [rating, setRating] = useState<{ stars: number; tags: string[]; comment: string; sent: boolean } | null>(null);
+  // When true, finishing (or skipping) the review closes the chat & resets it;
+  // when false it just returns to the conversation (the old mid-chat rating).
+  const [closeAfterReview, setCloseAfterReview] = useState(false);
+  // The X-button "close this chat?" confirmation.
+  const [confirmClose, setConfirmClose] = useState(false);
   // Generic quick-action intake: collect an action's fields before running it.
   const [intake, setIntake] = useState<{ action: QuickAction; values: Record<string, string> } | null>(null);
 
@@ -421,6 +427,38 @@ export function ChatWidget() {
     if (conversation) localStorage.setItem(CONV_KEY, JSON.stringify(conversation));
   }, [conversation]);
 
+  // Wipe the current conversation and return to a fresh chat. Used when the agent
+  // resolves the chat: the thread is cleared and the next message starts anew.
+  const resetToFreshChat = useCallback(() => {
+    try {
+      localStorage.removeItem(CONV_KEY);
+    } catch {
+      /* ignore */
+    }
+    setConversation(null);
+    setMessages([]);
+    setEscalated(false);
+    setWaiting(false);
+    setShowPicker(false);
+    setIntake(null);
+    setRating(null);
+    setCloseAfterReview(false);
+    setConfirmClose(false);
+    setShowPreChat(false);
+    setAgentTyping(false);
+    setUnread(0);
+  }, []);
+
+  // Open the post-chat review screen. `fromClose` = finishing it should close +
+  // reset the chat (vs. the old mid-chat rating that returns to the thread).
+  const startReview = useCallback((fromClose: boolean) => {
+    setConfirmClose(false);
+    setCloseAfterReview(fromClose);
+    setMinimized(false);
+    setOpen(true);
+    setRating({ stars: 0, tags: [], comment: '', sent: false });
+  }, []);
+
   // ── Load history + open realtime when a conversation exists ──────────────────
   useEffect(() => {
     if (!conversation) return;
@@ -454,6 +492,13 @@ export function ChatWidget() {
       onAgentJoined: () => {
         setWaiting(false);
         setEscalated(true);
+      },
+      // The agent resolved the chat. If the visitor is looking, show the review
+      // screen (finishing it clears + resets the chat); if the widget is closed,
+      // just reset silently so we don't pop an unprompted screen at them.
+      onResolved: () => {
+        if (openRef.current) startReview(true);
+        else resetToFreshChat();
       },
     });
     wsRef.current = ws;
@@ -691,8 +736,14 @@ export function ChatWidget() {
     }
   };
   const handleClose = () => {
-    setOpen(false);
-    setShowPreChat(false);
+    // If there's a live chat, ask before closing (→ review) instead of just
+    // dismissing. With nothing going on, X closes straight to the launcher.
+    if (conversation) {
+      setConfirmClose(true);
+    } else {
+      setOpen(false);
+      setShowPreChat(false);
+    }
   };
 
   // Offline fallback = no agent online AND AI disabled AND no conversation yet.
@@ -773,22 +824,30 @@ export function ChatWidget() {
   // it lands in the agent inbox with no backend schema change.
   const submitRating = async () => {
     if (!rating || rating.stars === 0) return;
-    const stars = '★'.repeat(rating.stars) + '☆'.repeat(5 - rating.stars);
-    const parts = [
-      `${stars} (${rating.stars}/5)${order.id ? ` — order #${order.id}` : ''}`,
-      rating.tags.length ? `What stood out: ${rating.tags.join(', ')}.` : '',
-      rating.comment.trim(),
-    ].filter(Boolean);
     setSending(true);
     try {
       const conv = await ensureConversation();
-      const { message } = await apiSendMessage(conv.id, conv.token, parts.join('\n'));
-      setMessages((prev) => (prev.some((x) => x.id === message.id) ? prev : [...prev, message]));
+      await rateConversation(conv.id, conv.token, {
+        stars: rating.stars,
+        tags: rating.tags,
+        comment: rating.comment.trim(),
+      });
       setRating((r) => (r ? { ...r, sent: true } : r));
     } catch {
       setAttachError(strings.genericError);
     } finally {
       setSending(false);
+    }
+  };
+
+  // Leave the review screen. In close mode, wipe the chat and drop to the
+  // launcher; otherwise just return to the conversation.
+  const finishReview = () => {
+    if (closeAfterReview) {
+      resetToFreshChat();
+      setOpen(false);
+    } else {
+      setRating(null);
     }
   };
 
@@ -969,6 +1028,37 @@ export function ChatWidget() {
         </div>
       </div>
 
+      {/* "Close this chat?" confirmation (X button on a live chat). */}
+      {confirmClose && (
+        <div
+          className="fixed inset-0 z-40 flex items-end justify-center bg-black/30 backdrop-blur-[1px]"
+          onClick={() => setConfirmClose(false)}
+        >
+          <div className="w-full bg-white rounded-t-3xl p-5 shadow-xl animate-pop-in" onClick={(e) => e.stopPropagation()}>
+            <p className="font-display text-lg text-gray-800 mb-1">Close this chat?</p>
+            <p className="text-sm text-gray-500 mb-4">Rate your experience before you go, or just minimize to keep it open.</p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => startReview(true)}
+                className="w-full py-3 text-white rounded-full font-semibold shadow-md active:scale-[0.98] transition"
+                style={{ backgroundColor: primaryColor }}
+              >
+                Close &amp; rate
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmClose(false);
+                  setMinimized(true);
+                }}
+                className="w-full py-2.5 text-gray-600 rounded-full text-sm font-medium hover:bg-gray-100 transition"
+              >
+                Keep it open (minimize)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {!minimized && (
         <>
           {rating ? (
@@ -979,9 +1069,9 @@ export function ChatWidget() {
                     <Check className="w-8 h-8" />
                   </span>
                   <p className="font-display text-2xl text-gray-800">Thank you!</p>
-                  <p className="text-sm text-gray-600">Your feedback helps us make every delivery better.</p>
-                  <button onClick={() => setRating(null)} className="mt-2 text-sm font-semibold" style={{ color: primaryColor }}>
-                    Back to chat
+                  <p className="text-sm text-gray-600">Your feedback helps us do better.</p>
+                  <button onClick={finishReview} className="mt-2 text-sm font-semibold" style={{ color: primaryColor }}>
+                    {closeAfterReview ? 'Done' : 'Back to chat'}
                   </button>
                 </div>
               ) : (
@@ -990,8 +1080,10 @@ export function ChatWidget() {
                     <span className="w-11 h-11 rounded-full bg-white/15 flex items-center justify-center mb-3">
                       <Check className="w-6 h-6" />
                     </span>
-                    <h4 className="font-display text-2xl">All sorted!</h4>
-                    <p className="text-sm text-white/90 mt-1">One last thing — how was your delivery?</p>
+                    <h4 className="font-display text-2xl">{closeAfterReview ? 'Thanks for chatting!' : 'All sorted!'}</h4>
+                    <p className="text-sm text-white/90 mt-1">
+                      {closeAfterReview ? 'How was your experience?' : 'One last thing — how was your delivery?'}
+                    </p>
                   </div>
                   <div className="flex-1 p-5 space-y-5">
                     {order.id && (
@@ -1048,8 +1140,8 @@ export function ChatWidget() {
                     >
                       Send rating
                     </button>
-                    <button onClick={() => setRating(null)} className="w-full py-2 text-gray-500 rounded-full text-sm font-medium hover:bg-gray-100 transition">
-                      Skip for now
+                    <button onClick={finishReview} className="w-full py-2 text-gray-500 rounded-full text-sm font-medium hover:bg-gray-100 transition">
+                      {closeAfterReview ? 'Skip' : 'Skip for now'}
                     </button>
                   </div>
                 </>
@@ -1281,7 +1373,7 @@ export function ChatWidget() {
                       )}
                       {canRate && (
                         <button
-                          onClick={() => setRating({ stars: 0, tags: [], comment: '', sent: false })}
+                          onClick={() => startReview(false)}
                           className="flex items-center gap-3 bg-white border-[1.5px] border-gray-200 rounded-full px-4 py-3 text-left transition hover:border-gray-300 active:scale-[0.99]"
                         >
                           <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: 'color-mix(in srgb, #7a8a5e 16%, #fff)' }}>
@@ -1391,7 +1483,7 @@ export function ChatWidget() {
                       <span aria-hidden className="flex-1 shrink min-w-0" />
                       {canRate && (
                         <button
-                          onClick={() => setRating({ stars: 0, tags: [], comment: '', sent: false })}
+                          onClick={() => startReview(false)}
                           disabled={sending}
                           className="shrink-0 rounded-full border-[1.5px] px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition active:scale-95 disabled:opacity-50 flex items-center gap-1"
                           style={{ borderColor: '#7a8a5e', color: '#3d472b', background: '#eef3e2' }}
