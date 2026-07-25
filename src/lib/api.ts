@@ -127,6 +127,35 @@ export function createConversation(body: {
   }).then((r) => json<{ conversation_id: string; visitor_token: string }>(r));
 }
 
+/** Push a refreshed signed host-context token to a live conversation so the
+ *  agent sees the new order status. Fire-and-forget; resolves to ok/false. */
+export function updateConversationContext(
+  convId: string,
+  token: string,
+  contextToken: string,
+): Promise<boolean> {
+  return fetch(`${apiBase()}/api/conversations/${convId}/context`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ token: contextToken }),
+  })
+    .then((r) => r.ok)
+    .catch(() => false);
+}
+
+/** Submit a post-chat rating. Recorded without reopening a resolved chat. */
+export function rateConversation(
+  convId: string,
+  token: string,
+  rating: { stars: number; tags: string[]; comment: string },
+): Promise<{ message: WidgetMessage }> {
+  return fetch(`${apiBase()}/api/conversations/${convId}/rating`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(rating),
+  }).then((r) => json<{ message: WidgetMessage }>(r));
+}
+
 export function getMessages(convId: string, token: string): Promise<{ messages: WidgetMessage[] }> {
   return fetch(`${apiBase()}/api/conversations/${convId}/messages`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -196,6 +225,7 @@ export interface WSHandlers {
   onTyping?: (isTyping: boolean) => void;
   onAgentStatus?: (online: boolean) => void;
   onAgentJoined?: (agentName: string | null) => void;
+  onResolved?: () => void;
 }
 
 export interface PresenceProactive {
@@ -214,7 +244,11 @@ export interface PresenceProactive {
  */
 export function openPresenceWS(
   visitorId: string,
-  handlers: { onProactive?: (p: PresenceProactive) => void; fingerprint?: string } = {},
+  handlers: {
+    onProactive?: (p: PresenceProactive) => void;
+    fingerprint?: string;
+    contextToken?: string;
+  } = {},
 ): { stop: () => void } {
   let ws: WebSocket | null = null;
   let hb: ReturnType<typeof setInterval> | null = null;
@@ -244,6 +278,7 @@ export function openPresenceWS(
       sessionStart,
       mode: param('mode') || 'food',
       fingerprint: handlers.fingerprint || param('fp') || '',
+      context_token: handlers.contextToken || param('ctx') || '',
     });
 
   const connect = () => {
@@ -298,6 +333,7 @@ export function openConversationWS(convId: string, token: string, handlers: WSHa
     else if (e.type === 'typing' && e.from === 'agent') handlers.onTyping?.(Boolean(e.isTyping));
     else if (e.type === 'agent:status') handlers.onAgentStatus?.(Boolean(e.online));
     else if (e.type === 'agent:joined') handlers.onAgentJoined?.((e.agentName as string | null) ?? null);
+    else if (e.type === 'conversation:resolved') handlers.onResolved?.();
   };
   return ws;
 }

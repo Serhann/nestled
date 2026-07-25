@@ -81,6 +81,11 @@ export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch }: Prop
                       </span>
                     );
                   })()}
+                  {(v.name || v.email) && (
+                    <span className="shrink-0 font-semibold text-gray-800 truncate max-w-[45%]" title={v.email || undefined}>
+                      {v.name || v.email}
+                    </span>
+                  )}
                   <Globe className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                   <span className="text-gray-700 truncate">
                     {v.geo

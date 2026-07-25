@@ -87,6 +87,7 @@ export function AdminPanel() {
   const [section, setSection] = useState<Section>('dashboard');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listNonce, setListNonce] = useState(0); // bump → lists refetch
+  const [chatRefresh, setChatRefresh] = useState(0); // bump → open ChatPanel refetches
   const [presence, setPresence] = useState<LiveVisitor[]>([]);
   const [liveMessage, setLiveMessage] = useState<{ conversationId: string; message: AdminMessage } | null>(null);
   const [typing, setTyping] = useState<{ conversationId: string; isTyping: boolean } | null>(null);
@@ -109,7 +110,14 @@ export function AdminPanel() {
     if (!agent) return;
     const sock = openAgentWS({
       onConversationNew: () => setListNonce((n) => n + 1),
-      onConversationUpdated: () => setListNonce((n) => n + 1),
+      onConversationUpdated: (conversationId) => {
+        setListNonce((n) => n + 1);
+        // If the updated conversation is the one open in ChatPanel, nudge it to
+        // refetch (e.g. live order-status / verified-context change).
+        if (conversationId && conversationId === selectedRef.current) {
+          setChatRefresh((n) => n + 1);
+        }
+      },
       onMessage: (conversationId, message) => {
         setListNonce((n) => n + 1);
         // Audible ding on any incoming visitor message (respects the mute rail).
@@ -264,6 +272,7 @@ export function AdminPanel() {
                   magicBrowse={magicBrowse}
                   onWatch={startWatch}
                   onOpenConversation={setSelectedId}
+                  refreshSignal={chatRefresh}
                   onChanged={() => setListNonce((n) => n + 1)}
                 />
               ) : (

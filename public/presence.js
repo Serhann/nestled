@@ -88,6 +88,7 @@
     // iframe) so presence, conversations, and proactive all agree on identity.
     var visitorId = options.visitorId || getVisitorId();
     var fingerprint = options.fingerprint || ''; // cross-site device hash (embed-supplied)
+    var contextToken = options.contextToken || ''; // signed host context (embed-supplied)
     var sessionStart = Date.now();
     var returning = isReturning();
     var ws = null;
@@ -107,6 +108,7 @@
         sessionStart: sessionStart,
         mode: mode,
         fingerprint: fingerprint,
+        context_token: contextToken,
       });
     }
 

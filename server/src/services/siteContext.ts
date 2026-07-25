@@ -16,9 +16,16 @@ import { prisma } from '../db/prisma.js';
  * Read-only: we display and use this context; we never write back to the host.
  */
 
+// Ids may arrive as a string or a number (JetFood sends numeric ids); normalise
+// to a string so everything downstream is consistent.
+const idField = z.union([z.string().max(64), z.number()]).transform((v) => String(v));
+
+// Unknown host-specific keys (e.g. a pre-rendered HTML `status_label`) are
+// silently stripped by zod's default object mode — we only keep the fields we
+// model, so no untrusted HTML is ever stored.
 const orderSchema = z.object({
-  id: z.string().max(64).optional(),
-  status: z.string().max(64).optional(),
+  id: idField.optional(),
+  status: z.string().max(120).optional(),
   eta: z.string().max(64).optional(),
   restaurant: z.string().max(160).optional(),
   total: z.union([z.string(), z.number()]).optional(),
@@ -30,7 +37,7 @@ const orderSchema = z.object({
 const contextSchema = z.object({
   customer: z
     .object({
-      id: z.union([z.string(), z.number()]).optional(),
+      id: idField.optional(),
       name: z.string().max(200).optional(),
       email: z.string().email().max(200).optional(),
       phone: z.string().max(40).optional(),
@@ -64,9 +71,15 @@ export async function verifyContextToken(
   mode: string | null | undefined,
   token: string | null | undefined,
 ): Promise<VisitorContext | null> {
-  if (!token) return null;
+  if (!token) return null; // no token supplied — normal, stay quiet
   const secret = await siteContextSecret(mode);
-  if (!secret) return null;
+  if (!secret) {
+    // A token WAS sent but we can't check it — almost always a misconfig.
+    console.warn(
+      `[context] token received for site "${mode ?? '(none)'}" but that site has no context_secret set (or no matching site row). Set it in admin → Sites.`,
+    );
+    return null;
+  }
   try {
     const decoded = jwt.verify(token, secret, { algorithms: ['HS256'], clockTolerance: 60 });
     if (typeof decoded !== 'object' || decoded === null) return null;
@@ -74,8 +87,24 @@ export async function verifyContextToken(
     const { iss: _iss, iat: _iat, exp: _exp, nbf: _nbf, aud: _aud, sub: _sub, ...rest } =
       decoded as Record<string, unknown>;
     const parsed = contextSchema.safeParse(rest);
-    return parsed.success ? parsed.data : null;
-  } catch {
+    if (!parsed.success) {
+      console.warn(
+        `[context] token for site "${mode}" verified but payload shape is invalid:`,
+        parsed.error.issues.map((i) => i.path.join('.') || '(root)').join(', '),
+      );
+      return null;
+    }
+    return parsed.data;
+  } catch (err) {
+    // Distinguish the common failures so misconfig is obvious in the logs.
+    const name = (err as { name?: string }).name;
+    const reason =
+      name === 'TokenExpiredError'
+        ? 'token expired'
+        : name === 'JsonWebTokenError'
+          ? `bad signature (secret mismatch?): ${(err as Error).message}`
+          : (err as Error).message;
+    console.warn(`[context] token for site "${mode}" rejected — ${reason}`);
     return null;
   }
 }

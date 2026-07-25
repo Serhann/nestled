@@ -95,6 +95,8 @@ export interface LiveVisitor {
   geo: VisitorGeo | null;
   conversationId: string | null;
   mode?: string;
+  name?: string | null; // identified customer (from verified host context)
+  email?: string | null;
   online: boolean;
   timeOnSite: number;
 }
@@ -700,7 +702,7 @@ export async function startChat(
 // ── Realtime (agent WS) ───────────────────────────────────────────────────────
 export interface AgentWSHandlers {
   onConversationNew?: () => void;
-  onConversationUpdated?: () => void;
+  onConversationUpdated?: (conversationId?: string) => void;
   onMessage?: (conversationId: string, message: AdminMessage) => void;
   onTyping?: (conversationId: string, isTyping: boolean) => void;
   onPresence?: (visitors: LiveVisitor[]) => void;
@@ -739,7 +741,8 @@ export function openAgentWS(handlers: AgentWSHandlers): AgentSocket {
         return;
       }
       if (e.type === 'conversation:new') handlers.onConversationNew?.();
-      else if (e.type === 'conversation:updated') handlers.onConversationUpdated?.();
+      else if (e.type === 'conversation:updated')
+        handlers.onConversationUpdated?.((e.conversation as { id?: string } | undefined)?.id);
       else if (e.type === 'message:new')
         handlers.onMessage?.(e.conversationId as string, e.message as AdminMessage);
       else if (e.type === 'typing' && e.from === 'visitor')

@@ -183,6 +183,11 @@ export async function agentConversationRoutes(app: FastifyInstance): Promise<voi
       });
     if (!updated) return reply.code(404).send({ error: 'Conversation not found' });
     broadcastToAgents({ type: 'conversation:updated', conversation: updated });
+    // Tell the visitor their chat was closed so the widget clears it and starts
+    // fresh — the next message opens a brand-new conversation.
+    if (updated.status === 'resolved') {
+      sendToConversationVisitors(id, { type: 'conversation:resolved', conversationId: id });
+    }
     return reply.send({ conversation: updated });
   });
 

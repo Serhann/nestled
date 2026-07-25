@@ -2,11 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import { verifyAccessToken, tokenMatchesHash } from '../auth/tokens.js';
 import { prisma } from '../db/prisma.js';
 import { registerAgentSocket, registerVisitorSocket } from './hub.js';
-import { registerPresenceSocket, updatePresence } from './presence.js';
+import { registerPresenceSocket, updatePresence, setPresenceIdentity } from './presence.js';
 import { ingestReplayEvents, clearReplay } from './replay.js';
 import { clientIp, lookupGeo } from '../services/geo.js';
 import { recordVisitorIp } from '../services/visitorTracking.js';
 import { resolveIdentity } from '../services/identity.js';
+import { verifyContextToken } from '../services/siteContext.js';
 
 /**
  * WebSocket endpoints. Both authenticate on connect via a `token` query param
@@ -74,11 +75,21 @@ export async function registerRealtime(app: FastifyInstance): Promise<void> {
       if (msg.type === 'hello') {
         registerPresenceSocket(socket, visitorId, ip, geo, msg as Record<string, never>);
         void recordVisitorIp(visitorId, ip, geo); // track every IP this visitor uses
-        // Fuse anonymous visitors into the cross-site people pool as soon as
-        // they land, well before any conversation exists (admin-only graph).
-        void resolveIdentity(visitorId, {
-          fingerprint: typeof msg.fingerprint === 'string' ? msg.fingerprint : null,
-          mode: typeof msg.mode === 'string' ? msg.mode : null,
+        const mode = typeof msg.mode === 'string' ? msg.mode : null;
+        // Verify any signed host context so the board shows the identified
+        // customer (not "anonymous") the moment they land, and feed the trusted
+        // email into the cross-site people pool.
+        const contextToken = typeof msg.context_token === 'string' ? msg.context_token : null;
+        void verifyContextToken(mode, contextToken).then((ctx) => {
+          const cust = ctx?.customer;
+          if (cust?.name || cust?.email) {
+            setPresenceIdentity(visitorId, { name: cust.name ?? null, email: cust.email ?? null });
+          }
+          void resolveIdentity(visitorId, {
+            fingerprint: typeof msg.fingerprint === 'string' ? msg.fingerprint : null,
+            email: cust?.email ?? null,
+            mode,
+          });
         });
       } else if (msg.type === 'update') {
         updatePresence(visitorId, msg as Record<string, never>);
