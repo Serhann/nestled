@@ -167,14 +167,70 @@ export async function translateText(text: string, to: string): Promise<string> {
   return out ?? text;
 }
 
-/** The site/scenario ('food' | 'saas') a conversation belongs to, from metadata. */
-async function conversationMode(conversationId: string): Promise<string | undefined> {
+interface VerifiedContext {
+  customer?: { name?: string; email?: string; phone?: string; orders_count?: number };
+  current_order?: { id?: string; status?: string; eta?: string; restaurant?: string; total?: string | number; currency?: string };
+  recent_orders?: { id?: string; status?: string; date?: string; restaurant?: string }[];
+}
+
+/**
+ * The trusted facts block for the system prompt, built from the conversation's
+ * HMAC-verified host context. When the customer has no order we say so
+ * explicitly — otherwise the model fills the silence with "your order is being
+ * processed" for someone who never ordered.
+ */
+function renderVisitorContext(ctx: VerifiedContext | null): string {
+  const lines: string[] = [];
+  const cust = ctx?.customer;
+  if (cust?.name || cust?.email) {
+    lines.push(
+      `Customer: ${[cust.name, cust.email, cust.phone].filter(Boolean).join(' · ')}${
+        typeof cust.orders_count === 'number' ? ` (${cust.orders_count} orders all-time)` : ''
+      }`,
+    );
+  }
+  const ord = ctx?.current_order;
+  if (ord?.id || ord?.status) {
+    lines.push(
+      `Active order: ${[
+        ord.id ? `#${ord.id}` : 'unknown id',
+        ord.status ? `status "${ord.status}"` : null,
+        ord.eta ? `ETA ${ord.eta}` : null,
+        ord.restaurant ? `from ${ord.restaurant}` : null,
+        ord.total != null ? `total ${ord.total}${ord.currency ? ` ${ord.currency}` : ''}` : null,
+      ]
+        .filter(Boolean)
+        .join(', ')}`,
+    );
+  } else {
+    lines.push('Active order: NONE — this customer has no order in progress right now.');
+  }
+  const recent = (ctx?.recent_orders ?? []).slice(0, 5);
+  if (recent.length > 0) {
+    lines.push(
+      `Recent orders: ${recent
+        .map((o) => [o.id ? `#${o.id}` : '—', o.status, o.date].filter(Boolean).join(' '))
+        .join('; ')}`,
+    );
+  }
+  return `Verified customer context (signed by the host site — these facts are trustworthy, everything else about orders is unknown):\n${lines.join('\n')}`;
+}
+
+/** Site key + verified host context for a conversation, from its metadata. */
+async function conversationContext(
+  conversationId: string,
+): Promise<{ mode?: string; verified: VerifiedContext | null }> {
   const conv = await prisma.conversations.findUnique({
     where: { id: conversationId },
     select: { metadata: true },
   });
-  const m = (conv?.metadata as Record<string, unknown> | null)?.widget_mode;
-  return typeof m === 'string' ? m : undefined;
+  const meta = (conv?.metadata as Record<string, unknown> | null) ?? {};
+  const m = meta.widget_mode;
+  const vc = meta.verified_context;
+  return {
+    mode: typeof m === 'string' ? m : undefined,
+    verified: vc && typeof vc === 'object' ? (vc as VerifiedContext) : null,
+  };
 }
 
 /**
@@ -190,7 +246,7 @@ export async function generateAIReply(
   const settings = await loadSettings();
   if (!settings) return null;
 
-  const mode = await conversationMode(conversationId);
+  const { mode, verified } = await conversationContext(conversationId);
   // Per-site system prompt override (Site manager) — falls back to the global one.
   if (mode) {
     const site = await prisma.sites.findUnique({
@@ -207,7 +263,12 @@ export async function generateAIReply(
 
   let result;
   try {
-    result = await provider.generateReply({ message, settings, knowledge });
+    result = await provider.generateReply({
+      message,
+      settings,
+      knowledge,
+      visitorContext: renderVisitorContext(verified),
+    });
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[ai] provider error — posting nothing', err);

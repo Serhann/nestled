@@ -274,6 +274,21 @@ const SAAS_ACTIONS: QuickAction[] = [
 ];
 
 /**
+ * Intents that only make sense with an order in context. Without one the server
+ * can't answer them ("Where's my order?" → we'd be inventing a status), so they
+ * are filtered out of the site-configured list as well as the built-in pack.
+ */
+const ORDER_SCOPED_INTENTS = new Set<string>([
+  'where',
+  'status',
+  'late',
+  'change_address',
+  'missing_item',
+  'wrong',
+  'refund',
+]);
+
+/**
  * Order-aware quick actions. Informational intents ('where', 'status') are
  * answered automatically by the server; problem intents escalate to a human.
  * Empty when there is no order in context.
@@ -356,6 +371,10 @@ export function ChatWidget() {
   // Generic quick-action intake: collect an action's fields before running it.
   const [intake, setIntake] = useState<{ action: QuickAction; values: Record<string, string> } | null>(null);
 
+  // The visitor picked "Something else — just chat" on the intent home: swap the
+  // action list for the welcome message + composer, even with no messages yet.
+  const [plainChat, setPlainChat] = useState(false);
+
   // Pre-chat + offline-message forms.
   const [showPreChat, setShowPreChat] = useState(false);
   const [preChat, setPreChat] = useState<Record<string, string>>({});
@@ -375,6 +394,7 @@ export function ChatWidget() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLInputElement>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openRef = useRef(open);
   openRef.current = open;
@@ -447,6 +467,7 @@ export function ChatWidget() {
     setShowPreChat(false);
     setAgentTyping(false);
     setUnread(0);
+    setPlainChat(false); // next visit starts back on the intent home
   }, []);
 
   // Open the post-chat review screen. `fromClose` = finishing it should close +
@@ -814,9 +835,13 @@ export function ChatWidget() {
     await handleQuickAction(intent, values);
   };
 
-  // Start a plain chat from the intent home ("Something else — just chat").
+  // Start a plain chat from the intent home ("Something else — just chat"). The
+  // action list gives way to the greeting + composer immediately (creating the
+  // conversation posts no message, so without this the tap looked like a no-op).
   const startPlainChat = async () => {
     setShowPreChat(false);
+    setPlainChat(true);
+    setTimeout(() => composerRef.current?.focus(), 50);
     await ensureConversation().catch(() => undefined);
   };
 
@@ -855,7 +880,7 @@ export function ChatWidget() {
   // back to the built-in pack for this site key (food = order-aware; saas =
   // support + lead-gen; anything else = just "talk to a human").
   const configuredActions = config?.quick_actions ?? [];
-  const quickActions: QuickAction[] =
+  const quickActions: QuickAction[] = (
     configuredActions.length > 0
       ? configuredActions.map((a) => ({
           intent: a.intent,
@@ -868,14 +893,15 @@ export function ChatWidget() {
         ? orderQuickActions(order)
         : mode === 'saas'
           ? [...SAAS_ACTIONS, { label: 'Talk to a human', intent: 'human', icon: Headphones }]
-          : [{ label: 'Talk to a human', intent: 'human', icon: Headphones }];
+          : [{ label: 'Talk to a human', intent: 'human', icon: Headphones }]
+    // Hide order-only actions until the host gives us an order to talk about.
+  ).filter((a) => order.id != null || !ORDER_SCOPED_INTENTS.has(a.intent));
   // Offer the rating flow once an order looks delivered (food only).
   const canRate = isFood && order.id != null && orderPhase(order.status) === 'delivered';
-  // The intent home shows before any messages: when the site has configured
-  // actions, always; for the built-in food pack only when there's an order in
-  // context; otherwise (saas / custom) always.
-  const showIntentHome =
-    messages.length === 0 && (configuredActions.length > 0 || (isFood ? order.id != null : true));
+  // The intent home shows before any messages, as long as there is something to
+  // pick. With no order in context every food action is filtered out, so the
+  // plain welcome message is shown instead of an empty "what do you need?" list.
+  const showIntentHome = messages.length === 0 && !plainChat && (quickActions.length > 0 || canRate);
 
   const handleInputChange = (value: string) => {
     setInput(value);
@@ -1521,6 +1547,7 @@ export function ChatWidget() {
                       <Paperclip className="w-5 h-5" />
                     </button>
                     <input
+                      ref={composerRef}
                       type="text"
                       value={input}
                       onChange={(e) => handleInputChange(e.target.value)}

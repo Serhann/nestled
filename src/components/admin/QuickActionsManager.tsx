@@ -121,6 +121,11 @@ export function QuickActionsManager({ onBack }: { onBack: () => void }) {
             Placeholders you can use: <code className="font-mono text-blue-700">{PLACEHOLDERS}</code> and any field name (e.g.{' '}
             <code className="font-mono text-blue-700">{'{store}'}</code>).
           </p>
+          <p className="text-xs text-gray-400 -mt-3">
+            A reply using any order placeholder counts as order-only: the button is hidden while the
+            visitor has no order, and if it runs anyway the bot asks for the order number instead of
+            describing a status.
+          </p>
           <Field label="Visitor message" hint="Sent as the visitor's message when they tap the button.">
             <TextArea rows={2} placeholder="Where is my order {order}?" value={inp.visitor_template} onChange={(e) => set({ visitor_template: e.target.value })} />
           </Field>

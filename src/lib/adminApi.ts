@@ -83,6 +83,30 @@ export interface VisitorGeo {
   org?: string | null;
 }
 
+/** HMAC-verified host context (customer + orders) — same shape in conversation
+ *  metadata (`verified_context`) and on a live-visitor presence entry. */
+export interface VerifiedContext {
+  customer?: {
+    id?: string | number;
+    name?: string;
+    email?: string;
+    phone?: string;
+    orders_count?: number;
+    since?: string;
+  };
+  current_order?: {
+    id?: string;
+    status?: string;
+    eta?: string;
+    restaurant?: string;
+    total?: string | number;
+    currency?: string;
+    date?: string;
+    url?: string;
+  };
+  recent_orders?: { id?: string; status?: string; total?: string | number; date?: string; restaurant?: string }[];
+}
+
 export interface LiveVisitor {
   visitorId: string;
   url: string | null;
@@ -99,6 +123,13 @@ export interface LiveVisitor {
   email?: string | null;
   online: boolean;
   timeOnSite: number;
+  utm?: Record<string, string>;
+  screen?: { w: number; h: number } | null;
+  userAgent?: string | null;
+  language?: string | null;
+  timezone?: string | null;
+  context?: VerifiedContext | null; // trusted customer/order context
+  sessionStart?: number;
 }
 
 /** Site / scenario label for a live visitor (mirrors conversationSource). */

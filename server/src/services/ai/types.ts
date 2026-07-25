@@ -21,6 +21,10 @@ export interface AIReplyInput {
   message: string;
   settings: AISettings;
   knowledge: KnowledgeItem[];
+  /** Pre-rendered block of HMAC-verified facts about this visitor (customer +
+   *  orders) from the host site, or an explicit "no active order" line. Trusted:
+   *  the model may quote it; without it the model must not describe any order. */
+  visitorContext?: string;
 }
 
 export interface AIUsage {

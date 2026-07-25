@@ -10,8 +10,8 @@ const TIMEOUT_MS = 20_000;
 const PROTOCOL = `
 
 Rules:
-- Only answer questions about JetFood and its services. Reply in English, concisely.
-- Never invent or guess order statuses, delivery times, refunds, or cancellations.
+- Only answer questions about this business and its services (see the instructions above for who you work for). Reply in English, concisely.
+- Never invent or guess order statuses, delivery times, refunds, or cancellations. Order facts may only come from the verified customer context above; if it is absent or says there is no active order, say you cannot see an active order and ask for the order number — never describe a status.
 - When you cannot fully help — anything about a specific order, refund, cancellation, complaint, or a request outside the knowledge base above — do NOT guess. Write one short sentence telling the visitor you're connecting them to a team member, then end your reply with the token <<HANDOFF>> on its own line.`;
 
 function systemWithContext(input: AIReplyInput): string {
@@ -20,7 +20,8 @@ function systemWithContext(input: AIReplyInput): string {
   const base = context
     ? `${input.settings.system_prompt}\n\nRelevant knowledge base entries:\n${context}`
     : input.settings.system_prompt;
-  return base + PROTOCOL;
+  const visitor = input.visitorContext ? `\n\n${input.visitorContext}` : '';
+  return base + visitor + PROTOCOL;
 }
 
 function withTimeout(signal?: AbortSignal): AbortSignal {

@@ -69,6 +69,14 @@
     return utm;
   }
 
+  function timezone() {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   function wsBaseFrom(apiBase) {
     return apiBase.replace(/^http/, 'ws');
   }
@@ -109,6 +117,11 @@
         mode: mode,
         fingerprint: fingerprint,
         context_token: contextToken,
+        // Client hints so the Live Visitors card matches the conversation
+        // sidebar (browser · OS, language, timezone) with no chat needed.
+        user_agent: navigator.userAgent,
+        language: navigator.language || null,
+        timezone: timezone(),
       });
     }
 

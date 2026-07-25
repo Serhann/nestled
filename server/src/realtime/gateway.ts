@@ -2,7 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import { verifyAccessToken, tokenMatchesHash } from '../auth/tokens.js';
 import { prisma } from '../db/prisma.js';
 import { registerAgentSocket, registerVisitorSocket } from './hub.js';
-import { registerPresenceSocket, updatePresence, setPresenceIdentity } from './presence.js';
+import {
+  registerPresenceSocket,
+  updatePresence,
+  setPresenceIdentity,
+  setPresenceContext,
+} from './presence.js';
 import { ingestReplayEvents, clearReplay } from './replay.js';
 import { clientIp, lookupGeo } from '../services/geo.js';
 import { recordVisitorIp } from '../services/visitorTracking.js';
@@ -85,6 +90,9 @@ export async function registerRealtime(app: FastifyInstance): Promise<void> {
           if (cust?.name || cust?.email) {
             setPresenceIdentity(visitorId, { name: cust.name ?? null, email: cust.email ?? null });
           }
+          // Keep the trusted customer/order context on the presence entry so the
+          // Live Visitors card shows it before any chat is started.
+          setPresenceContext(visitorId, ctx);
           void resolveIdentity(visitorId, {
             fingerprint: typeof msg.fingerprint === 'string' ? msg.fingerprint : null,
             email: cust?.email ?? null,
