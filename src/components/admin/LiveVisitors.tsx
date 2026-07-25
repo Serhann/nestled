@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Globe, Monitor, Smartphone, MessageSquarePlus, Eye, History, X } from 'lucide-react';
+import { Globe, Monitor, Smartphone, MessageSquarePlus, Eye, History, Info, X } from 'lucide-react';
 import { startChat, visitorSource, type LiveVisitor } from '../../lib/adminApi';
+import { VisitorDetail } from './VisitorDetail';
 
 const SOURCE_TONE: Record<'food' | 'saas' | 'web', string> = {
   food: 'bg-blue-100 text-blue-700',
@@ -13,6 +14,8 @@ interface Props {
   onStarted: (conversationId: string) => void;
   magicBrowse: boolean;
   onWatch: (visitorId: string) => void;
+  /** Jump to an existing conversation (this visitor's, or one of the same person's). */
+  onOpenConversation?: (conversationId: string) => void;
 }
 
 function duration(ms: number): string {
@@ -27,13 +30,16 @@ function clockTime(ms: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch }: Props) {
+export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch, onOpenConversation }: Props) {
   const [target, setTarget] = useState<LiveVisitor | null>(null);
   const [message, setMessage] = useState('Hi! 👋 Can I help you with anything?');
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   const online = visitors.filter((v) => v.online);
+  // Track the id, not the row, so the drawer keeps updating as presence changes.
+  const detail = detailId ? visitors.find((v) => v.visitorId === detailId) ?? null : null;
 
   const send = async () => {
     if (!target || !message.trim()) return;
@@ -68,44 +74,59 @@ export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch }: Prop
         {online.map((v) => (
           <div key={v.visitorId} className="bg-white rounded-2xl border border-gray-100/80 shadow-sm overflow-hidden">
             <div className="px-4 py-3 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0 ring-4 ring-green-500/10">
-                {v.device === 'mobile' ? <Smartphone className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 text-sm">
-                  {(() => {
-                    const src = visitorSource(v);
-                    return (
-                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${SOURCE_TONE[src.tone]}`}>
-                        {src.label}
+              <button
+                onClick={() => setDetailId(v.visitorId)}
+                className="min-w-0 flex-1 flex items-center gap-3 text-left rounded-xl -m-1 p-1 hover:bg-gray-50 transition"
+                title="Visitor details"
+              >
+                <div className="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0 ring-4 ring-green-500/10">
+                  {v.device === 'mobile' ? <Smartphone className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-sm">
+                    {(() => {
+                      const src = visitorSource(v);
+                      return (
+                        <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${SOURCE_TONE[src.tone]}`}>
+                          {src.label}
+                        </span>
+                      );
+                    })()}
+                    {(v.name || v.email) && (
+                      <span className="shrink-0 font-semibold text-gray-800 truncate max-w-[45%]" title={v.email || undefined}>
+                        {v.name || v.email}
                       </span>
-                    );
-                  })()}
-                  {(v.name || v.email) && (
-                    <span className="shrink-0 font-semibold text-gray-800 truncate max-w-[45%]" title={v.email || undefined}>
-                      {v.name || v.email}
+                    )}
+                    <Globe className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                    <span className="text-gray-700 truncate">
+                      {v.geo
+                        ? [v.geo.city, v.geo.region, v.geo.country].filter(Boolean).join(', ') || 'Unknown location'
+                        : 'Unknown location'}
                     </span>
-                  )}
-                  <Globe className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                  <span className="text-gray-700 truncate">
-                    {v.geo
-                      ? [v.geo.city, v.geo.region, v.geo.country].filter(Boolean).join(', ') || 'Unknown location'
-                      : 'Unknown location'}
-                  </span>
-                  <span className="text-gray-400">·</span>
-                  <span className="text-gray-500">{v.returning ? 'returning' : 'new'}</span>
-                  <span className="ml-auto text-xs text-gray-400 shrink-0">{duration(v.timeOnSite)}</span>
+                    <span className="text-gray-400">·</span>
+                    <span className="text-gray-500">{v.returning ? 'returning' : 'new'}</span>
+                    <span className="ml-auto text-xs text-gray-400 shrink-0">{duration(v.timeOnSite)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
+                    {v.ip && (
+                      <span className="font-mono bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 shrink-0">{v.ip}</span>
+                    )}
+                    <span className="truncate">
+                      {v.url || 'unknown page'}
+                      {v.conversationId ? ' · in chat' : ''}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
-                  {v.ip && (
-                    <span className="font-mono bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 shrink-0">{v.ip}</span>
-                  )}
-                  <span className="truncate">
-                    {v.url || 'unknown page'}
-                    {v.conversationId ? ' · in chat' : ''}
-                  </span>
-                </div>
-              </div>
+              </button>
+              {/* Visitor details drawer */}
+              <button
+                onClick={() => setDetailId(v.visitorId)}
+                className="shrink-0 p-2 text-gray-500 hover:bg-gray-100 rounded-lg"
+                aria-label="Visitor details"
+                title="Visitor details"
+              >
+                <Info className="w-5 h-5" />
+              </button>
               {/* Page-history toggle */}
               <button
                 onClick={() => setExpanded(expanded === v.visitorId ? null : v.visitorId)}
@@ -154,6 +175,25 @@ export function LiveVisitors({ visitors, onStarted, magicBrowse, onWatch }: Prop
           </div>
         ))}
       </div>
+
+      {/* Visitor detail drawer — full person card without starting a chat */}
+      {detail && (
+        <VisitorDetail
+          visitor={detail}
+          magicBrowse={magicBrowse}
+          onWatch={onWatch}
+          onStartChat={setTarget}
+          onOpenConversation={
+            onOpenConversation
+              ? (id) => {
+                  setDetailId(null);
+                  onOpenConversation(id);
+                }
+              : undefined
+          }
+          onClose={() => setDetailId(null)}
+        />
+      )}
 
       {/* Proactive start-chat sheet */}
       {target && (

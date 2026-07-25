@@ -1,6 +1,7 @@
 import type { WebSocket } from 'ws';
 import { broadcastToAgents } from './hub.js';
 import type { GeoLocation } from '../services/geo.js';
+import type { VisitorContext } from '../services/siteContext.js';
 
 /**
  * Live visitor presence — everyone currently on the site, including anonymous
@@ -32,6 +33,14 @@ export interface PresenceEntry {
   mode: string; // which site / scenario pack this visitor is on (site key)
   name: string | null; // identified customer name (from verified host context)
   email: string | null; // identified customer email (from verified host context)
+  // Client hints (display only) so the agent gets the same visitor card the
+  // conversation sidebar shows, before any chat exists.
+  userAgent: string | null;
+  language: string | null;
+  timezone: string | null;
+  // Trusted host context (HMAC-verified) — customer + orders, same shape the
+  // conversation metadata carries.
+  context: VisitorContext | null;
   lastSeen: number;
 }
 
@@ -65,6 +74,9 @@ interface HelloData {
   returning?: boolean;
   sessionStart?: number;
   mode?: string;
+  user_agent?: string;
+  language?: string;
+  timezone?: string;
 }
 
 /**
@@ -111,6 +123,10 @@ export function registerPresenceSocket(
         mode: hello.mode || 'food',
         name: null,
         email: null,
+        userAgent: hello.user_agent ?? null,
+        language: hello.language ?? null,
+        timezone: hello.timezone ?? null,
+        context: null,
         lastSeen: now,
       },
     };
@@ -122,6 +138,10 @@ export function registerPresenceSocket(
     tracked.entry.ip = ip;
     if (geo) tracked.entry.geo = geo;
     if (hello.mode) tracked.entry.mode = hello.mode;
+    if (hello.screen) tracked.entry.screen = hello.screen;
+    if (hello.user_agent) tracked.entry.userAgent = hello.user_agent;
+    if (hello.language) tracked.entry.language = hello.language;
+    if (hello.timezone) tracked.entry.timezone = hello.timezone;
     tracked.entry.lastSeen = now;
     recordPageVisit(tracked.entry, hello.url, now);
   }
@@ -169,6 +189,15 @@ export function setPresenceIdentity(
     changed = true;
   }
   if (changed) scheduleBroadcast();
+}
+
+/** Store the HMAC-verified host context (customer + orders) on a present
+ *  visitor so the live-visitor card can show it without a conversation. */
+export function setPresenceContext(visitorId: string, context: VisitorContext | null): void {
+  const t = visitors.get(visitorId);
+  if (!t || !context) return;
+  t.entry.context = context;
+  scheduleBroadcast();
 }
 
 /** Link a conversation to a present visitor (shows the green dot in the list). */

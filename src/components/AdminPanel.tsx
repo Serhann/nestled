@@ -284,7 +284,15 @@ export function AdminPanel() {
           </div>
         );
       case 'visitors':
-        return <LiveVisitors visitors={presence} onStarted={startChatWith} magicBrowse={magicBrowse} onWatch={startWatch} />;
+        return (
+          <LiveVisitors
+            visitors={presence}
+            onStarted={startChatWith}
+            magicBrowse={magicBrowse}
+            onWatch={startWatch}
+            onOpenConversation={startChatWith}
+          />
+        );
       case 'agents':
         return <AgentsManager meId={agent.id} onBack={() => go('dashboard')} />;
       case 'sites':

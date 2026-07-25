@@ -69,6 +69,14 @@
     return utm;
   }
 
+  function timezone() {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   function wsBaseFrom(apiBase) {
     return apiBase.replace(/^http/, 'ws');
   }
@@ -109,6 +117,11 @@
         mode: mode,
         fingerprint: fingerprint,
         context_token: contextToken,
+        // Client hints so the Live Visitors card matches the conversation
+        // sidebar (browser · OS, language, timezone) with no chat needed.
+        user_agent: navigator.userAgent,
+        language: navigator.language || null,
+        timezone: timezone(),
       });
     }
 
@@ -314,6 +327,14 @@
         closed = true;
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         if (ws) ws.close();
+      },
+      /* A freshly signed host context (post-login, or a new order status). Keeps
+         the Live Visitors card + identified name/email current without a reload;
+         the stored token is also what the next hello/reconnect carries. */
+      setContext: function (token) {
+        if (!token || typeof token !== 'string') return;
+        contextToken = token;
+        send({ type: 'context', context_token: token });
       },
       visitorId: visitorId,
     };

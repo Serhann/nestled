@@ -14,6 +14,7 @@ import { generateAIReply, summarizeConversation } from '../services/ai/index.js'
 import { recordVisitorIp } from '../services/visitorTracking.js';
 import { resolveIdentity } from '../services/identity.js';
 import { verifyContextToken } from '../services/siteContext.js';
+import { renderReply, renderTemplate, type OrderCtx } from '../lib/quickActionTemplate.js';
 
 const createBody = z.object({
   visitor_id: z.string().min(1).max(200),
@@ -38,14 +39,7 @@ interface AIModeSettings {
 // live order + any collected fields. The action definition (label, kind, the
 // visitor/reply templates, handoff suggestion) lives in the quick_actions table
 // and is managed in the admin — this route renders its templates server-side
-// (trusted) and escalates when kind === 'human'.
-interface OrderCtx {
-  id?: string;
-  status?: string;
-  eta?: string;
-  restaurant?: string;
-}
-
+// (trusted, see lib/quickActionTemplate.ts) and escalates when kind === 'human'.
 const orderCtxSchema = z.object({
   id: z.string().max(120).optional(),
   status: z.string().max(120).optional(),
@@ -58,23 +52,6 @@ const quickActionBody = z.object({
   order: orderCtxSchema.optional(),
   fields: z.record(z.string().max(60), z.string().max(1000)).optional(),
 });
-
-/** Substitute {placeholders} in a quick-action template from the order + any
- *  collected fields. Missing tokens render as empty strings. */
-function renderTemplate(tpl: string, order: OrderCtx, fields: Record<string, string>): string {
-  const tokens: Record<string, string> = {
-    order: order.id ? `#${order.id}` : 'your order',
-    status: order.status || 'being processed',
-    eta: order.eta || '',
-    restaurant: order.restaurant || '',
-    restaurant_clause: order.restaurant ? ` from ${order.restaurant}` : '',
-    eta_clause: order.eta ? ` — estimated arrival in ${order.eta}` : '',
-    eta_paren: order.eta ? ` (ETA ${order.eta})` : '',
-    order_about: order.id ? ` about order #${order.id}` : '',
-    ...fields,
-  };
-  return tpl.replace(/\{(\w+)\}/g, (_m, k: string) => tokens[k] ?? '');
-}
 
 /**
  * Decide whether the AI should reply to this visitor message, then post it.
@@ -326,6 +303,11 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     const order: OrderCtx = body.order ?? {};
     const fields: Record<string, string> = body.fields ?? {};
 
+    // No order in context + an order-scoped reply → ask for the order number
+    // instead of rendering a made-up status.
+    const bot = renderReply(def.reply_template, order, fields);
+    const missingOrder = bot.missingOrder;
+
     const visitorText = renderTemplate(def.visitor_template, order, fields);
     const visitorMsg = await insertMessage({ conversationId: id, content: visitorText, senderType: 'visitor' });
     // A resolved conversation re-opens on new visitor activity.
@@ -335,9 +317,9 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
 
     const botMsg = await insertMessage({
       conversationId: id,
-      content: renderTemplate(def.reply_template, order, fields),
+      content: bot.text,
       senderType: 'ai',
-      metadata: { quick_action: body.intent, auto: !isHuman },
+      metadata: { quick_action: body.intent, auto: !isHuman, no_order: missingOrder || undefined },
     });
 
     if (isHuman) {
