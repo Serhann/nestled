@@ -326,10 +326,12 @@
     }
   }
 
+  var presence = null; // the live JetChatPresence instance (host-page context)
+
   function loadPresence(onProactive) {
     var apply = function () {
       if (window.JetChatPresence) {
-        window.JetChatPresence.init({
+        presence = window.JetChatPresence.init({
           apiBase: apiBase,
           visitorId: visitorId,
           fingerprint: fingerprint,
@@ -373,9 +375,12 @@
         // Full list of the visitor's recent orders (drives the order picker).
         built.iframe.contentWindow.postMessage({ type: 'jetchat:orders', orders: payload }, '*');
       } else if (cmd === 'context' && typeof payload === 'string') {
-        // Signed context token issued/refreshed at runtime (e.g. after login).
+        // Signed context token issued/refreshed at runtime (e.g. after login, or
+        // a new order status). Goes to the widget (conversation context) AND to
+        // presence (Live Visitors card / identified visitor).
         contextToken = payload;
         built.iframe.contentWindow.postMessage({ type: 'jetchat:context', token: payload }, '*');
+        if (presence && presence.setContext) presence.setContext(payload);
       }
     }
     var queued = window.JetChat && window.JetChat.q ? window.JetChat.q : [];
