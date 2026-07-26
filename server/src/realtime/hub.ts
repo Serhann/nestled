@@ -344,3 +344,39 @@ export function publishMessage(
 export function forgetConversation(conversationId: string): void {
   if (!visitorSockets.has(conversationId)) conversationOwner.delete(conversationId);
 }
+
+export interface SocketStats {
+  /** Workspaces with at least one agent socket — the vendor's "who is working". */
+  workspacesWithAgents: number;
+  agentSockets: number;
+  visitorSockets: number;
+  conversationsWithVisitors: number;
+  /** The widest workspace, so one customer's fanout cost is visible on its own. */
+  largestWorkspaceAgentSockets: number;
+}
+
+/**
+ * A read-only census of the registries above, for the ops health page.
+ *
+ * Aggregate counts only, deliberately: the vendor panel gets "how loaded is the
+ * realtime plane", never a list of who is connected. Watching a specific visitor
+ * stays on the tenant side behind impersonation with a recorded reason.
+ */
+export function socketStats(): SocketStats {
+  let agents = 0;
+  let largest = 0;
+  for (const sockets of agentSockets.values()) {
+    agents += sockets.size;
+    if (sockets.size > largest) largest = sockets.size;
+  }
+  let visitors = 0;
+  for (const set of visitorSockets.values()) visitors += set.size;
+
+  return {
+    workspacesWithAgents: agentSockets.size,
+    agentSockets: agents,
+    visitorSockets: visitors,
+    conversationsWithVisitors: visitorSockets.size,
+    largestWorkspaceAgentSockets: largest,
+  };
+}
