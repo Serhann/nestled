@@ -60,20 +60,10 @@ async function sweep(): Promise<void> {
     }
   }
 
-  // Workspaces cancelled long enough ago to be past their purge date. Never done in
-  // a webhook: a cancellation is frequently reversed, and "we deleted it instantly"
-  // is not recoverable.
-  const purgeable = await unscopedPrisma.workspaces.findMany({
-    where: { purge_after: { lt: new Date() }, deleted_at: null },
-    select: { id: true },
-  });
-  for (const ws of purgeable) {
-    await unscopedPrisma.workspaces
-      .update({ where: { id: ws.id }, data: { deleted_at: new Date() } })
-      .catch(() => undefined);
-    // eslint-disable-next-line no-console
-    console.log(`[retention] soft-deleted workspace ${ws.id} past its purge date`);
-  }
+  // The `purge_after` sweep used to live here. It belongs with the code that SETS
+  // that column, so it moved to services/billing/lifecycle.ts — two jobs racing to
+  // soft-delete the same workspace was harmless but meant neither one owned the
+  // rule. Both are started from lib/jobs.ts.
 }
 
 /** Run on boot and then daily. Errors are logged, never fatal. */

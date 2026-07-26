@@ -33,6 +33,9 @@ import { env } from '../env.js';
  *   lib/audit.ts             audit_log.workspace_id is nullable (platform actions)
  *   lib/slug.ts              slug uniqueness is global, by design
  *   services/email.ts        outbound_emails.workspace_id is nullable
+ *   services/billing/*       webhooks arrive with no request context, the nightly
+ *                            sweeps span every workspace, and `subscriptions` and
+ *                            `invoices` are in INTENTIONALLY_UNSCOPED (tenant.ts)
  */
 export const unscopedPrisma = new PrismaClient({
   datasources: { db: { url: env.DATABASE_URL } },

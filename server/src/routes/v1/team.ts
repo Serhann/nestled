@@ -18,6 +18,7 @@ import { audit } from '../../lib/audit.js';
 import { sendEmail } from '../../services/email.js';
 import { env } from '../../env.js';
 import { WORKSPACE_ROLES } from '../../permissions.js';
+import { seatsInUse, syncSeats } from '../../services/billing/index.js';
 
 /**
  * Team members and invitations.
@@ -36,17 +37,12 @@ const scopeFields = z.object({
   website_ids: z.array(z.string().uuid()).max(100).optional(),
 });
 
-/** Seats = active members + outstanding invites. Counting only members would let
- *  a workspace exceed its plan simply by inviting everyone at once. */
-async function seatsInUse(workspaceId: string): Promise<number> {
-  const [members, pending] = await Promise.all([
-    unscopedPrisma.workspace_members.count({ where: { workspace_id: workspaceId, status: 'active' } }),
-    unscopedPrisma.invites.count({
-      where: { workspace_id: workspaceId, accepted_at: null, revoked_at: null, expires_at: { gt: new Date() } },
-    }),
-  ]);
-  return members + pending;
-}
+/**
+ * Seats = active members + outstanding invites, and the count now lives in
+ * services/billing so the number that ENFORCES the limit and the number that gets
+ * BILLED are the same function. Every membership change below ends in syncSeats(),
+ * which recounts and pushes the quantity to Stripe.
+ */
 
 export async function teamV1Routes(app: FastifyInstance): Promise<void> {
   // ── Members ───────────────────────────────────────────────────────────────
@@ -156,6 +152,8 @@ export async function teamV1Routes(app: FastifyInstance): Promise<void> {
       });
 
       invalidateMemberCache(workspaceId, target.user_id);
+      // Suspending or reactivating a member changes the billable seat count.
+      await syncSeats(workspaceId);
       await audit(req, { action: 'member.updated', targetType: 'member', targetId: memberId });
       return reply.send({ ok: true });
     },
@@ -184,6 +182,7 @@ export async function teamV1Routes(app: FastifyInstance): Promise<void> {
       // leaving must never delete their customers' support history.
       await req.db.workspace_members.delete({ where: { id: memberId } });
       invalidateMemberCache(req.auth!.workspace!.id, target.user_id);
+      await syncSeats(req.auth!.workspace!.id);
       await audit(req, { action: 'member.removed', targetType: 'member', targetId: memberId });
       return reply.send({ ok: true });
     },
@@ -295,6 +294,8 @@ export async function teamV1Routes(app: FastifyInstance): Promise<void> {
         relatedId: invite.id,
       });
 
+      // A pending invite holds a seat, so it is billed from the moment it is sent.
+      await syncSeats(workspaceId);
       await audit(req, { action: 'invite.created', targetType: 'invite', targetId: invite.id, details: { email } });
       // The raw token is returned so the UI can offer a copyable link for Slack —
       // the common case where email is slower than the conversation already happening.
@@ -313,6 +314,7 @@ export async function teamV1Routes(app: FastifyInstance): Promise<void> {
         if ((err as { code?: string }).code === 'P2025') return reply.code(404).send({ error: 'Not found' });
         throw err;
       }
+      await syncSeats(req.auth!.workspace!.id);
       await audit(req, { action: 'invite.revoked', targetType: 'invite', targetId: inviteId });
       return reply.send({ ok: true });
     },
@@ -440,6 +442,9 @@ export async function teamV1Routes(app: FastifyInstance): Promise<void> {
       });
 
       invalidateMemberCache(invite.workspace_id, userId);
+      // An accepted invite converts a pending seat into an active one. The total is
+      // usually unchanged, but not when the invitee was already a suspended member.
+      await syncSeats(invite.workspace_id);
       await audit(req, {
         action: 'invite.accepted',
         workspaceId: invite.workspace_id,
