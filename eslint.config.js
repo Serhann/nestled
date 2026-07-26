@@ -23,6 +23,13 @@ export default tseslint.config(
         'warn',
         { allowConstantExport: true },
       ],
+      // A leading underscore is the established way to say "this parameter exists
+      // because the signature requires it". Without this, a plugin that does not
+      // yet use its instance has to be written misleadingly to satisfy the linter.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' },
+      ],
     },
   },
   {
@@ -40,6 +47,11 @@ export default tseslint.config(
       'server/src/realtime/**/*.ts',
       'server/src/lib/**/*.ts',
     ],
+    // The platform surface is cross-tenant BY DEFINITION — it exists to look at
+    // every workspace at once. Requiring a disable comment on each of its queries
+    // would bury the handful of genuinely notable exceptions elsewhere in noise,
+    // which is the opposite of what this rule is for.
+    ignores: ['server/src/routes/platform/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
