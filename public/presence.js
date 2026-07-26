@@ -7,38 +7,24 @@
  * tracks SPA navigation, and listens for a proactive "open the chat" push from
  * an agent.
  *
- * Usage (Phase 4's embed will call this):
+ * AUTHENTICATION. The socket takes a signed WIDGET SESSION token, minted by
+ * embed.js from the website's public key, and the server reads the visitor id
+ * and website OUT OF THAT TOKEN. It used to accept `?visitor_id=` from anyone,
+ * which combined with the proactive frame's payload was a full conversation
+ * takeover — see server/src/test/presenceSecurity.test.ts.
+ *
+ * Usage (embed.js does this):
  *   NestledPresence.init({
  *     apiBase: 'https://api.nestled.chat',
- *     onProactive: ({ conversation_id, visitor_token, message, agent_name }) => {  ...open widget... },
+ *     sessionToken: '<signed widget session>',
+ *     onProactive: ({ conversation_id, claim_token, message, agent_name }) => { ... },
  *   });
- * Or drop it in with data attributes:
- *   <script src="/presence.js" data-api-base="https://api.nestled.chat"></script>
  */
 (function () {
   'use strict';
 
   var HEARTBEAT_MS = 25000;
-  var VISITOR_KEY = 'nestled_vid';
   var RETURNING_KEY = 'nestled_returning';
-
-  function getVisitorId() {
-    try {
-      var id = localStorage.getItem(VISITOR_KEY);
-      if (!id) {
-        id =
-          'v_' +
-          Date.now().toString(36) +
-          '_' +
-          Math.random().toString(36).slice(2, 10);
-        localStorage.setItem(VISITOR_KEY, id);
-      }
-      return id;
-    } catch (e) {
-      // Private mode / storage blocked — fall back to a per-session id.
-      return 'v_ephemeral_' + Math.random().toString(36).slice(2, 12);
-    }
-  }
 
   function isReturning() {
     try {
@@ -84,17 +70,17 @@
   function init(options) {
     options = options || {};
     var apiBase = (options.apiBase || '').replace(/\/$/, '');
-    if (!apiBase) {
-      console.error('NestledPresence: apiBase is required');
+    var sessionToken = options.sessionToken || '';
+    if (!apiBase || !sessionToken) {
+      console.error('NestledPresence: apiBase and sessionToken are required');
       return;
     }
     var onProactive = typeof options.onProactive === 'function' ? options.onProactive : null;
     var recordScriptUrl = options.recordScriptUrl || null; // rrweb-record UMD, host origin
-    var site = options.site || ''; // the website's public key
+    // Session replay is expensive to buffer and is plan-gated server-side; until
+    // /boot exposes `live_view_enabled` there is nothing here to switch it on.
+    var record = options.record === true;
 
-    // Prefer a shared visitor id (the embed passes the same one to the widget
-    // iframe) so presence, conversations, and proactive all agree on identity.
-    var visitorId = options.visitorId || getVisitorId();
     var fingerprint = options.fingerprint || ''; // cross-site device hash (embed-supplied)
     var contextToken = options.contextToken || ''; // signed host context (embed-supplied)
     var sessionStart = Date.now();
@@ -114,7 +100,6 @@
         screen: { w: window.screen.width, h: window.screen.height },
         returning: returning,
         sessionStart: sessionStart,
-        site: site,
         fingerprint: fingerprint,
         context_token: contextToken,
         // Client hints so the Live Visitors card matches the conversation
@@ -219,7 +204,7 @@
 
     function connect() {
       if (closed) return;
-      ws = new WebSocket(wsBaseFrom(apiBase) + '/ws/presence?visitor_id=' + encodeURIComponent(visitorId));
+      ws = new WebSocket(wsBaseFrom(apiBase) + '/ws/presence?token=' + encodeURIComponent(sessionToken));
 
       ws.onopen = function () {
         reconnectDelay = 1000;
@@ -282,15 +267,9 @@
     patchHistory();
     maybeStartRecording();
 
-    // ── MagicBrowse: record the HOST page (off by default; server-gated). ──
+    // ── Live view: record the HOST page (off unless explicitly enabled). ──
     function maybeStartRecording() {
-      if (!recordScriptUrl) return;
-      fetch(apiBase + '/api/widget-config')
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          if (d && d.settings && d.settings.magic_browse_enabled) startRecording();
-        })
-        .catch(function () {});
+      if (recordScriptUrl && record) startRecording();
     }
 
     function startRecording() {
@@ -342,16 +321,11 @@
         if (!attributes || typeof attributes !== 'object') return;
         send({ type: 'data', attributes: attributes });
       },
-      visitorId: visitorId,
     };
   }
 
-  var api = { init: init };
-  window.NestledPresence = api;
-
-  // Auto-init from the script tag's data attributes, if present.
-  var self = document.currentScript;
-  if (self && self.getAttribute('data-api-base')) {
-    init({ apiBase: self.getAttribute('data-api-base') });
-  }
+  // No auto-init from data attributes any more: a session token can only be
+  // minted from the website's public key, so embed.js is the only caller that
+  // can supply one. A script tag on its own has nothing to authenticate with.
+  window.NestledPresence = { init: init };
 })();

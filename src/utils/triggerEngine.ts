@@ -1,205 +1,191 @@
 import type { Trigger } from '../types/chat';
 
+/**
+ * Proactive-message rules, evaluated in the browser.
+ *
+ * Framework-free on purpose: the matching rules are the part worth reading and
+ * worth testing, and `state/useTriggers.ts` is only the React adapter that feeds
+ * this engine and turns a match into a rendered nudge.
+ *
+ * Two behaviours are load-bearing:
+ *  - a trigger fires AT MOST ONCE per visitor, persisted in localStorage, so a
+ *    reload is not a second interruption;
+ *  - a rule the engine cannot actually evaluate does not fire. Country
+ *    restriction is the live case: the boot payload carries no resolved country,
+ *    so a country-restricted trigger stays silent rather than firing everywhere.
+ */
+
+const VISITED_KEY = 'nestled_visited';
+const EXECUTED_KEY = 'nestled_triggers_fired';
+
+export interface TriggerContext {
+  agentOnline: boolean;
+  /** The HOST page URL, not the widget iframe's. */
+  currentUrl: string;
+}
+
+export interface TriggerListeners {
+  onLeaveIntent?(trigger: Trigger): void;
+  onClickLink?(trigger: Trigger): void;
+  onDelay?(trigger: Trigger): void;
+}
+
+function readSet(key: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(key);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** Glob match: `*` is the only metacharacter, everything else is literal. */
+function matchesUrl(pattern: string, url: string): boolean {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`, 'i').test(url);
+}
+
+function isMobile(): boolean {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
 export class TriggerEngine {
   private triggers: Trigger[] = [];
-  private executedTriggers: Set<string> = new Set();
-  private isFirstVisit: boolean = false;
-  private userCountry: string | null = null;
+  private executed: Set<string>;
+  private readonly firstVisit: boolean;
+  private teardown: Array<() => void> = [];
 
   constructor() {
-    this.isFirstVisit = !localStorage.getItem('chatbot_visited');
-    if (this.isFirstVisit) {
-      localStorage.setItem('chatbot_visited', 'true');
+    this.executed = readSet(EXECUTED_KEY);
+    this.firstVisit = !localStorage.getItem(VISITED_KEY);
+    try {
+      localStorage.setItem(VISITED_KEY, '1');
+    } catch {
+      // Storage blocked: treat every load as a first visit rather than none.
     }
+  }
 
-    this.loadExecutedTriggers();
+  setTriggers(triggers: Trigger[]): void {
+    // The boot payload is already ordered by priority; keep that order so two
+    // eligible triggers resolve the same way the dashboard's list implies.
+    this.triggers = triggers;
+  }
+
+  markExecuted(id: string): void {
+    this.executed.add(id);
+    try {
+      localStorage.setItem(EXECUTED_KEY, JSON.stringify([...this.executed]));
+    } catch {
+      // Non-fatal: the trigger simply becomes repeatable for this visitor.
+    }
+  }
+
+  hasFired(id: string): boolean {
+    return this.executed.has(id);
+  }
+
+  /** Triggers whose non-event conditions hold right now. */
+  evaluate(context: TriggerContext): Trigger[] {
+    return this.triggers.filter((trigger) => {
+      if (this.executed.has(trigger.id)) return false;
+
+      const behaviors = trigger.behaviors ?? {};
+      const platforms = trigger.platforms ?? {};
+      const events = trigger.events ?? {};
+
+      if (behaviors.execute_if_no_other_trigger && this.executed.size > 0) return false;
+      if (behaviors.execute_if_online && !context.agentOnline) return false;
+      if (behaviors.execute_on_first_visit && !this.firstVisit) return false;
+      // Fail closed: without a resolved country we cannot honour the restriction.
+      if (behaviors.country_restriction && behaviors.country_restriction.length > 0) return false;
+
+      const mobile = isMobile();
+      if (mobile && platforms.mobile_enabled === false) return false;
+      if (!mobile && platforms.desktop_enabled === false) return false;
+
+      if (events.on_pages && events.page_urls?.length) {
+        if (!events.page_urls.some((p) => matchesUrl(p, context.currentUrl))) return false;
+      }
+      if (events.on_url_parameters && events.url_parameters) {
+        const params = new URLSearchParams(context.currentUrl.split('?')[1] ?? '');
+        for (const [key, value] of Object.entries(events.url_parameters)) {
+          if (params.get(key) !== value) return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  /** True when a trigger waits for an interaction rather than firing on load. */
+  static isDeferred(trigger: Trigger): boolean {
+    const e = trigger.events ?? {};
+    return Boolean(e.after_delay || e.on_leave_intent || e.on_click_link);
   }
 
   /**
-   * Country is resolved server-side (GeoLite2) and injected by the widget via
-   * GET /api/geo — no client-side ipapi.co call (which leaked IPs and blew the
-   * free tier at one request per pageload).
+   * Arm the deferred triggers.
+   *
+   * Leave-intent and click listeners are bound to the WIDGET document, which is
+   * an iframe — so they only see pointer events inside the panel. The host page
+   * cannot be observed from here without granting the widget script access to
+   * the customer's DOM, which is a trade we are not making; embed.js forwards
+   * host-level leave intent instead when it is available.
    */
-  setCountry(countryCode: string | null) {
-    this.userCountry = countryCode;
-  }
+  arm(context: TriggerContext, listeners: TriggerListeners): () => void {
+    const eligible = this.evaluate(context);
 
-  private loadExecutedTriggers() {
-    const stored = localStorage.getItem('chatbot_executed_triggers');
-    if (stored) {
-      try {
-        const triggers = JSON.parse(stored);
-        this.executedTriggers = new Set(triggers);
-      } catch (e) {
-        console.error('Failed to load executed triggers:', e);
-      }
-    }
-  }
-
-  private saveExecutedTrigger(triggerId: string) {
-    this.executedTriggers.add(triggerId);
-    localStorage.setItem(
-      'chatbot_executed_triggers',
-      JSON.stringify(Array.from(this.executedTriggers))
-    );
-  }
-
-  setTriggers(triggers: Trigger[]) {
-    this.triggers = triggers.sort((a, b) => a.priority - b.priority);
-  }
-
-  private isMobileDevice(): boolean {
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-      navigator.userAgent
-    );
-  }
-
-  private matchesUrlPattern(pattern: string, url: string): boolean {
-    const regexPattern = pattern
-      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*/g, '.*');
-    const regex = new RegExp(`^${regexPattern}$`, 'i');
-    return regex.test(url);
-  }
-
-  private checkUrlParameters(params: Record<string, string>): boolean {
-    const urlParams = new URLSearchParams(window.location.search);
-    for (const [key, value] of Object.entries(params)) {
-      if (urlParams.get(key) !== value) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  async evaluateTriggers(context: {
-    isOnline: boolean;
-    currentUrl: string;
-  }): Promise<Trigger[]> {
-    const matchedTriggers: Trigger[] = [];
-
-    for (const trigger of this.triggers) {
-      if (!trigger.is_active) continue;
-
-      const { events, behaviors, platforms } = trigger;
-      if (!events || !behaviors || !platforms) continue;
-
-      if (behaviors.execute_if_no_other_trigger && this.executedTriggers.size > 0) {
-        continue;
-      }
-
-      if (behaviors.execute_if_online && !context.isOnline) {
-        continue;
-      }
-
-      if (behaviors.execute_on_first_visit && !this.isFirstVisit) {
-        continue;
-      }
-
-      if (behaviors.country_restriction.length > 0) {
-        if (!this.userCountry || !behaviors.country_restriction.includes(this.userCountry)) {
-          continue;
-        }
-      }
-
-      const isMobile = this.isMobileDevice();
-      if (isMobile && !platforms.mobile_enabled) continue;
-      if (!isMobile && !platforms.desktop_enabled) continue;
-
-      if (events.on_pages && events.page_urls.length > 0) {
-        const urlMatches = events.page_urls.some(pattern =>
-          this.matchesUrlPattern(pattern, context.currentUrl)
-        );
-        if (!urlMatches) continue;
-      }
-
-      if (events.on_url_parameters && Object.keys(events.url_parameters).length > 0) {
-        if (!this.checkUrlParameters(events.url_parameters)) continue;
-      }
-
-      matchedTriggers.push(trigger);
+    const leave = eligible.filter((t) => t.events?.on_leave_intent);
+    if (leave.length && listeners.onLeaveIntent) {
+      const handler = (event: MouseEvent) => {
+        if (event.clientY > 0) return;
+        const next = leave.find((t) => !this.executed.has(t.id));
+        if (!next) return;
+        this.markExecuted(next.id);
+        listeners.onLeaveIntent?.(next);
+      };
+      document.addEventListener('mouseout', handler);
+      this.teardown.push(() => document.removeEventListener('mouseout', handler));
     }
 
-    return matchedTriggers;
-  }
-
-  setupEventListeners(callbacks: {
-    onLeaveIntent?: (trigger: Trigger) => void;
-    onClickLink?: (trigger: Trigger) => void;
-    onDelay?: (trigger: Trigger) => void;
-  }) {
-    const exitIntentTriggers = this.triggers.filter(
-      t => t.is_active && t.events?.on_leave_intent
-    );
-
-    if (exitIntentTriggers.length > 0 && callbacks.onLeaveIntent) {
-      let hasShownExitIntent = false;
-
-      const handleMouseLeave = (e: MouseEvent) => {
-        if (hasShownExitIntent) return;
-        if (e.clientY <= 0) {
-          hasShownExitIntent = true;
-          for (const trigger of exitIntentTriggers) {
-            if (!this.executedTriggers.has(trigger.id)) {
-              callbacks.onLeaveIntent?.(trigger);
-              this.saveExecutedTrigger(trigger.id);
-              break;
+    const clicks = eligible.filter((t) => t.events?.on_click_link && t.events.click_selectors?.length);
+    if (clicks.length && listeners.onClickLink) {
+      const handler = (event: MouseEvent) => {
+        const target = event.target as Element | null;
+        if (!target) return;
+        for (const trigger of clicks) {
+          if (this.executed.has(trigger.id)) continue;
+          for (const selector of trigger.events?.click_selectors ?? []) {
+            // A selector authored in the dashboard can be invalid; one bad rule
+            // must not take out the others.
+            try {
+              if (!target.closest(selector)) continue;
+            } catch {
+              continue;
             }
+            this.markExecuted(trigger.id);
+            listeners.onClickLink?.(trigger);
+            return;
           }
         }
       };
-
-      document.addEventListener('mouseout', handleMouseLeave);
+      document.addEventListener('click', handler);
+      this.teardown.push(() => document.removeEventListener('click', handler));
     }
 
-    const clickLinkTriggers = this.triggers.filter(
-      t => t.is_active && t.events?.on_click_link && t.events.click_selectors.length > 0
-    );
-
-    if (clickLinkTriggers.length > 0 && callbacks.onClickLink) {
-      const handleClick = (e: MouseEvent) => {
-        const target = e.target as HTMLElement;
-
-        for (const trigger of clickLinkTriggers) {
-          if (!trigger.events || this.executedTriggers.has(trigger.id)) continue;
-
-          for (const selector of trigger.events.click_selectors) {
-            if (target.matches(selector) || target.closest(selector)) {
-              callbacks.onClickLink?.(trigger);
-              this.saveExecutedTrigger(trigger.id);
-              return;
-            }
-          }
-        }
-      };
-
-      document.addEventListener('click', handleClick);
+    for (const trigger of eligible) {
+      const seconds = trigger.events?.after_delay ? (trigger.events.delay_seconds ?? 0) : 0;
+      if (seconds <= 0 || !listeners.onDelay) continue;
+      const timer = setTimeout(() => {
+        if (this.executed.has(trigger.id)) return;
+        this.markExecuted(trigger.id);
+        listeners.onDelay?.(trigger);
+      }, seconds * 1000);
+      this.teardown.push(() => clearTimeout(timer));
     }
 
-    const delayTriggers = this.triggers.filter(
-      t => t.is_active && t.events?.after_delay && t.events.delay_seconds > 0
-    );
-
-    if (delayTriggers.length > 0 && callbacks.onDelay) {
-      for (const trigger of delayTriggers) {
-        if (this.executedTriggers.has(trigger.id)) continue;
-        if (!trigger.events) continue;
-
-        setTimeout(() => {
-          if (!this.executedTriggers.has(trigger.id)) {
-            callbacks.onDelay?.(trigger);
-            this.saveExecutedTrigger(trigger.id);
-          }
-        }, trigger.events.delay_seconds * 1000);
-      }
-    }
-  }
-
-  markTriggerExecuted(triggerId: string) {
-    this.saveExecutedTrigger(triggerId);
-  }
-
-  hasExecutedAnyTrigger(): boolean {
-    return this.executedTriggers.size > 0;
+    return () => {
+      for (const fn of this.teardown) fn();
+      this.teardown = [];
+    };
   }
 }
