@@ -62,6 +62,20 @@ before(async () => {
   });
   websiteId = site.json().website.id;
   publicKey = site.json().website.public_key;
+
+  // AI off for the fixture.
+  //
+  // The auto-reply is deliberately fire-and-forget on the message route — a slow
+  // model must never hold up the visitor's 201 — which means it can land in the
+  // thread at any point after the request returns. Left on, the round-trip test
+  // below intermittently reads ['visitor','agent','ai'] instead of the two
+  // messages it actually sent, and a suite that fails one run in three is a suite
+  // people learn to re-run instead of read. AI replies get their own test, where
+  // waiting for them is the point rather than an accident.
+  await unscopedPrisma.website_settings.update({
+    where: { website_id: websiteId },
+    data: { ai_enabled: false },
+  });
 });
 
 after(async () => {
