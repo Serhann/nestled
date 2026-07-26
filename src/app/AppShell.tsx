@@ -8,8 +8,10 @@ import {
   Inbox,
   LogOut,
   MessageSquareText,
+  Route,
   Settings,
   ShieldAlert,
+  Sparkles,
   Users,
   Zap,
 } from 'lucide-react';
@@ -48,8 +50,10 @@ export function AppShell() {
     { to: `${base}/websites`, label: 'Websites', icon: Globe, capability: 'website:read' },
     { to: `${base}/content/kb`, label: 'Knowledge', icon: BookOpen, capability: 'kb:read' },
     { to: `${base}/content/canned`, label: 'Canned replies', icon: MessageSquareText, capability: 'canned:read' },
+    { to: `${base}/content/starters`, label: 'Starters', icon: Sparkles, capability: 'starter:write' },
     { to: `${base}/automation/campaigns`, label: 'Campaigns', icon: Zap, capability: 'trigger:write' },
     { to: `${base}/automation/bots`, label: 'Bots', icon: Bot, capability: 'bot:write' },
+    { to: `${base}/automation/routing`, label: 'Routing', icon: Route, capability: 'routing:write' },
     { to: `${base}/settings/general`, label: 'Settings', icon: Settings, capability: 'workspace:read' },
   ];
 
