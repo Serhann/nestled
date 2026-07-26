@@ -5,6 +5,7 @@ import { env } from '../env.js';
 // each one's plan-derived retention window.
 // eslint-disable-next-line no-restricted-imports -- background sweep spans workspaces
 import { unscopedPrisma } from '../db/unscoped.js';
+import { recordJobRun } from '../services/platform/metrics.js';
 
 /**
  * Data-retention sweep.
@@ -78,11 +79,25 @@ async function sweep(): Promise<void> {
 
 /** Run on boot and then daily. Errors are logged, never fatal. */
 export function startRetentionJob(): void {
-  const run = () =>
-    sweep().catch((err) => {
+  const run = async () => {
+    // Timed and recorded so the ops health page can answer "did retention actually
+    // run?". A silently dead sweep is invisible until a customer asks why data they
+    // were promised would be deleted is still there.
+    const started = Date.now();
+    try {
+      await sweep();
+      recordJobRun('retention', { at: new Date(), ok: true, durationMs: Date.now() - started });
+    } catch (err) {
+      recordJobRun('retention', {
+        at: new Date(),
+        ok: false,
+        durationMs: Date.now() - started,
+        error: (err as Error).message,
+      });
       // eslint-disable-next-line no-console
       console.error('[retention] failed', err);
-    });
-  run();
-  setInterval(run, 24 * 60 * 60 * 1000).unref();
+    }
+  };
+  void run();
+  setInterval(() => void run(), 24 * 60 * 60 * 1000).unref();
 }

@@ -28,10 +28,18 @@ export interface AccessTokenPayload {
   };
 }
 
-/** Short-lived access token used on every authenticated request. */
-export function signAccessToken(payload: AccessTokenPayload): string {
+/**
+ * Short-lived access token used on every authenticated request.
+ *
+ * `expiresIn` overrides the install default in exactly one place: an impersonation
+ * token, whose lifetime is the staff member's declared TTL (<= 30 minutes) rather
+ * than the 15-minute default. Without the override the JWT would die before the
+ * impersonation_sessions row it belongs to, and support would silently lose access
+ * mid-investigation with no refresh token to recover from — see routes/platform.
+ */
+export function signAccessToken(payload: AccessTokenPayload, expiresIn?: string | number): string {
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
-    expiresIn: env.ACCESS_TOKEN_TTL as jwt.SignOptions['expiresIn'],
+    expiresIn: (expiresIn ?? env.ACCESS_TOKEN_TTL) as jwt.SignOptions['expiresIn'],
   });
 }
 

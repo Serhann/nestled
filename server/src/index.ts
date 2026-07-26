@@ -7,6 +7,7 @@ import { env, allowedOrigins, isProd } from './env.js';
 import { unscopedPrisma } from './db/unscoped.js';
 import { runMigrations } from './db/migrate.js';
 import { ensureSeedAdmin } from './db/seedAdmin.js';
+import { ensureSeedPlatformUser } from './db/seedPlatform.js';
 import { startBackgroundJobs } from './lib/jobs.js';
 import { assertTenantModelsRegistered } from './db/tenant.js';
 import { registerAuthPlugin } from './plugins/auth.js';
@@ -132,6 +133,8 @@ async function main() {
   await runMigrations();
   // Optionally seed the first admin from SEED_ADMIN_* (no-op once one exists).
   await ensureSeedAdmin();
+  // Optionally bootstrap the first ops-panel staff account from SEED_PLATFORM_*.
+  await ensureSeedPlatformUser();
 
   const app = await buildServer();
   await app.listen({ host: env.HOST, port: env.PORT });

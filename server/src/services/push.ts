@@ -5,6 +5,7 @@ import { env } from '../env.js';
 // eslint-disable-next-line no-restricted-imports -- routes across members and their devices
 import { unscopedPrisma } from '../db/unscoped.js';
 import { membersViewing } from '../realtime/hub.js';
+import { recordPushFailure } from './platform/metrics.js';
 
 /**
  * Web Push to a workspace's agents.
@@ -86,6 +87,9 @@ async function pushToWorkspace(
         );
       } catch (err) {
         const status = (err as { statusCode?: number }).statusCode;
+        // Counted so the ops health page can tell "one dead phone" from "the push
+        // service is down"; the send itself still fails silently, as before.
+        recordPushFailure(status);
         if (status === 404 || status === 410) {
           await unscopedPrisma.push_subscriptions.delete({ where: { id: sub.id } }).catch(() => undefined);
         }
