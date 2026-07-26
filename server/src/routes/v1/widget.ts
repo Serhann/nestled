@@ -223,6 +223,10 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
 
       const online = anyAgentOnline(site.workspaceId, site.websiteId);
       const withinHours = isWithinBusinessHours(hours);
+      // The country a trigger's `country_restriction` is matched against. Resolved
+      // here rather than in the widget because the widget has no honest way to know
+      // it, and a client-declared country is not a restriction.
+      const country = (await lookupGeo(clientIp(req.headers, req.ip)))?.country ?? null;
 
       return reply.send({
         enabled: true,
@@ -255,7 +259,12 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
           sound_enabled: settings.sound_enabled,
           reset_after_resolve: settings.reset_after_resolve,
           rating_tags: settings.rating_tags,
+          // Whether presence.js should record at all. Off by default: buffering
+          // every visitor's DOM is the one thing in this system that can exhaust
+          // a process's memory, so it takes both the plan and this flag.
+          live_view_enabled: settings.live_view_enabled,
         },
+        visitor: { country },
         starters: settings.starters_enabled
           ? starters.map((s) => ({
               id: s.key,
@@ -276,6 +285,43 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
           return { ...t, actions: { ...rest, starts_bot: Boolean(start_bot) } };
         }),
         availability: { online, within_hours: withinHours, offline_behavior: hours?.offline_behavior ?? 'collect_email' },
+      });
+    },
+  );
+
+  /**
+   * "Is anyone there right now?" — and nothing else.
+   *
+   * The widget needs to refresh this while a panel is open with no socket, and
+   * /boot is the wrong endpoint to poll: it upserts a website_domains row and can
+   * publish install progress, so polling it would mean a database write per
+   * visitor per interval for an answer held in memory.
+   */
+  app.get(
+    '/api/v1/widget/availability',
+    { config: { rateLimit: { max: 240, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const q = req.query as { key?: string };
+      if (!q.key) return reply.code(400).send({ error: 'key required' });
+
+      const website = await unscopedPrisma.websites.findUnique({
+        where: { public_key: q.key },
+        select: {
+          id: true,
+          workspace_id: true,
+          is_active: true,
+          deleted_at: true,
+          hours: { select: { enabled: true, timezone: true, rules: true, holidays: true, offline_behavior: true } },
+        },
+      });
+      if (!website || website.deleted_at || !website.is_active) {
+        return reply.code(404).send({ error: 'Not found' });
+      }
+
+      return reply.send({
+        online: anyAgentOnline(website.workspace_id, website.id),
+        within_hours: isWithinBusinessHours(website.hours),
+        offline_behavior: website.hours?.offline_behavior ?? 'collect_email',
       });
     },
   );

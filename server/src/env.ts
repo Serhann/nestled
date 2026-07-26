@@ -25,7 +25,14 @@ const schema = z.object({
   // per-website domain allowlist, never by this list.
   ALLOWED_ORIGINS: z
     .string()
-    .default('https://app.nestled.chat,https://ops.nestled.chat,https://nestled.chat,http://localhost:5173'),
+    .default(
+      // The widget origin belongs here too. The widget document is served from
+      // widget.nestled.chat and calls /api from there, so leaving it out makes
+      // every boot and message fail in the browser with a CORS error that looks
+      // like the API is down. Customer domains do NOT belong here — where a
+      // widget may run is per-website, in websites.allowed_domains.
+      'https://app.nestled.chat,https://ops.nestled.chat,https://widget.nestled.chat,https://nestled.chat,http://localhost:5173',
+    ),
 
   // AI (Phase 7 expands this; adapters read these at call time).
   AI_PROVIDER: z.enum(['knowledge_base', 'anthropic', 'openai', 'ollama']).default('anthropic'),

@@ -90,7 +90,7 @@ services:
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       # Origins allowed to call the API / open sockets (the widget's host sites).
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://app.nestled.chat,https://ops.nestled.chat,https://nestled.chat}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://app.nestled.chat,https://ops.nestled.chat,https://widget.nestled.chat,https://nestled.chat}
       AI_PROVIDER: ${AI_PROVIDER:-anthropic}
       AI_MODEL: ${AI_MODEL:-claude-opus-4-8}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
