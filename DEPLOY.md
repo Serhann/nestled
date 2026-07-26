@@ -1,50 +1,39 @@
 # Deploying Nestled
 
-Status as of the `Phases 5+6` commit. **Read the "What is not ready" section before
-pointing customers at this** — the backend is complete and tested; the customer-facing
-panel is not yet ported.
+All fourteen phases are merged. **200 server tests pass, both typechecks are
+clean, ESLint reports zero errors, and the production images have been built and
+exercised end to end** — signup, website creation, widget boot, a visitor
+message, an agent reply, the billing state, and both directions of the
+customer/staff auth wall.
+
+Read "What is not verified" before you point real customers at it.
 
 ---
 
-## What works today
+## The four surfaces
 
-The **API and realtime server** are production-shaped and verified end to end:
+| Origin | What it is |
+|---|---|
+| `nestled.chat` | Marketing. Prerendered HTML — real documents, not an SPA shell. |
+| `app.nestled.chat` | The customer panel. Inbox, visitors, websites, automation, settings. |
+| `ops.nestled.chat` | Your own staff console. Separate auth mechanism; never indexed, never framed. |
+| `widget.nestled.chat` | The visitor widget and `embed.js`. |
 
-- self-serve signup, email verification, password reset, team invites
-- workspaces, websites, per-website settings, business hours
-- the public widget plane: boot, session, conversations, messages, ratings
-- the agent inbox: list/filter/search, reply, assign, tags, notes, translation
-- knowledge base, canned responses, conversation starters
-- live visitor presence, proactive chat, session replay
-- Web Push, Discord notifications, plan limits and usage metering
-- tenant isolation enforced at three layers, with 75 passing tests
+One container serves all four. In production each is a subdomain; the same nginx
+config also serves them under `/app`, `/ops`, `/widget` path prefixes, and no
+application code hardcodes either — every cross-surface URL comes from
+`src/lib/origins.ts`.
 
-Verified on the built production image: migrations apply on boot, the first user
-is seeded from env, `/healthz` reports the database up, and signup succeeds over
-HTTP.
-
-## What is NOT ready
-
-**The customer-facing panel (`app.html`) still speaks the pre-tenant API.** It was
-left intact through the backend rewrite deliberately — rewriting it against
-endpoints that were still moving would have meant doing it twice — but it means:
-
-- logging in through the browser UI will not work yet
-- the widget bundle (`widget.html`) likewise still calls the old endpoints
-
-Everything below deploys the **server**. Do that first; it is the half that has to
-be right before anyone can use the other half.
-
-Also not yet built (planned, not started): Stripe billing, the ops/staff panel,
-the visual bot builder, and the marketing site. Plan limits are *enforced*, but
-nobody can pay to raise them yet, so set plans manually in the database for now.
+Putting the widget on its own origin is a security decision, not a deployment
+preference: the panel's tokens live in the app origin's storage, so a widget
+running inside a customer's page physically cannot read them.
 
 ---
 
 ## 1. Environment
 
-Copy `.env.staging.example` and fill in real values. **Every secret in that file is
-a placeholder** — generate your own:
+Copy `.env.staging.example` and fill it in. **Every secret in that file is a
+placeholder.** Generate your own:
 
 ```bash
 openssl rand -base64 48        # JWT_ACCESS_SECRET, JWT_REFRESH_SECRET, POSTGRES_PASSWORD
@@ -56,19 +45,21 @@ Required:
 | Variable | Notes |
 |---|---|
 | `DATABASE_URL` | Postgres 16. The schema uses `ON DELETE SET NULL (col)`, which needs **PG 15+**. |
-| `JWT_ACCESS_SECRET` | ≥16 chars. Rotating it invalidates every session and widget session. |
+| `JWT_ACCESS_SECRET` | ≥16 chars. Rotating it signs out every agent AND invalidates every live widget session. |
 | `JWT_REFRESH_SECRET` | ≥16 chars. |
-| `ALLOWED_ORIGINS` | The **private** app origins only. Customer domains do NOT belong here — where a widget may run is enforced per-website by `websites.allowed_domains`. |
-| `APP_URL` | Used to build links in outbound email. Get this wrong and verification links point at the wrong host. |
+| `ALLOWED_ORIGINS` | The **private** origins: app, ops, widget, marketing. Customer domains do NOT belong here — where a widget may run is per-website, in `websites.allowed_domains`. **Leaving out the widget origin makes every widget call fail in the browser with a CORS error that looks like the API is down.** |
+| `APP_URL` | Used to build links in outbound email. Wrong, and verification links point at the wrong host. |
 
 Strongly recommended:
 
 | Variable | Why |
 |---|---|
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `MAIL_FROM` | Without SMTP nothing is sent: emails are queued to `outbound_emails` and the body is logged. Signup verification and invites then require reading the log. |
-| `ANTHROPIC_API_KEY` | AI replies are platform infrastructure (we hold the key, usage is metered per workspace). Without it the AI degrades to knowledge-base answers. |
+| `SMTP_*`, `MAIL_FROM` | Without SMTP nothing is sent: mail is queued to `outbound_emails` and logged. Signup verification and invitations then require reading the log. |
+| `ANTHROPIC_API_KEY` | AI replies are our infrastructure — we hold the key and meter usage per workspace. Without it the AI degrades to knowledge-base answers. |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Without them, plans and limits still work — they are database facts — but checkout and the billing portal return 503. Self-hosting is fine without a Stripe account. |
 | `VAPID_*` | Web Push. Absent, push is disabled gracefully. |
-| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Creates the first user **and their workspace** on first boot, then no-ops forever. |
+| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Creates the first customer user **and their workspace** on an empty database, then no-ops forever. |
+| `SEED_PLATFORM_EMAIL` / `SEED_PLATFORM_PASSWORD` | Creates the first **staff** account for `ops.`. It starts read-only until a TOTP factor is enrolled — an env-provisioned identity can look but not change. |
 
 ## 2. Deploy
 
@@ -76,80 +67,122 @@ Strongly recommended:
 docker compose -f docker-compose.production.yml up -d
 ```
 
-Migrations run automatically on boot and are idempotent.
+Four services: `db`, a one-shot `migrate`, `app`, and `web`. The app waits for
+the migration to exit successfully, so a failed migration stops the deploy rather
+than half-starting it.
 
-To verify:
+Verify:
 
 ```bash
-curl https://your-host/healthz                       # {"status":"ok","db":"up"}
-docker compose logs app | grep -E 'migration|listening'
+curl https://your-host/healthz                # {"status":"ok","db":"up"}
+curl -s https://your-host/ | grep -c '<h1'    # the landing page is real HTML
+docker compose logs migrate                   # "All migrations have been successfully applied"
 ```
 
 ## 3. First run
 
-`SEED_ADMIN_*` creates one user and one workspace on an empty database. Everyone
-else signs up, or is invited.
+Sign up at `https://app.your-host/signup`, or use `SEED_ADMIN_*`. The wizard
+takes it from there: name the workspace, add a website, paste the snippet. The
+install detector tells you the moment it sees your site, and if the snippet is
+live on a host your allowlist does not cover it says so and offers to add it.
 
-To create a website and get an embed key without the panel:
+For the staff console, sign in at `https://ops.your-host` with `SEED_PLATFORM_*`
+and enrol TOTP — until you do, the account can read everything and change
+nothing.
 
-```bash
-TOKEN=$(curl -s -X POST https://your-host/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"...","password":"..."}' | jq -r .access_token)
+---
 
-WS=$(curl -s https://your-host/api/v1/me \
-  -H "Authorization: Bearer $TOKEN" | jq -r '.workspaces[0].id')
+## What is NOT verified
 
-curl -s -X POST "https://your-host/api/v1/w/$WS/websites" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"Acme","primary_domain":"acme.com"}' | jq .website.public_key
-```
+Be aware of these before a launch. None is a known defect; each is something
+nobody has watched happen.
 
-The embed snippet (once the widget is ported):
+**The panel and the ops console have not been clicked through in a browser.**
+Both typecheck, lint, build, and their API contracts are covered by integration
+tests. The React rendering itself is not — no human and no headless browser has
+used them. The widget, by contrast, *was* driven in a real browser end to end.
 
-```html
-<script>
-  window.Nestled = window.Nestled || function(){(Nestled.q=Nestled.q||[]).push(arguments)};
-  window.NestledId = "nst_...";
-</script>
-<script async src="https://widget.your-host/embed.js"></script>
-```
+**Stripe has only been tested against a fake client.** The webhook route's branch
+logic, all three idempotency mechanisms, out-of-order delivery and both checkout
+arrival orders are covered — but Stripe's real HMAC signature verification and
+real network calls are not. Run `stripe listen --forward-to
+https://your-host/api/v1/stripe/webhook` and a test-mode subscribe → upgrade →
+cancel before taking live payments.
+
+**Email delivery has not been exercised against a real SMTP server.** Send
+yourself a verification mail before opening signup.
+
+**Four widget features are stubbed pending server work**, listed in the widget
+agent's notes and reproduced here so they are not discovered by a customer:
+
+- **ContextCard renders nothing.** The component exists; the server has no
+  presentation payload for it yet (`verifyContextToken` returns the raw verified
+  bag). Signed attributes still reach the agent's sidebar — only the visitor-side
+  card is missing.
+- **No file attachments from the visitor.** `file_upload_enabled` is advertised
+  in the boot payload but there is no widget attachment endpoint, so the
+  paperclip was deliberately omitted rather than shipped broken.
+- **`Nestled('startBot', …)`** resolves against configured starters rather than
+  a dedicated endpoint.
+- **Live view records only when explicitly enabled** on both the plan and the
+  website setting. That is intended, but it means the toggle is the only thing
+  standing between you and a feature that appears not to work.
+
+**Session replay, campaigns and bot flows have unit and integration coverage but
+no soak testing.** The replay buffer is bounded and LRU-evicted; nobody has run
+it for a day.
 
 ---
 
 ## Operational constraints you must know
 
-**Run exactly ONE app replica.** This is architectural, not a tuning preference:
-agent sockets, the presence board and the replay buffers are per-process, so an
-agent connected to replica 1 never sees an event published by replica 2. The
-rate limiter's store has the same constraint. Scale vertically. Ceiling is roughly
-5–10k concurrent WebSockets per process; the Redis bus that lifts it goes behind a
-flag in Phase 14, and every publish already routes through `realtime/bus.ts` so it
-is one file plus config.
-
-**Migrations run on app boot.** Convenient now, a footgun later: with a slow
-migration or a second replica it becomes a startup race. Moving it to a release
-step is a tracked Phase 14 item.
+**Run exactly ONE app replica.** This is architectural, not tuning: agent
+sockets, the presence board, the realtime catch-up buffer and the replay buffers
+are per-process, so an agent connected to replica 1 never sees an event published
+by replica 2. The rate limiter and the ops health counters have the same
+constraint. Scale vertically; the ceiling is roughly 5–10k concurrent
+WebSockets per process. Everything publishes through `realtime/hub.ts`, so the
+Redis bus that lifts this is one file plus config.
 
 **Uploads are on local disk** (`UPLOAD_DIR`, a mounted volume). `stored_files`
 carries a `backend` column so S3 is a seam rather than a rewrite, but it is not
 implemented.
 
-**Retention is per plan.** `RETENTION_DAYS` now acts only as a self-host override;
+**Retention is per plan.** `RETENTION_DAYS` is now only a self-host override;
 otherwise each workspace's plan decides. `0` on both means keep forever.
 
 **Rotating `JWT_ACCESS_SECRET`** signs out every agent AND invalidates every live
-widget session, so visitors mid-conversation have to reload. Do it during quiet
+widget session, so visitors mid-conversation must reload. Do it during quiet
 hours.
+
+**Going over a conversation allowance does not break the widget.** It warns at
+100% and only stops creating new conversations at 120%, falling back to
+"leave your email". This is deliberate: refusing a conversation means a visitor
+on a customer's production site gets a broken chat and the customer silently
+loses a lead. AI replies are a hard stop at 100%, because each call costs real
+money — they degrade to knowledge-base answers and then to a human.
+
+**During billing grace the widget keeps serving.** A lapsed trial, a failed
+payment and a cancellation all leave the widget live for the grace window while
+the panel goes read-only except billing. Never break a prospect's production
+site over billing.
 
 ## Security notes
 
-- `.env.staging.example` previously contained real-looking secrets, and they are
-  still in the git history. **If any of those values were ever used on a real
-  host, rotate them.**
-- The pre-tenant build had a conversation-takeover hole on `/ws/presence`. It is
-  fixed and covered by `server/src/test/presenceSecurity.test.ts`. If you have an
-  **old** deployment still running, that hole is live on it.
+- `.env.staging.example` previously contained real-looking secrets and **they are
+  still in the git history. If any of those values were ever used on a real host,
+  rotate them.**
+- The pre-tenant build had a conversation-takeover hole on `/ws/presence`: it
+  accepted an unauthenticated `visitor_id` and the proactive frame carried the
+  conversation's own `visitor_token`. Two independent fixes are in place — a
+  signed widget session, and a single-use 60-second claim token — and both are
+  pinned by `server/src/test/presenceSecurity.test.ts`. **If you have an old
+  deployment still running, that hole is live on it.**
+- Staff impersonation requires a written reason, is capped at 30 minutes, has no
+  refresh token, cannot touch billing, member management, integration secrets or
+  data export, and writes every action into the **customer's own** audit log,
+  where it is labelled as ours. A read-only session throws on the first write at
+  the database-client layer, not just at the permission check.
 - Anything that bypasses tenant scoping is greppable by design:
   `grep -rn "no-restricted-imports --" server/src` lists every such import with
   its stated reason.
@@ -165,5 +198,7 @@ export DATABASE_URL='postgres://nestled:nestled@localhost:5546/nestled_test'
 export JWT_ACCESS_SECRET=test-secret-min-16-chars JWT_REFRESH_SECRET=test-secret-min-16-chars
 export NODE_ENV=test
 npx prisma migrate deploy
-npm test        # 75 tests, serial (they share one database)
+npm test        # 200 tests, serial (they share one database)
 ```
+
+From the repo root: `npm run typecheck && npx eslint . && npm run build`.
