@@ -1,142 +1,168 @@
-export interface Conversation {
-  id: string;
-  visitor_id: string;
-  visitor_name: string | null;
-  visitor_email: string | null;
-  status: 'active' | 'resolved' | 'waiting';
-  created_at: string;
-  updated_at: string;
-  metadata: Record<string, unknown>;
-  message_count: number;
-  ai_greeted: boolean;
-}
+/**
+ * Wire types for the visitor-facing chat plane.
+ *
+ * These mirror what `server/src/routes/v1/widget.ts` actually sends. They are
+ * type-only (erased at build time), so the widget pays nothing for importing
+ * them from outside its own directory.
+ *
+ * Everything the visitor can see is DESCRIBED here rather than interpreted: the
+ * widget renders a `ContextCard` or a `BotStep` exactly as handed to it and has
+ * no opinion about what an order, a ticket or a bot flow is. That is the whole
+ * reason those two shapes are presentation payloads and not domain objects.
+ */
 
-export interface Message {
+export type SenderType = 'visitor' | 'agent' | 'ai' | 'bot' | 'system';
+
+export interface ChatMessage {
   id: string;
   conversation_id: string;
   content: string;
-  sender_type: 'visitor' | 'agent' | 'ai';
-  sender_id: string | null;
-  created_at: string;
-  metadata: Record<string, unknown>;
-}
-
-export interface KnowledgeBaseItem {
-  id: string;
-  question: string;
-  answer: string;
-  category: string;
-  keywords: string[];
-  priority: number;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Agent {
-  id: string;
-  name: string;
-  email: string;
-  avatar_url: string | null;
-  is_online: boolean;
-  last_seen: string;
+  sender_type: SenderType;
+  sender_member_id: string | null;
+  metadata: MessageMetadata;
   created_at: string;
 }
 
-export interface PreChatField {
+export interface MessageMetadata {
+  agent?: { name?: string | null; avatar_url?: string | null };
+  /** Server-rendered presentation payload — see ContextCard. */
+  context_card?: ContextCard;
+  /**
+   * Bot runtime hint. The flow itself executes server-side; this is only the
+   * shape of the next thing to draw. Both spellings are accepted because the
+   * runtime is being written in parallel — see BotStep.tsx.
+   */
+  bot_step?: BotStep;
+  'bot:step'?: BotStep;
+  [key: string]: unknown;
+}
+
+// ── Boot ────────────────────────────────────────────────────────────────────
+
+export interface BootTheme {
+  primary_color: string;
+  color_mode: 'light' | 'dark' | 'auto';
+  radius_px: number;
+  font_family: string;
+  position: 'left' | 'right';
+  offset_x: number;
+  offset_y: number;
+  launcher_style: 'bubble' | 'pill' | 'custom_icon';
+  show_branding: boolean;
+}
+
+export interface FormField {
   name: string;
   label: string;
-  type: 'text' | 'email' | 'tel';
-  required: boolean;
-  placeholder: string;
+  type?: 'text' | 'email' | 'tel' | 'textarea';
+  required?: boolean;
+  placeholder?: string;
 }
 
-export interface ChatSettings {
-  id: string;
-  widget_title: string;
-  welcome_message: string;
+export interface BootBehavior {
   ai_enabled: boolean;
-  primary_color: string;
-  ai_provider: 'knowledge_base' | 'openai' | 'ollama';
-  openai_api_key: string | null;
-  openai_model: string;
-  ollama_url: string | null;
-  ollama_model: string;
-  system_prompt: string;
   pre_chat_enabled: boolean;
-  pre_chat_fields: PreChatField[];
-  widget_position: 'left' | 'right';
-  widget_avatar_url: string | null;
-  ai_response_mode: 'always' | 'first_message' | 'off';
-  notification_sound_enabled: boolean;
+  pre_chat_fields: FormField[];
   auto_welcome_enabled: boolean;
   auto_welcome_message: string | null;
   auto_welcome_delay: number;
-  discord_webhook_url: string | null;
-  discord_webhook_enabled: boolean;
-  discord_notify_new_chat: boolean;
-  discord_notify_new_message: boolean;
-  created_at: string;
-  updated_at: string;
+  file_upload_enabled: boolean;
+  sound_enabled: boolean;
+  reset_after_resolve: boolean;
+  rating_tags: string[];
+}
+
+export interface Starter {
+  id: string;
+  label: string;
+  message: string | null;
+  kind: 'auto' | 'human' | 'bot';
+  fields: FormField[];
+  icon: string | null;
+}
+
+export interface Availability {
+  online: boolean;
+  within_hours: boolean;
+  offline_behavior: string;
+}
+
+export interface BootPayload {
+  enabled: boolean;
+  authorized?: boolean;
+  website?: { id: string; name: string };
+  theme?: BootTheme;
+  copy?: Record<string, string>;
+  behavior?: BootBehavior;
+  starters?: Starter[];
+  triggers?: Trigger[];
+  availability?: Availability;
+  /**
+   * Reserved. The server does not send this yet — see the ContextCard note in
+   * ContextCard.tsx. Typed now so adding it server-side needs no client change.
+   */
+  context_card?: ContextCard;
+}
+
+// ── Presentation payloads the widget renders without interpreting ───────────
+
+export interface ContextCard {
+  title?: string;
+  subtitle?: string;
+  badge?: { label: string; tone?: 'neutral' | 'positive' | 'warning' | 'danger' };
+  fields?: { label: string; value: string }[];
+  progress?: { steps: string[]; current: number };
+  actions?: { label: string; url: string }[];
+}
+
+export interface BotStep {
+  /** Echoed back with the answer so the server can correlate it to a node. */
+  id?: string;
+  prompt?: string;
+  choices?: { value: string; label: string }[];
+  fields?: FormField[];
+  submit_label?: string;
+}
+
+// ── Triggers ────────────────────────────────────────────────────────────────
+// Stored as four jsonb columns, so every member is optional on the wire.
+
+export interface TriggerAction {
+  show_message?: boolean;
+  message_content?: string | null;
+  open_chatbox?: boolean;
+  play_sound?: boolean;
+}
+
+export interface TriggerEvent {
+  on_leave_intent?: boolean;
+  on_click_link?: boolean;
+  click_selectors?: string[];
+  on_pages?: boolean;
+  page_urls?: string[];
+  on_url_parameters?: boolean;
+  url_parameters?: Record<string, string>;
+  after_delay?: boolean;
+  delay_seconds?: number;
+}
+
+export interface TriggerBehavior {
+  execute_if_online?: boolean;
+  execute_on_first_visit?: boolean;
+  execute_if_no_other_trigger?: boolean;
+  country_restriction?: string[];
+}
+
+export interface TriggerPlatform {
+  desktop_enabled?: boolean;
+  mobile_enabled?: boolean;
 }
 
 export interface Trigger {
   id: string;
-  name: string;
   identifier: string;
-  is_active: boolean;
-  priority: number;
-  fire_count?: number;
-  conversation_count?: number;
-  created_at: string;
-  updated_at: string;
-  actions?: TriggerAction;
-  events?: TriggerEvent;
-  behaviors?: TriggerBehavior;
-  platforms?: TriggerPlatform;
-}
-
-export interface TriggerAction {
-  id: string;
-  trigger_id: string;
-  show_message: boolean;
-  message_content: string | null;
-  localized_messages: Record<string, string>;
-  open_chatbox: boolean;
-  play_sound: boolean;
-  created_at: string;
-}
-
-export interface TriggerEvent {
-  id: string;
-  trigger_id: string;
-  on_leave_intent: boolean;
-  on_click_link: boolean;
-  click_selectors: string[];
-  on_pages: boolean;
-  page_urls: string[];
-  on_url_parameters: boolean;
-  url_parameters: Record<string, string>;
-  after_delay: boolean;
-  delay_seconds: number;
-  created_at: string;
-}
-
-export interface TriggerBehavior {
-  id: string;
-  trigger_id: string;
-  show_as_website: boolean;
-  execute_if_online: boolean;
-  execute_on_first_visit: boolean;
-  execute_if_no_other_trigger: boolean;
-  country_restriction: string[];
-  created_at: string;
-}
-
-export interface TriggerPlatform {
-  id: string;
-  trigger_id: string;
-  desktop_enabled: boolean;
-  mobile_enabled: boolean;
-  created_at: string;
+  actions?: TriggerAction | null;
+  events?: TriggerEvent | null;
+  behaviors?: TriggerBehavior | null;
+  platforms?: TriggerPlatform | null;
 }
