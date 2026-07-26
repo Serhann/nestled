@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 // eslint-disable-next-line no-restricted-imports -- workspace creation + plan catalog
 import { unscopedPrisma } from '../../db/unscoped.js';
 import { requireAuth, requireWorkspace, can, invalidateWorkspaceCache } from '../../plugins/auth.js';
-import { parseBody } from '../../lib/validate.js';
+import { parseBody, parsePatch } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
 import { uniqueSlug, slugIsValid } from '../../lib/slug.js';
 
@@ -251,7 +251,7 @@ export async function workspaceV1Routes(app: FastifyInstance): Promise<void> {
     { preHandler: [requireWorkspace, can('website_settings:update')] },
     async (req, reply) => {
       const { websiteId } = req.params as { websiteId: string };
-      const body = parseBody(websiteBody.partial(), req.body, reply);
+      const body = parsePatch(websiteBody, req.body, reply);
       if (!body) return;
 
       // P2025 when the id belongs to another tenant — the scoped client added the

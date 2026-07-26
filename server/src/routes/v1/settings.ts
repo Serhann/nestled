@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireWorkspace, can, canOnWebsite } from '../../plugins/auth.js';
 import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
-import { COPY_KEYS } from '../../lib/widgetCopy.js';
+import { COPY_KEYS, DEFAULT_COPY } from '../../lib/widgetCopy.js';
 import { generateOpaqueToken } from '../../auth/tokens.js';
 // Plan gating reads the shared plan catalog.
 // eslint-disable-next-line no-restricted-imports -- shared plan catalog
@@ -123,6 +123,11 @@ export async function settingsV1Routes(app: FastifyInstance): Promise<void> {
         website: { ...website, identity_secret: undefined, has_identity_secret: Boolean(website.identity_secret) },
         settings,
         hours,
+        // The defaults the stored overrides sit on top of. Sent so the copy editor
+        // can show each default as a placeholder without shipping a second copy of
+        // this table to the client, which would drift the first time one is
+        // reworded.
+        copy_defaults: DEFAULT_COPY,
         // The client renders a locked control rather than hiding the feature —
         // hiding it sells nothing.
         plan_features: { remove_branding: plan.allow_remove_branding, live_view: plan.allow_live_view },

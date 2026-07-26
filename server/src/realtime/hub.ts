@@ -29,7 +29,12 @@ export type RealtimeEvent =
   | { type: 'agent:status'; online: boolean }
   | { type: 'agent:joined'; conversationId: string; agentName: string | null }
   | { type: 'conversation:resolved'; conversationId: string }
-  | { type: 'website:install_progress'; websiteId: string; phase: string; host?: string };
+  | { type: 'website:install_progress'; websiteId: string; phase: string; host?: string }
+  // Control frames for the catch-up protocol. `hello` gives a reconnecting client
+  // the current cursor; `resync` says the gap is too large to replay and the
+  // client should refetch rather than assume it missed nothing.
+  | { type: 'hello'; seq: number }
+  | { type: 'resync' };
 
 interface AgentSocketState {
   memberId: string;
@@ -53,7 +58,14 @@ function setMemberOnline(memberId: string, online: boolean): void {
     .catch(() => undefined);
 }
 
-function send(ws: WebSocket, event: RealtimeEvent): void {
+/**
+ * Events on the wire carry a sequence number the type union does not name, so
+ * that adding the catch-up protocol did not mean threading `seq` through every
+ * publisher. Only this file stamps it.
+ */
+type Envelope = RealtimeEvent & { seq?: number };
+
+function send(ws: WebSocket, event: Envelope): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(event));
 }
 
@@ -97,6 +109,10 @@ export function registerAgentSocket(
   // First agent online in THIS workspace → tell that workspace's visitors only.
   if (wasWorkspaceOffline) publishToWorkspaceVisitors(workspaceId, { type: 'agent:status', online: true });
 
+  // Hand the client the current cursor. A fresh tab records it and moves on; a
+  // reconnecting one replies with `resume` and gets the gap filled.
+  send(ws, { type: 'hello', seq: sequence });
+
   ws.on('message', (raw: unknown) => {
     try {
       const msg = JSON.parse(String(raw)) as {
@@ -104,11 +120,18 @@ export function registerAgentSocket(
         conversationId?: string;
         visitorId?: string;
         websiteId?: string;
+        since?: number;
         assist?: Record<string, unknown>;
       };
       const state = sockets.get(ws);
       if (!state) return;
-      if (msg.type === 'view' && typeof msg.conversationId === 'string') {
+      if (msg.type === 'resume' && typeof msg.since === 'number') {
+        // The client is back and says where it left off. Either we can still fill
+        // the gap from the buffer, or we say so — never a silent partial catch-up.
+        if (!replaySince(ws, workspaceId, msg.since, state.websiteIds)) {
+          send(ws, { type: 'resync' });
+        }
+      } else if (msg.type === 'view' && typeof msg.conversationId === 'string') {
         state.viewing = msg.conversationId;
       } else if (msg.type === 'unview') {
         state.viewing = null;
@@ -194,6 +217,63 @@ export function membersViewing(workspaceId: string, conversationId: string): Set
 }
 
 /**
+ * Per-workspace event log, so a reconnecting agent can catch up.
+ *
+ * A dropped socket is normal — a laptop lid, a tunnel, a proxy idle timeout. What
+ * is NOT acceptable is the agent coming back and silently missing the messages
+ * that arrived while they were gone; they would answer a customer who had already
+ * asked twice. So every event carries a monotonic `seq`, and reconnects ask for
+ * everything after the last one they saw.
+ *
+ * The buffer is small and bounded on purpose. It is a catch-up window, not
+ * durable history: if a socket was away longer than the window, the honest answer
+ * is `resync`, which tells the client to refetch rather than to believe a gap it
+ * cannot see. Sizing it to cover a minute or two of a busy workspace is the whole
+ * requirement; anything larger is a memory leak pretending to be reliability.
+ */
+const BUFFER_SIZE = 250;
+
+interface Buffered {
+  seq: number;
+  event: RealtimeEvent;
+  /** Whose grants may see it; undefined means every member of the workspace. */
+  websiteId?: string;
+}
+
+const eventLog = new Map<string, Buffered[]>();
+let sequence = 0;
+
+/** Events a member is allowed to see, given their website grants. */
+function visibleTo(entry: Buffered, websiteIds: string[] | null): boolean {
+  return !entry.websiteId || !websiteIds || websiteIds.includes(entry.websiteId);
+}
+
+/**
+ * Replay everything after `since` to one socket, or tell it to resync.
+ *
+ * Returns false when the requested point has already fallen out of the window —
+ * the caller then sends `resync` rather than a partial, misleading replay.
+ */
+function replaySince(
+  ws: WebSocket,
+  workspaceId: string,
+  since: number,
+  websiteIds: string[] | null,
+): boolean {
+  const log = eventLog.get(workspaceId) ?? [];
+  if (log.length === 0) return since <= sequence;
+  // The oldest entry we still hold. If the client's cursor predates it, there is a
+  // hole we cannot fill.
+  if (since < log[0]!.seq - 1) return false;
+  for (const entry of log) {
+    if (entry.seq <= since) continue;
+    if (!visibleTo(entry, websiteIds)) continue;
+    send(ws, { ...entry.event, seq: entry.seq });
+  }
+  return true;
+}
+
+/**
  * Fan out to a workspace's agents. When `websiteId` is given, sockets whose member
  * is not granted that website are skipped — so per-website narrowing holds here
  * too, not only in REST responses.
@@ -203,9 +283,20 @@ export function publishToWorkspace(
   event: RealtimeEvent,
   opts: { websiteId?: string } = {},
 ): void {
+  const seq = ++sequence;
+  const stamped: Envelope = { ...event, seq };
+
+  let log = eventLog.get(workspaceId);
+  if (!log) {
+    log = [];
+    eventLog.set(workspaceId, log);
+  }
+  log.push({ seq, event, websiteId: opts.websiteId });
+  if (log.length > BUFFER_SIZE) log.splice(0, log.length - BUFFER_SIZE);
+
   for (const [ws, state] of agentSockets.get(workspaceId) ?? []) {
     if (opts.websiteId && state.websiteIds && !state.websiteIds.includes(opts.websiteId)) continue;
-    send(ws, event);
+    send(ws, stamped);
   }
 }
 

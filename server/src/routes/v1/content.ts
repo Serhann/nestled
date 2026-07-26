@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { requireWorkspace, can } from '../../plugins/auth.js';
-import { parseBody } from '../../lib/validate.js';
+import { parseBody, parsePatch } from '../../lib/validate.js';
 // Plan limits are read from the shared plan catalog, which is reference data.
 // eslint-disable-next-line no-restricted-imports -- shared plan catalog
 import { unscopedPrisma } from '../../db/unscoped.js';
@@ -122,7 +122,7 @@ export async function contentV1Routes(app: FastifyInstance): Promise<void> {
     { preHandler: [requireWorkspace, can('kb:write')] },
     async (req, reply) => {
       const { id } = req.params as { id: string };
-      const body = parseBody(kbBody.partial(), req.body, reply);
+      const body = parsePatch(kbBody, req.body, reply);
       if (!body) return;
       if (!(await validScope(req, body.website_id))) {
         return reply.code(404).send({ error: 'Not found' });
@@ -187,7 +187,7 @@ export async function contentV1Routes(app: FastifyInstance): Promise<void> {
     { preHandler: [requireWorkspace, can('canned:write')] },
     async (req, reply) => {
       const { id } = req.params as { id: string };
-      const body = parseBody(cannedBody.partial(), req.body, reply);
+      const body = parsePatch(cannedBody, req.body, reply);
       if (!body) return;
       try {
         const item = await req.db.canned_responses.update({ where: { id }, data: body as never });
@@ -252,7 +252,7 @@ export async function contentV1Routes(app: FastifyInstance): Promise<void> {
     { preHandler: [requireWorkspace, can('starter:write')] },
     async (req, reply) => {
       const { id } = req.params as { id: string };
-      const body = parseBody(starterBody.partial(), req.body, reply);
+      const body = parsePatch(starterBody, req.body, reply);
       if (!body) return;
       try {
         const item = await req.db.starters.update({ where: { id }, data: body as never });
