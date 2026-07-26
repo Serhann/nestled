@@ -8,6 +8,8 @@ import { prisma } from './db/prisma.js';
 import { runMigrations } from './db/migrate.js';
 import { ensureSeedAdmin } from './db/seedAdmin.js';
 import { startRetentionJob } from './lib/retention.js';
+import { assertTenantModelsRegistered } from './db/tenant.js';
+import { registerAuthPlugin } from './plugins/auth.js';
 import { registerRealtime } from './realtime/gateway.js';
 import { authRoutes } from './routes/auth.js';
 import { widgetRoutes } from './routes/widget.js';
@@ -78,6 +80,10 @@ export async function buildServer() {
     });
   });
 
+  // Decorates req.db so that reading it without a tenant scope throws, rather
+  // than a route silently querying across customers. Must precede every route.
+  await app.register(registerAuthPlugin);
+
   // Realtime (WS) and REST routes.
   await app.register(registerRealtime);
   await app.register(authRoutes);
@@ -98,6 +104,12 @@ export async function buildServer() {
 }
 
 async function main() {
+  // Refuse to start if any model carrying workspace_id is missing from
+  // TENANT_MODELS. That registry is what makes db/tenant.ts inject scoping, so an
+  // unregistered tenant table would run UNSCOPED and leak across customers. A
+  // failed boot is the only acceptable outcome; there is no safe degraded mode.
+  assertTenantModelsRegistered();
+
   // Migrations run automatically on boot (idempotent).
   await runMigrations();
   // Optionally seed the first admin from SEED_ADMIN_* (no-op once one exists).
