@@ -19,6 +19,8 @@ import { sendEmail } from '../../services/email.js';
 import { anyAgentOnline, publishToWorkspace, rememberConversationOwner } from '../../realtime/hub.js';
 import { attachConversationToVisitor } from '../../realtime/presence.js';
 import { maybeAIReply } from '../../services/ai/reply.js';
+import { advanceBotRun, startBotRun } from '../../services/bot/engine.js';
+import { routeConversation } from '../../services/routing.js';
 import { notifyNewChat, notifyNewMessage } from '../../services/discord.js';
 import { pushNewConversation, pushVisitorMessage } from '../../services/push.js';
 import { DEFAULT_COPY } from '../../lib/widgetCopy.js';
@@ -261,7 +263,15 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
               icon: s.icon,
             }))
           : [],
-        triggers,
+        // `start_bot` names a flow, and which flow runs is a server decision: the
+        // widget is told only THAT this trigger opens a chat, so it knows to create
+        // a conversation rather than paint a bubble. The trigger id it sends back is
+        // what the server resolves to a flow.
+        triggers: triggers.map((t) => {
+          const actions = (t.actions ?? {}) as Record<string, unknown>;
+          const { start_bot, ...rest } = actions;
+          return { ...t, actions: { ...rest, starts_bot: Boolean(start_bot) } };
+        }),
         availability: { online, within_hours: withinHours, offline_behavior: hours?.offline_behavior ?? 'collect_email' },
       });
     },
@@ -317,6 +327,8 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
           visitor_email: z.string().email().max(200).optional(),
           fingerprint: z.string().max(128).optional(),
           context_token: z.string().max(8000).optional(),
+          /** The `starters.key` the visitor picked, if any. Can select a bot flow. */
+          starter_key: z.string().max(40).optional(),
           metadata: z.record(z.string(), z.unknown()).optional(),
         }),
         req.body,
@@ -409,14 +421,55 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
       );
       attachConversationToVisitor(websiteId, visitorId, conv.id);
 
-      const triggerId = body.metadata?.trigger_id;
-      if (typeof triggerId === 'string') {
+      const triggerId = typeof body.metadata?.trigger_id === 'string' ? body.metadata.trigger_id : null;
+      let triggerFlowId: string | null = null;
+      if (triggerId) {
+        const trigger = await unscopedPrisma.triggers.findFirst({
+          where: { id: triggerId, workspace_id: workspaceId },
+          select: { actions: true },
+        });
+        const startBot = (trigger?.actions as { start_bot?: unknown } | null)?.start_bot;
+        triggerFlowId = typeof startBot === 'string' ? startBot : null;
         void unscopedPrisma.triggers
           .updateMany({
             where: { id: triggerId, workspace_id: workspaceId },
             data: { conversation_count: { increment: 1 } },
           })
           .catch(() => undefined);
+      }
+
+      /**
+       * Automation, AWAITED.
+       *
+       * Both of these are one or two indexed queries when the workspace has no
+       * flows and no rules, and awaiting them buys something worth more than those
+       * milliseconds: the conversation the widget then fetches already contains the
+       * bot's greeting and already names its assignee. Fired and forgotten, the
+       * visitor gets an empty thread that fills in a moment later, which reads as a
+       * bug rather than as a fast response.
+       */
+      const currentPage = typeof body.metadata?.current_page === 'string' ? body.metadata.current_page : null;
+      const botRunId = await startBotRun({
+        workspaceId,
+        websiteId,
+        conversationId: conv.id,
+        page: currentPage,
+        starterKey: body.starter_key ?? null,
+        flowId: triggerFlowId,
+      });
+      // A running flow OWNS the conversation until it hands off. Assigning a human up
+      // front would put an agent's name on a chat the bot is still conducting, and
+      // would silence the flow's own handoff — which is the step that decides, with
+      // the collected answers in hand, who should actually get it.
+      if (!botRunId) {
+        await routeConversation({
+          workspaceId,
+          websiteId,
+          conversationId: conv.id,
+          page: currentPage,
+          countryCode: geo?.country_code ?? null,
+          attributes: (verified?.attributes ?? {}) as Record<string, unknown>,
+        });
       }
 
       void notifyNewChat(workspaceId, conv.id);
@@ -543,7 +596,19 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
 
       void notifyNewMessage(conv.workspace_id, id, body.content, 'visitor');
       void pushVisitorMessage(conv.workspace_id, conv.website_id, id, conv.visitor_name, body.content);
-      void maybeAIReply(conv.workspace_id, conv.website_id, id);
+
+      // A running flow gets the message first, and consuming it keeps the plain AI
+      // auto-reply out of the way — two assistants answering the same question is
+      // worse than either of them alone. maybeAIReply re-checks this itself; the
+      // await here is what makes the ORDER deterministic rather than a race between
+      // two fire-and-forget calls.
+      const handledByBot = await advanceBotRun({
+        workspaceId: conv.workspace_id,
+        websiteId: conv.website_id,
+        conversationId: id,
+        input: body.content,
+      });
+      if (!handledByBot) void maybeAIReply(conv.workspace_id, conv.website_id, id);
 
       return reply.code(201).send({ message });
     },

@@ -7,6 +7,7 @@ import { anyAgentOnline, publishToWorkspace } from '../../realtime/hub.js';
 import { pushHandoff } from '../push.js';
 import { bumpUsage, checkUsageLimit } from '../../lib/usage.js';
 import { generateAIReply, summarizeConversation } from './index.js';
+import { hasActiveBotRun } from '../bot/engine.js';
 
 /**
  * Decide whether the AI should answer this visitor message, then post it.
@@ -42,6 +43,12 @@ export async function maybeAIReply(
       select: { ai_greeted: true, needs_human: true, assigned_member_id: true },
     });
     if (!conv || conv.needs_human || conv.assigned_member_id) return;
+
+    // A bot flow OUTRANKS the plain auto-reply. The flow is a script the customer
+    // wrote and can predict; the auto-reply is a model improvising. When both could
+    // speak, the customer's script wins — and the flow's own `ai_answer` node is how
+    // they opt back into the model at a point of their choosing.
+    if (await hasActiveBotRun(workspaceId, conversationId)) return;
 
     const agentReplied = await unscopedPrisma.messages.findFirst({
       where: { conversation_id: conversationId, sender_type: 'agent' },

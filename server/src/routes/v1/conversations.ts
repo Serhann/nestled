@@ -4,6 +4,7 @@ import { requireWorkspace, can } from '../../plugins/auth.js';
 import { parseBody } from '../../lib/validate.js';
 import { insertMessage } from '../../lib/messages.js';
 import { publishToWorkspace, sendToConversationVisitors } from '../../realtime/hub.js';
+import { publishAssignment } from '../../services/routing.js';
 import { getPersonProfile } from '../../services/identity.js';
 import { translateText } from '../../services/ai/index.js';
 import { notifyNewMessage } from '../../services/discord.js';
@@ -241,24 +242,11 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
             status: true,
           },
         });
-        publishToWorkspace(
-          updated.workspace_id,
-          { type: 'conversation:updated', conversation: updated },
-          { websiteId: updated.website_id },
-        );
-        // Release the widget's "waiting for an agent" hold as soon as someone
-        // claims the chat, before they have typed anything.
-        if (body.member_id) {
-          const member = await req.db.workspace_members.findUnique({
-            where: { id: body.member_id },
-            select: { user: { select: { name: true } } },
-          });
-          sendToConversationVisitors(id, {
-            type: 'agent:joined',
-            conversationId: id,
-            agentName: member?.user.name ?? null,
-          });
-        }
+        // The one notification path for "this conversation now belongs to someone",
+        // shared with the routing rules and the bot's handoff node. Three call sites
+        // producing three slightly different events is how a widget ends up still
+        // showing "waiting for an agent" after one of them.
+        await publishAssignment(updated);
         await audit(req, { action: 'conversation.assigned', targetType: 'conversation', targetId: id });
         return reply.send({ conversation: updated });
       } catch (err) {
