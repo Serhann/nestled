@@ -1,6 +1,9 @@
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { prisma } from '../db/prisma.js';
+// The signing secret is looked up for a website resolved from a signed session,
+// before any request-scoped client exists.
+// eslint-disable-next-line no-restricted-imports -- resolves a secret pre-scope
+import { unscopedPrisma as prisma } from '../db/unscoped.js';
 
 /**
  * Signed visitor attributes (server-pull + client-hint hybrid).
@@ -71,14 +74,23 @@ export type VerifiedContext = z.infer<typeof contextSchema>;
 /** Longest lifetime we accept on a signed token. A long-lived token is a durable forgery target. */
 const MAX_TOKEN_LIFETIME_SECONDS = 24 * 60 * 60;
 
-/** The per-site HMAC secret for a given site key, or null if unset. */
-export async function siteContextSecret(siteKey: string | null | undefined): Promise<string | null> {
-  if (!siteKey) return null;
-  const site = await prisma.sites.findUnique({
-    where: { key: siteKey },
-    select: { context_secret: true },
+/**
+ * The HMAC secret for a website, or null when signing is not configured.
+ *
+ * Keyed by the internal website id, which the caller obtained from a SIGNED widget
+ * session — not from a client-supplied site key. That is what guarantees a token is
+ * always checked against the secret of the website it was actually issued for; the
+ * old lookup keyed on a `mode` string the browser sent us.
+ */
+export async function websiteIdentitySecret(
+  websiteId: string | null | undefined,
+): Promise<string | null> {
+  if (!websiteId) return null;
+  const site = await prisma.websites.findUnique({
+    where: { id: websiteId },
+    select: { identity_secret: true },
   });
-  return site?.context_secret || null;
+  return site?.identity_secret || null;
 }
 
 /**
@@ -88,15 +100,15 @@ export async function siteContextSecret(siteKey: string | null | undefined): Pro
  * "no trusted context" and fall back to unsigned client hints for display only.
  */
 export async function verifyContextToken(
-  siteKey: string | null | undefined,
+  websiteId: string | null | undefined,
   token: string | null | undefined,
 ): Promise<VerifiedContext | null> {
   if (!token) return null; // no token supplied — normal, stay quiet
-  const secret = await siteContextSecret(siteKey);
+  const secret = await websiteIdentitySecret(websiteId);
   if (!secret) {
     // A token WAS sent but we can't check it — almost always a misconfig.
     console.warn(
-      `[context] token received for site "${siteKey ?? '(none)'}" but that site has no context_secret set (or no matching site row).`,
+      `[context] token received for website "${websiteId ?? '(none)'}" but that site has no context_secret set (or no matching site row).`,
     );
     return null;
   }
@@ -111,13 +123,13 @@ export async function verifyContextToken(
     // never expires — that is the failure we care about.
     const exp = typeof claims.exp === 'number' ? claims.exp : null;
     if (exp === null) {
-      console.warn(`[context] token for site "${siteKey}" rejected — no exp claim`);
+      console.warn(`[context] token for website "${websiteId}" rejected — no exp claim`);
       return null;
     }
     const iat = typeof claims.iat === 'number' ? claims.iat : null;
     if (iat !== null && exp - iat > MAX_TOKEN_LIFETIME_SECONDS) {
       console.warn(
-        `[context] token for site "${siteKey}" rejected — lifetime ${exp - iat}s exceeds the ${MAX_TOKEN_LIFETIME_SECONDS}s cap`,
+        `[context] token for website "${websiteId}" rejected — lifetime ${exp - iat}s exceeds the ${MAX_TOKEN_LIFETIME_SECONDS}s cap`,
       );
       return null;
     }
@@ -128,7 +140,7 @@ export async function verifyContextToken(
     const parsed = contextSchema.safeParse(rest);
     if (!parsed.success) {
       console.warn(
-        `[context] token for site "${siteKey}" verified but payload shape is invalid:`,
+        `[context] token for website "${websiteId}" verified but payload shape is invalid:`,
         parsed.error.issues.map((i) => i.path.join('.') || '(root)').join(', '),
       );
       return null;
@@ -143,7 +155,7 @@ export async function verifyContextToken(
         : name === 'JsonWebTokenError'
           ? `bad signature (secret mismatch?): ${(err as Error).message}`
           : (err as Error).message;
-    console.warn(`[context] token for site "${siteKey}" rejected — ${reason}`);
+    console.warn(`[context] token for website "${websiteId}" rejected — ${reason}`);
     return null;
   }
 }

@@ -1,5 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { prisma } from '../../db/prisma.js';
+// AI config, the knowledge base and transcripts are read for a workspace the
+// caller resolved from a signed session or an authenticated membership.
+// eslint-disable-next-line no-restricted-imports -- reads for a caller-supplied workspace
+import { unscopedPrisma as prisma } from '../../db/unscoped.js';
+import { env } from '../../env.js';
+import { bumpUsage } from '../../lib/usage.js';
 import type { AIProvider, AISettings, KnowledgeItem } from './types.js';
 import type { VerifiedContext } from '../verifiedAttributes.js';
 import {
@@ -23,31 +28,39 @@ export interface AIReplyResult {
   needsHuman: boolean;
 }
 
-async function loadSettings(): Promise<AISettings | null> {
-  const row = await prisma.private_settings.findUnique({
-    where: { id: 1 },
-    select: {
-      ai_provider: true,
-      ai_model: true,
-      system_prompt: true,
-      anthropic_api_key: true,
-      openai_api_key: true,
-      openai_model: true,
-      ollama_url: true,
-      ollama_model: true,
-    },
-  });
-  return (row as AISettings | null) ?? null;
+/**
+ * AI provider configuration is PLATFORM-level, not per customer.
+ *
+ * AI is our infrastructure: metered per workspace against the plan and billed to
+ * us. A customer-supplied API key would be a support liability (their key, their
+ * rate limits, their outage, our bug report) and an extra secret to protect, for no
+ * gain to them. The only per-website AI settings are the prompt and reply mode.
+ */
+function platformAISettings(systemPrompt: string): AISettings {
+  return {
+    ai_provider: env.AI_PROVIDER,
+    ai_model: env.AI_MODEL,
+    system_prompt: systemPrompt,
+    anthropic_api_key: env.ANTHROPIC_API_KEY ?? null,
+    openai_api_key: env.OPENAI_API_KEY ?? null,
+    openai_model: 'gpt-4o-mini',
+    ollama_url: env.OLLAMA_URL ?? null,
+    ollama_model: 'llama3',
+  };
 }
 
-async function loadKnowledge(siteKey?: string): Promise<KnowledgeItem[]> {
-  // Site scoping: an entry with an empty `sites` applies everywhere; otherwise
-  // only when it lists the conversation's site.
-  const where = siteKey
-    ? { is_active: true, OR: [{ sites: { isEmpty: true } }, { sites: { has: siteKey } }] }
-    : { is_active: true };
+/**
+ * Knowledge for one website: its own entries plus the workspace-wide ones
+ * (`website_id IS NULL`). Both filters are required — workspace alone would leak a
+ * sibling website's answers, website alone would hide the shared ones.
+ */
+async function loadKnowledge(workspaceId: string, websiteId: string): Promise<KnowledgeItem[]> {
   return prisma.knowledge_base.findMany({
-    where,
+    where: {
+      workspace_id: workspaceId,
+      is_active: true,
+      OR: [{ website_id: websiteId }, { website_id: null }],
+    },
     select: { question: true, answer: true, category: true, keywords: true, priority: true },
   });
 }
@@ -59,8 +72,7 @@ async function loadKnowledge(siteKey?: string): Promise<KnowledgeItem[]> {
  * callers degrade gracefully. Never throws.
  */
 async function complete(system: string, user: string, maxTokens = 500): Promise<string | null> {
-  const settings = await loadSettings();
-  if (!settings) return null;
+  const settings = platformAISettings('');
   const TIMEOUT = 20_000;
   try {
     if (settings.ai_provider === 'anthropic') {
@@ -133,9 +145,12 @@ async function complete(system: string, user: string, maxTokens = 500): Promise<
  * on what the customer wants + key details. Falls back to the last visitor
  * message when no LLM is available.
  */
-export async function summarizeConversation(conversationId: string): Promise<string | null> {
+export async function summarizeConversation(
+  workspaceId: string,
+  conversationId: string,
+): Promise<string | null> {
   const msgs = await prisma.messages.findMany({
-    where: { conversation_id: conversationId },
+    where: { workspace_id: workspaceId, conversation_id: conversationId },
     orderBy: { created_at: 'asc' },
     take: 40,
     select: { sender_type: true, content: true },
@@ -205,21 +220,24 @@ function renderVisitorContext(ctx: VerifiedContext | null): string {
   return `${header}\n${block}`;
 }
 
-/** Site key + verified host context for a conversation, from its metadata. */
+/**
+ * The HMAC-verified attributes for a conversation, read from the dedicated COLUMN
+ * rather than out of `metadata`. That split is the whole point: metadata holds
+ * anything the browser could have forged, and only this column is trusted enough to
+ * put in front of the model.
+ */
 async function conversationContext(
+  workspaceId: string,
   conversationId: string,
-): Promise<{ siteKey?: string; verified: VerifiedContext | null }> {
-  const conv = await prisma.conversations.findUnique({
-    where: { id: conversationId },
-    select: { metadata: true },
+): Promise<VerifiedContext | null> {
+  const conv = await prisma.conversations.findFirst({
+    where: { id: conversationId, workspace_id: workspaceId },
+    select: { custom_attributes: true },
   });
-  const meta = (conv?.metadata as Record<string, unknown> | null) ?? {};
-  const key = meta.widget_site;
-  const vc = meta.verified_context;
-  return {
-    siteKey: typeof key === 'string' ? key : undefined,
-    verified: vc && typeof vc === 'object' ? (vc as VerifiedContext) : null,
-  };
+  const attrs = (conv?.custom_attributes as Record<string, unknown> | null) ?? null;
+  if (!attrs || Object.keys(attrs).length === 0) return null;
+  const { customer, ...rest } = attrs as { customer?: VerifiedContext['customer'] };
+  return { customer, attributes: rest as VerifiedContext['attributes'] };
 }
 
 /**
@@ -229,25 +247,22 @@ async function conversationContext(
  * visitor never sees a raw error). The knowledge_base provider never errors.
  */
 export async function generateAIReply(
+  workspaceId: string,
+  websiteId: string,
   message: string,
   conversationId: string,
 ): Promise<AIReplyResult | null> {
-  const settings = await loadSettings();
-  if (!settings) return null;
+  const site = await prisma.website_settings.findUnique({
+    where: { website_id: websiteId },
+    select: { system_prompt: true, ai_extra_rules: true },
+  });
+  const settings = platformAISettings(
+    site?.system_prompt?.trim() ||
+      'You are a helpful customer support assistant for this business. Answer only questions about it and its products or services. If you do not know the answer, hand off to a human.',
+  );
 
-  const { siteKey, verified } = await conversationContext(conversationId);
-  // Per-site system prompt override (Site manager) — falls back to the global one.
-  if (siteKey) {
-    const site = await prisma.sites.findUnique({
-      where: { key: siteKey },
-      select: { is_active: true, system_prompt: true },
-    });
-    if (site?.is_active && site.system_prompt && site.system_prompt.trim()) {
-      settings.system_prompt = site.system_prompt;
-    }
-  }
-
-  const knowledge = await loadKnowledge(siteKey);
+  const verified = await conversationContext(workspaceId, conversationId);
+  const knowledge = await loadKnowledge(workspaceId, websiteId);
   const provider = providers[settings.ai_provider] ?? knowledgeBaseProvider;
 
   let result;
@@ -257,6 +272,9 @@ export async function generateAIReply(
       settings,
       knowledge,
       visitorContext: renderVisitorContext(verified),
+      // Customer-authored rules go in BEFORE the fixed contract (see prompt.ts), so
+      // they can never talk the model out of the handoff protocol.
+      extraRules: site?.ai_extra_rules ?? undefined,
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -265,9 +283,14 @@ export async function generateAIReply(
   }
 
   if (result.usage) {
+    // Two writes on purpose: ai_usage is the per-call ledger the ops panel reads,
+    // usage_counters is the aggregate the LIMITER reads. Deriving the limit from a
+    // COUNT over the ledger would get slower exactly as a customer grew.
     void prisma.ai_usage
       .create({
         data: {
+          workspace_id: workspaceId,
+          website_id: websiteId,
           conversation_id: conversationId,
           provider: settings.ai_provider,
           model: settings.ai_model,
@@ -276,6 +299,8 @@ export async function generateAIReply(
         },
       })
       .catch(() => undefined);
+    void bumpUsage(workspaceId, 'ai_tokens_in', result.usage.input);
+    void bumpUsage(workspaceId, 'ai_tokens_out', result.usage.output);
   }
 
   const needsHuman = result.text.includes(HANDOFF);

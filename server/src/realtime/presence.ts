@@ -1,71 +1,89 @@
 import type { WebSocket } from 'ws';
-import { broadcastToAgents } from './hub.js';
+import { publishToWorkspace } from './hub.js';
 import type { GeoLocation } from '../services/geo.js';
 import type { VerifiedContext } from '../services/verifiedAttributes.js';
 
 /**
- * Live visitor presence — everyone currently on the site, including anonymous
- * visitors who never opened the chat (Crisp's "see everyone right now"). This
- * is the anonymous, pre-conversation layer; the conversation realtime lives in
- * hub.ts. Kept in-memory with a TTL sweep; Phase 10 can add Postgres-backed
- * persistence if horizontal scaling is needed.
+ * Live visitor presence — everyone on a customer's site right now, including
+ * anonymous visitors who never opened the chat.
+ *
+ * Keyed by WEBSITE, not globally. Two consequences that matter:
+ *  - two customers can never collide on a visitor id (they are client-generated),
+ *  - the board a workspace sees can only ever contain its own visitors.
+ *
+ * In-memory with a TTL sweep. Single-replica, like the rest of the realtime plane
+ * (see bus.ts).
  */
 
 export interface PageVisit {
   url: string;
-  at: number; // epoch ms
+  at: number;
 }
 
 export interface PresenceEntry {
   visitorId: string;
+  workspaceId: string;
+  websiteId: string;
   url: string | null;
   referrer: string | null;
   utm: Record<string, string>;
   device: 'mobile' | 'desktop';
   screen: { w: number; h: number } | null;
   returning: boolean;
-  sessionStart: number; // epoch ms, from the client
+  sessionStart: number;
   pagesViewed: number;
-  pages: PageVisit[]; // recent page-visit history (bounded)
+  pages: PageVisit[];
   ip: string;
   geo: GeoLocation | null;
-  conversationId: string | null; // set if this visitor has an open conversation
-  siteKey: string | null; // which site this visitor is on; null until identified
-  name: string | null; // identified customer name (from verified host context)
-  email: string | null; // identified customer email (from verified host context)
-  // Client hints (display only) so the agent gets the same visitor card the
-  // conversation sidebar shows, before any chat exists.
+  conversationId: string | null;
+  name: string | null;
+  email: string | null;
   userAgent: string | null;
   language: string | null;
   timezone: string | null;
-  // Trusted host context (HMAC-verified) — the same shape the conversation
-  // metadata carries.
+  /** HMAC-verified host context. */
   context: VerifiedContext | null;
+  /** Unsigned host-supplied attributes — display only, never trusted. */
+  data: Record<string, string>;
   lastSeen: number;
 }
 
-const MAX_PAGES = 30; // keep the last N visited pages per visitor
+const MAX_PAGES = 30;
+const STALE_MS = 60_000;
 
 interface Tracked {
   entry: PresenceEntry;
   sockets: Set<WebSocket>;
 }
 
-const visitors = new Map<string, Tracked>();
-const STALE_MS = 60_000; // no heartbeat for 60s with no socket → drop
+/** websiteId -> visitorId -> tracked. */
+const byWebsite = new Map<string, Map<string, Tracked>>();
 
-// Coalesce rapid changes into one broadcast per tick.
-let broadcastQueued = false;
-function scheduleBroadcast(): void {
-  if (broadcastQueued) return;
-  broadcastQueued = true;
+function bucket(websiteId: string): Map<string, Tracked> {
+  let m = byWebsite.get(websiteId);
+  if (!m) {
+    m = new Map();
+    byWebsite.set(websiteId, m);
+  }
+  return m;
+}
+
+function find(websiteId: string, visitorId: string): Tracked | undefined {
+  return byWebsite.get(websiteId)?.get(visitorId);
+}
+
+// Coalesce rapid changes into one broadcast per tick, per workspace.
+const queued = new Set<string>();
+function scheduleBroadcast(workspaceId: string): void {
+  if (queued.has(workspaceId)) return;
+  queued.add(workspaceId);
   setTimeout(() => {
-    broadcastQueued = false;
-    broadcastToAgents({ type: 'presence:list', visitors: snapshot() });
+    queued.delete(workspaceId);
+    publishToWorkspace(workspaceId, { type: 'presence:list', visitors: snapshot(workspaceId) });
   }, 250);
 }
 
-interface HelloData {
+export interface HelloData {
   url?: string;
   referrer?: string;
   utm?: Record<string, string>;
@@ -73,41 +91,51 @@ interface HelloData {
   screen?: { w: number; h: number };
   returning?: boolean;
   sessionStart?: number;
-  site?: string;
   user_agent?: string;
   language?: string;
   timezone?: string;
 }
 
 /**
- * Record a page visit if the URL actually changed. Shared by the hello path
- * (full page loads — the only navigation signal on non-SPA host sites) and the
- * SPA `update` path. Returns true if a new page was recorded. Guards against
- * duplicates so a WS reconnect on the same page never inflates counts.
+ * Record a page visit if the URL actually changed. Shared by the hello path (full
+ * page loads — the only navigation signal on non-SPA host sites) and the SPA
+ * `update` path. Guards against duplicates so a WS reconnect on the same page
+ * never inflates the count.
  */
 function recordPageVisit(entry: PresenceEntry, url: string | null | undefined, now: number): boolean {
   if (!url || url === entry.url) return false;
   entry.url = url;
   entry.pagesViewed += 1;
   entry.pages.push({ url, at: now });
-  if (entry.pages.length > MAX_PAGES) entry.pages = entry.pages.slice(-MAX_PAGES);
+  if (entry.pages.length > MAX_PAGES) entry.pages.splice(0, entry.pages.length - MAX_PAGES);
   return true;
 }
 
+/**
+ * Attach a presence socket.
+ *
+ * `workspaceId`/`websiteId`/`visitorId` all come from the SIGNED widget session
+ * token verified in the gateway — never from a query string. That is the fix for
+ * the takeover described in gateway.ts.
+ */
 export function registerPresenceSocket(
   ws: WebSocket,
-  visitorId: string,
+  ids: { workspaceId: string; websiteId: string; visitorId: string },
   ip: string,
   geo: GeoLocation | null,
   hello: HelloData,
 ): void {
   const now = Date.now();
-  let tracked = visitors.get(visitorId);
+  const site = bucket(ids.websiteId);
+  let tracked = site.get(ids.visitorId);
+
   if (!tracked) {
     tracked = {
       sockets: new Set(),
       entry: {
-        visitorId,
+        visitorId: ids.visitorId,
+        workspaceId: ids.workspaceId,
+        websiteId: ids.websiteId,
         url: hello.url ?? null,
         referrer: hello.referrer ?? null,
         utm: hello.utm ?? {},
@@ -120,27 +148,20 @@ export function registerPresenceSocket(
         ip,
         geo,
         conversationId: null,
-        // No default site: guessing one attributes a visitor to a site they were
-        // never on. Phase 6 replaces this with the website id from the verified
-        // widget session token.
-        siteKey: hello.site ?? null,
         name: null,
         email: null,
         userAgent: hello.user_agent ?? null,
         language: hello.language ?? null,
         timezone: hello.timezone ?? null,
         context: null,
+        data: {},
         lastSeen: now,
       },
     };
-    visitors.set(visitorId, tracked);
+    site.set(ids.visitorId, tracked);
   } else {
-    // Reconnect / second tab / a NEW full-page load (non-SPA sites navigate by
-    // reloading, so each page arrives as a fresh hello) — refresh, keep counters,
-    // and record the new page if the URL changed.
     tracked.entry.ip = ip;
     if (geo) tracked.entry.geo = geo;
-    if (hello.site) tracked.entry.siteKey = hello.site;
     if (hello.screen) tracked.entry.screen = hello.screen;
     if (hello.user_agent) tracked.entry.userAgent = hello.user_agent;
     if (hello.language) tracked.entry.language = hello.language;
@@ -151,36 +172,36 @@ export function registerPresenceSocket(
   tracked.sockets.add(ws);
 
   ws.on('close', () => {
-    const t = visitors.get(visitorId);
+    const t = find(ids.websiteId, ids.visitorId);
     if (!t) return;
     t.sockets.delete(ws);
     t.entry.lastSeen = Date.now();
-    scheduleBroadcast();
+    scheduleBroadcast(ids.workspaceId);
   });
 
-  scheduleBroadcast();
+  scheduleBroadcast(ids.workspaceId);
 }
 
-/** Apply a client update (navigation / heartbeat). */
-export function updatePresence(visitorId: string, patch: Partial<HelloData>): void {
-  const t = visitors.get(visitorId);
+export function updatePresence(
+  websiteId: string,
+  visitorId: string,
+  patch: Partial<HelloData>,
+): void {
+  const t = find(websiteId, visitorId);
   if (!t) return;
   const now = Date.now();
   t.entry.lastSeen = now;
-  if (patch.url !== undefined) {
-    recordPageVisit(t.entry, patch.url, now);
-  }
+  if (patch.url !== undefined) recordPageVisit(t.entry, patch.url, now);
   if (patch.utm) t.entry.utm = patch.utm;
-  scheduleBroadcast();
+  scheduleBroadcast(t.entry.workspaceId);
 }
 
-/** Set the identified customer name/email on a present visitor (from verified
- *  host context) so the Live Visitors board shows who they are, not "anonymous". */
 export function setPresenceIdentity(
+  websiteId: string,
   visitorId: string,
   identity: { name?: string | null; email?: string | null },
 ): void {
-  const t = visitors.get(visitorId);
+  const t = find(websiteId, visitorId);
   if (!t) return;
   let changed = false;
   if (identity.name && identity.name !== t.entry.name) {
@@ -191,83 +212,128 @@ export function setPresenceIdentity(
     t.entry.email = identity.email;
     changed = true;
   }
-  if (changed) scheduleBroadcast();
+  if (changed) scheduleBroadcast(t.entry.workspaceId);
 }
 
-/** Store the HMAC-verified host context on a present visitor so the live-visitor
- *  card can show it without a conversation. */
-export function setPresenceContext(visitorId: string, context: VerifiedContext | null): void {
-  const t = visitors.get(visitorId);
+export function setPresenceContext(
+  websiteId: string,
+  visitorId: string,
+  context: VerifiedContext | null,
+): void {
+  const t = find(websiteId, visitorId);
   if (!t || !context) return;
   t.entry.context = context;
-  scheduleBroadcast();
+  scheduleBroadcast(t.entry.workspaceId);
 }
 
-/** Link a conversation to a present visitor (shows the green dot in the list). */
-export function attachConversationToVisitor(visitorId: string, conversationId: string): void {
-  const t = visitors.get(visitorId);
+/** Unsigned session attributes from Nestled('data', {...}). Display only. */
+export function setPresenceData(
+  websiteId: string,
+  visitorId: string,
+  attributes: Record<string, unknown>,
+): void {
+  const t = find(websiteId, visitorId);
+  if (!t) return;
+  for (const [k, v] of Object.entries(attributes)) {
+    if (v == null) delete t.entry.data[k];
+    else t.entry.data[k] = String(v).slice(0, 500);
+  }
+  scheduleBroadcast(t.entry.workspaceId);
+}
+
+export function attachConversationToVisitor(
+  websiteId: string,
+  visitorId: string,
+  conversationId: string,
+): void {
+  const t = find(websiteId, visitorId);
   if (!t) return;
   t.entry.conversationId = conversationId;
-  scheduleBroadcast();
+  scheduleBroadcast(t.entry.workspaceId);
 }
 
-/** Push a proactive "open the chat" event to a visitor's presence socket(s). */
+/**
+ * Push a proactive "an agent started a chat with you" frame.
+ *
+ * It carries a single-use CLAIM token, never the conversation's `visitor_token`.
+ * The old version put the visitor token on this wire, and because the presence
+ * socket was joinable with any guessed visitor id, anyone could open
+ * `/ws/presence?visitor_id=<victim>` and be handed full read/write access to that
+ * conversation. Two independent fixes now stand between that and a breach: the
+ * socket requires a signed session token (gateway.ts), and even a leaked frame is
+ * worthless without the victim's own token because the claim must be exchanged.
+ */
 export function sendProactiveToVisitor(
+  websiteId: string,
   visitorId: string,
-  payload: { conversation_id: string; visitor_token: string; message: string; agent_name: string },
+  payload: { conversation_id: string; claim_token: string; message: string; agent_name: string },
 ): boolean {
-  const t = visitors.get(visitorId);
+  const t = find(websiteId, visitorId);
   if (!t || t.sockets.size === 0) return false;
   const frame = JSON.stringify({ type: 'proactive', ...payload });
-  for (const ws of t.sockets) {
-    if (ws.readyState === ws.OPEN) ws.send(frame);
-  }
+  for (const ws of t.sockets) if (ws.readyState === ws.OPEN) ws.send(frame);
   return true;
 }
 
 /**
- * Relay a Live Assist frame (the agent's guiding pointer / click / banner) to a
- * visitor's presence socket(s), where presence.js renders it as an overlay on
- * the real page. Low-risk, view-only guidance — never executes host-page code.
+ * Relay a Live Assist frame (the agent's guiding pointer / click / banner) to the
+ * visitor, where presence.js renders it as an overlay. View-only guidance — it
+ * never executes host-page code.
  */
-export function sendAssistToVisitor(visitorId: string, assist: Record<string, unknown>): boolean {
-  const t = visitors.get(visitorId);
+export function sendAssistToVisitor(
+  websiteId: string,
+  visitorId: string,
+  assist: Record<string, unknown>,
+): boolean {
+  const t = find(websiteId, visitorId);
   if (!t || t.sockets.size === 0) return false;
   const frame = JSON.stringify({ type: 'assist', ...assist });
-  for (const ws of t.sockets) {
-    if (ws.readyState === ws.OPEN) ws.send(frame);
-  }
+  for (const ws of t.sockets) if (ws.readyState === ws.OPEN) ws.send(frame);
   return true;
 }
 
-export function isVisitorOnline(visitorId: string): boolean {
-  const t = visitors.get(visitorId);
+export function isVisitorOnline(websiteId: string, visitorId: string): boolean {
+  const t = find(websiteId, visitorId);
   return Boolean(t && t.sockets.size > 0);
 }
 
-export function getVisitor(visitorId: string): PresenceEntry | null {
-  return visitors.get(visitorId)?.entry ?? null;
+export function getVisitor(websiteId: string, visitorId: string): PresenceEntry | null {
+  return find(websiteId, visitorId)?.entry ?? null;
 }
 
-/** Current live list for the admin board (online first, with derived fields). */
-export function snapshot(): Array<PresenceEntry & { online: boolean; timeOnSite: number }> {
+/** The live board for one workspace, optionally narrowed to granted websites. */
+export function snapshot(
+  workspaceId: string,
+  websiteIds?: string[] | null,
+): Array<PresenceEntry & { online: boolean; timeOnSite: number }> {
   const now = Date.now();
-  return [...visitors.values()].map((t) => ({
-    ...t.entry,
-    online: t.sockets.size > 0,
-    timeOnSite: Math.max(0, now - t.entry.sessionStart),
-  }));
+  const out: Array<PresenceEntry & { online: boolean; timeOnSite: number }> = [];
+  for (const [websiteId, visitors] of byWebsite) {
+    if (websiteIds && !websiteIds.includes(websiteId)) continue;
+    for (const t of visitors.values()) {
+      if (t.entry.workspaceId !== workspaceId) continue;
+      out.push({
+        ...t.entry,
+        online: t.sockets.size > 0,
+        timeOnSite: Math.max(0, now - t.entry.sessionStart),
+      });
+    }
+  }
+  return out;
 }
 
 // Sweep stale entries (client vanished without a clean close).
 setInterval(() => {
   const now = Date.now();
-  let changed = false;
-  for (const [id, t] of visitors) {
-    if (t.sockets.size === 0 && now - t.entry.lastSeen > STALE_MS) {
-      visitors.delete(id);
-      changed = true;
+  const touched = new Set<string>();
+  for (const [websiteId, visitors] of byWebsite) {
+    for (const [id, t] of visitors) {
+      if (t.sockets.size === 0 && now - t.entry.lastSeen > STALE_MS) {
+        visitors.delete(id);
+        touched.add(t.entry.workspaceId);
+      }
     }
+    if (visitors.size === 0) byWebsite.delete(websiteId);
   }
-  if (changed) scheduleBroadcast();
+  for (const workspaceId of touched) scheduleBroadcast(workspaceId);
 }, 20_000).unref();

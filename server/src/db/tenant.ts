@@ -138,20 +138,44 @@ export type TenantDb = ReturnType<typeof tenantDb>;
  * The returned client is the ONLY thing a route handler ever sees.
  */
 export function tenantDb(scope: TenantScope) {
-  const predicate = (model: string): Record<string, unknown> => {
-    const p: Record<string, unknown> = { workspace_id: scope.workspaceId };
+  /**
+   * The scope, split into the part that is safe to place at the top level of a
+   * `where` and the part that must go into `AND`.
+   *
+   * `workspace_id` is a plain scalar, so it can sit alongside a caller's unique key.
+   * The website narrowing CANNOT: on `website_settings` and
+   * `website_business_hours`, `website_id` is itself the primary key, so injecting
+   * `website_id: { in: [...] }` at the top level overwrites the caller's scalar and
+   * findUnique rejects the object where it requires a string. Pushing it into `AND`
+   * composes with any caller `where`, unique or not.
+   */
+  const scopeOf = (model: string): { top: Record<string, unknown>; and: unknown[] } => {
+    const top: Record<string, unknown> = { workspace_id: scope.workspaceId };
+    const and: unknown[] = [];
     if (scope.websiteIds && WEBSITE_SCOPED.has(model)) {
       const column = model === 'websites' ? 'id' : 'website_id';
-      if (NULL_WEBSITE_MEANS_ALL.has(model)) {
-        // NOT `{ in: [...ids, null] }` — SQL `IN (a, NULL)` never matches a NULL
-        // row, so that spelling would silently hide all workspace-wide content
-        // from every narrowed member. An explicit OR is required.
-        p.OR = [{ [column]: { in: scope.websiteIds } }, { [column]: null }];
-      } else {
-        p[column] = { in: scope.websiteIds };
-      }
+      and.push(
+        NULL_WEBSITE_MEANS_ALL.has(model)
+          ? // NOT `{ in: [...ids, null] }` — SQL `IN (a, NULL)` never matches a NULL
+            // row, so that spelling would silently hide every workspace-wide row
+            // from every narrowed member. An explicit OR is required.
+            { OR: [{ [column]: { in: scope.websiteIds } }, { [column]: null }] }
+          : { [column]: { in: scope.websiteIds } },
+      );
     }
-    return p;
+    return { top, and };
+  };
+
+  /** Merge the scope into a caller `where`, preserving any AND they supplied. */
+  const scoped = (model: string, callerWhere: unknown): Record<string, unknown> => {
+    const { top, and } = scopeOf(model);
+    const caller = (callerWhere ?? {}) as Record<string, unknown>;
+    const callerAnd = caller.AND === undefined ? [] : Array.isArray(caller.AND) ? caller.AND : [caller.AND];
+    const merged: Record<string, unknown> = { ...caller, ...top };
+    const allAnd = [...callerAnd, ...and];
+    if (allAnd.length > 0) merged.AND = allAnd;
+    else delete merged.AND;
+    return merged;
   };
 
   /** Stamp the workspace onto created rows, OVERWRITING anything the body sent. */
@@ -181,7 +205,6 @@ export function tenantDb(scope: TenantScope) {
           }
 
           const a = args as Record<string, unknown>;
-          const where = predicate(model);
 
           switch (operation) {
             // extendedWhereUnique (GA since Prisma 5) allows non-unique filters
@@ -199,7 +222,7 @@ export function tenantDb(scope: TenantScope) {
             case 'findUniqueOrThrow':
             case 'update':
             case 'delete':
-              return query({ ...a, where: { ...(a.where as object), ...where } });
+              return query({ ...a, where: scoped(model, a.where) });
 
             case 'upsert':
               // `args` here is the union of every model's upsert input, so the
@@ -208,7 +231,7 @@ export function tenantDb(scope: TenantScope) {
               // where that generality meets Prisma's per-model types.
               return query({
                 ...a,
-                where: { ...(a.where as object), ...where },
+                where: scoped(model, a.where),
                 create: own(a.create as Record<string, unknown>),
               } as typeof args);
 
@@ -226,7 +249,7 @@ export function tenantDb(scope: TenantScope) {
 
             default:
               if (READ_OPS.has(operation) || operation === 'updateMany' || operation === 'deleteMany') {
-                return query({ ...a, where: { AND: [where, a.where ?? {}] } });
+                return query({ ...a, where: scoped(model, a.where) });
               }
               // Fail closed. A new Prisma operation we have not reasoned about
               // must not silently run unscoped.

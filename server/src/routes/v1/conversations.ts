@@ -1,0 +1,400 @@
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { requireWorkspace, can } from '../../plugins/auth.js';
+import { parseBody } from '../../lib/validate.js';
+import { insertMessage } from '../../lib/messages.js';
+import { publishToWorkspace, sendToConversationVisitors } from '../../realtime/hub.js';
+import { getPersonProfile } from '../../services/identity.js';
+import { translateText } from '../../services/ai/index.js';
+import { notifyNewMessage } from '../../services/discord.js';
+import { audit } from '../../lib/audit.js';
+
+/**
+ * The agent inbox.
+ *
+ * Every query goes through `req.db`, so the workspace predicate and the member's
+ * per-website grants are applied whether or not this file remembers them. The
+ * pre-tenant version listed with `where: status ? { status } : {}` — which under
+ * multi-tenancy would have shown every customer's conversations to every agent.
+ */
+
+const LIST_LIMIT = 100;
+
+export async function conversationV1Routes(app: FastifyInstance): Promise<void> {
+  app.get(
+    '/api/v1/w/:workspaceId/conversations',
+    { preHandler: [requireWorkspace, can('conversation:read')] },
+    async (req, reply) => {
+      const q = req.query as {
+        status?: string;
+        website_id?: string;
+        assignee?: string;
+        tag?: string;
+        q?: string;
+        cursor?: string;
+        limit?: string;
+      };
+      const take = Math.min(Number(q.limit) || 50, LIST_LIMIT);
+
+      const conversations = await req.db.conversations.findMany({
+        where: {
+          ...(q.status && q.status !== 'all' ? { status: q.status } : {}),
+          ...(q.website_id ? { website_id: q.website_id } : {}),
+          ...(q.assignee === 'unassigned'
+            ? { assigned_member_id: null }
+            : q.assignee === 'me'
+              ? { assigned_member_id: req.auth!.member!.id }
+              : q.assignee
+                ? { assigned_member_id: q.assignee }
+                : {}),
+          ...(q.tag ? { tags: { has: q.tag } } : {}),
+          ...(q.q
+            ? {
+                OR: [
+                  { visitor_name: { contains: q.q, mode: 'insensitive' as const } },
+                  { visitor_email: { contains: q.q, mode: 'insensitive' as const } },
+                  { messages: { some: { content: { contains: q.q, mode: 'insensitive' as const } } } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: { updated_at: 'desc' },
+        take,
+        // Keyset pagination rather than offset: an inbox reorders on every new
+        // message, so page 2 of an offset query would skip or repeat rows.
+        ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
+        select: {
+          id: true,
+          website_id: true,
+          visitor_id: true,
+          visitor_name: true,
+          visitor_email: true,
+          status: true,
+          assigned_member_id: true,
+          needs_human: true,
+          message_count: true,
+          tags: true,
+          rating_stars: true,
+          created_at: true,
+          updated_at: true,
+          metadata: true,
+          messages: {
+            orderBy: { created_at: 'desc' },
+            take: 1,
+            select: { content: true, sender_type: true, created_at: true },
+          },
+        },
+      });
+
+      return reply.send({
+        conversations: conversations.map((c) => {
+          const { messages, ...rest } = c;
+          return {
+            ...rest,
+            last_message: messages[0]?.content ?? null,
+            last_sender: messages[0]?.sender_type ?? null,
+          };
+        }),
+        next_cursor: conversations.length === take ? conversations[conversations.length - 1]?.id : null,
+      });
+    },
+  );
+
+  app.get(
+    '/api/v1/w/:workspaceId/conversations/:id',
+    { preHandler: [requireWorkspace, can('conversation:read')] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const conversation = await req.db.conversations.findUnique({
+        where: { id },
+        include: {
+          messages: { orderBy: { created_at: 'asc' } },
+          notes: { orderBy: { created_at: 'asc' } },
+          attachments: true,
+        },
+      });
+      if (!conversation) return reply.code(404).send({ error: 'Not found' });
+      return reply.send({ conversation });
+    },
+  );
+
+  app.post(
+    '/api/v1/w/:workspaceId/conversations/:id/messages',
+    { preHandler: [requireWorkspace, can('conversation:reply')] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = parseBody(z.object({ content: z.string().min(1).max(8000) }), req.body, reply);
+      if (!body) return;
+
+      const conv = await req.db.conversations.findUnique({
+        where: { id },
+        select: { id: true, workspace_id: true, website_id: true, first_response_at: true, status: true },
+      });
+      if (!conv) return reply.code(404).send({ error: 'Not found' });
+      // Per-website grants apply to replying, not just to reading.
+      if (!req.auth!.can('conversation:reply', conv.website_id)) {
+        return reply.code(403).send({ error: 'Missing permission: conversation:reply' });
+      }
+
+      const message = await insertMessage({
+        workspaceId: conv.workspace_id,
+        websiteId: conv.website_id,
+        conversationId: id,
+        content: body.content,
+        senderType: 'agent',
+        senderMemberId: req.auth!.member!.id,
+      });
+
+      // Stamp the first human response once, for response-time reporting. Doing it
+      // here rather than deriving it later means a message edited or deleted in
+      // future cannot rewrite history.
+      if (!conv.first_response_at) {
+        await req.db.conversations.updateMany({
+          where: { id, first_response_at: null },
+          data: { first_response_at: new Date() },
+        });
+      }
+      // Replying to a resolved conversation re-opens it: an agent following up
+      // should not have to remember to change the status first.
+      if (conv.status === 'resolved') {
+        await req.db.conversations.updateMany({
+          where: { id },
+          data: { status: 'open', resolved_at: null },
+        });
+      }
+
+      void notifyNewMessage(conv.workspace_id, id, body.content, 'agent');
+      return reply.code(201).send({ message });
+    },
+  );
+
+  app.post(
+    '/api/v1/w/:workspaceId/conversations/:id/status',
+    { preHandler: [requireWorkspace, can('conversation:resolve')] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = parseBody(
+        z.object({ status: z.enum(['open', 'pending', 'resolved']) }),
+        req.body,
+        reply,
+      );
+      if (!body) return;
+
+      try {
+        const updated = await req.db.conversations.update({
+          where: { id },
+          data: {
+            status: body.status,
+            resolved_at: body.status === 'resolved' ? new Date() : null,
+          },
+          select: { id: true, status: true, website_id: true, workspace_id: true, needs_human: true },
+        });
+        publishToWorkspace(
+          updated.workspace_id,
+          { type: 'conversation:updated', conversation: updated },
+          { websiteId: updated.website_id },
+        );
+        // Tell the widget, so it can clear the thread and start fresh next time
+        // rather than leaving the visitor staring at a closed conversation.
+        if (body.status === 'resolved') {
+          sendToConversationVisitors(id, { type: 'conversation:resolved', conversationId: id });
+        }
+        return reply.send({ conversation: updated });
+      } catch (err) {
+        if ((err as { code?: string }).code === 'P2025') return reply.code(404).send({ error: 'Not found' });
+        throw err;
+      }
+    },
+  );
+
+  app.post(
+    '/api/v1/w/:workspaceId/conversations/:id/assign',
+    { preHandler: [requireWorkspace, can('conversation:assign')] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = parseBody(
+        z.object({ member_id: z.string().uuid().nullable() }),
+        req.body,
+        reply,
+      );
+      if (!body) return;
+
+      // The composite FK would reject a foreign member anyway; checking here turns
+      // a 500 into a clean 404.
+      if (body.member_id) {
+        const member = await req.db.workspace_members.findUnique({
+          where: { id: body.member_id },
+          select: { id: true },
+        });
+        if (!member) return reply.code(404).send({ error: 'Not found' });
+      }
+
+      try {
+        const updated = await req.db.conversations.update({
+          where: { id },
+          data: { assigned_member_id: body.member_id, needs_human: false },
+          select: {
+            id: true,
+            workspace_id: true,
+            website_id: true,
+            assigned_member_id: true,
+            status: true,
+          },
+        });
+        publishToWorkspace(
+          updated.workspace_id,
+          { type: 'conversation:updated', conversation: updated },
+          { websiteId: updated.website_id },
+        );
+        // Release the widget's "waiting for an agent" hold as soon as someone
+        // claims the chat, before they have typed anything.
+        if (body.member_id) {
+          const member = await req.db.workspace_members.findUnique({
+            where: { id: body.member_id },
+            select: { user: { select: { name: true } } },
+          });
+          sendToConversationVisitors(id, {
+            type: 'agent:joined',
+            conversationId: id,
+            agentName: member?.user.name ?? null,
+          });
+        }
+        await audit(req, { action: 'conversation.assigned', targetType: 'conversation', targetId: id });
+        return reply.send({ conversation: updated });
+      } catch (err) {
+        if ((err as { code?: string }).code === 'P2025') return reply.code(404).send({ error: 'Not found' });
+        throw err;
+      }
+    },
+  );
+
+  app.post(
+    '/api/v1/w/:workspaceId/conversations/:id/tags',
+    { preHandler: [requireWorkspace, can('conversation:read')] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = parseBody(
+        z.object({ tags: z.array(z.string().min(1).max(40)).max(25) }),
+        req.body,
+        reply,
+      );
+      if (!body) return;
+      try {
+        const updated = await req.db.conversations.update({
+          where: { id },
+          data: { tags: [...new Set(body.tags.map((t) => t.trim().toLowerCase()))] },
+          select: { id: true, tags: true, workspace_id: true, website_id: true },
+        });
+        publishToWorkspace(
+          updated.workspace_id,
+          { type: 'conversation:updated', conversation: updated },
+          { websiteId: updated.website_id },
+        );
+        return reply.send({ conversation: updated });
+      } catch (err) {
+        if ((err as { code?: string }).code === 'P2025') return reply.code(404).send({ error: 'Not found' });
+        throw err;
+      }
+    },
+  );
+
+  app.post(
+    '/api/v1/w/:workspaceId/conversations/:id/typing',
+    { preHandler: [requireWorkspace, can('conversation:reply')] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const isTyping = (req.body as { is_typing?: boolean } | undefined)?.is_typing ?? true;
+      sendToConversationVisitors(id, { type: 'typing', conversationId: id, from: 'agent', isTyping });
+      return reply.send({ ok: true });
+    },
+  );
+
+  // ── Internal notes ────────────────────────────────────────────────────────
+  app.get(
+    '/api/v1/w/:workspaceId/conversations/:id/notes',
+    { preHandler: [requireWorkspace, can('conversation:read')] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const notes = await req.db.conversation_notes.findMany({
+        where: { conversation_id: id },
+        orderBy: { created_at: 'asc' },
+      });
+      return reply.send({ notes });
+    },
+  );
+
+  app.post(
+    '/api/v1/w/:workspaceId/conversations/:id/notes',
+    { preHandler: [requireWorkspace, can('note:write')] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = parseBody(z.object({ content: z.string().min(1).max(4000) }), req.body, reply);
+      if (!body) return;
+
+      const conv = await req.db.conversations.findUnique({ where: { id }, select: { id: true } });
+      if (!conv) return reply.code(404).send({ error: 'Not found' });
+
+      const user = req.auth!;
+      const note = await req.db.conversation_notes.create({
+        data: {
+          conversation_id: id,
+          author_user_id: user.userId,
+          // Denormalized so a note keeps its attribution after the author leaves —
+          // "note by (deleted user)" loses the context the note existed to provide.
+          author_name: user.email,
+          content: body.content,
+        } as never,
+      });
+      return reply.code(201).send({ note });
+    },
+  );
+
+  // ── Visitor detail ────────────────────────────────────────────────────────
+  app.get(
+    '/api/v1/w/:workspaceId/visitors/:visitorId/ips',
+    { preHandler: [requireWorkspace, can('visitor:read')] },
+    async (req, reply) => {
+      const { visitorId } = req.params as { visitorId: string };
+      const ips = await req.db.visitor_ips.findMany({
+        where: { visitor_id: visitorId },
+        orderBy: { last_seen: 'desc' },
+        take: 50,
+      });
+      return reply.send({ ips });
+    },
+  );
+
+  app.get(
+    '/api/v1/w/:workspaceId/visitors/:visitorId/person',
+    { preHandler: [requireWorkspace, can('visitor:read')] },
+    async (req, reply) => {
+      const { visitorId } = req.params as { visitorId: string };
+      const link = await req.db.visitor_links.findFirst({
+        where: { visitor_id: visitorId },
+        select: { person_id: true },
+      });
+      if (!link) return reply.send({ person: null });
+      // getPersonProfile takes the workspace explicitly and filters on it, so a
+      // person id from another tenant cannot be dereferenced here.
+      const person = await getPersonProfile(req.auth!.workspace!.id, link.person_id);
+      return reply.send({ person });
+    },
+  );
+
+  // ── Live translation ──────────────────────────────────────────────────────
+  app.post(
+    '/api/v1/w/:workspaceId/translate',
+    { preHandler: [requireWorkspace, can('conversation:reply')] },
+    async (req, reply) => {
+      const body = parseBody(
+        z.object({ text: z.string().min(1).max(4000), to: z.string().min(2).max(40) }),
+        req.body,
+        reply,
+      );
+      if (!body) return;
+      // Returns the original text on failure rather than an error: a translation
+      // outage must not stop an agent replying.
+      return reply.send({ text: await translateText(body.text, body.to) });
+    },
+  );
+}

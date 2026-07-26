@@ -1,4 +1,4 @@
-import { prisma } from './prisma.js';
+import { unscopedPrisma as prisma } from './unscoped.js';
 import { hashPassword } from '../auth/password.js';
 
 /**

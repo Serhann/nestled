@@ -1,11 +1,23 @@
 import webpush from 'web-push';
 import { env } from '../env.js';
-import { prisma } from '../db/prisma.js';
-import { agentsViewing } from '../realtime/hub.js';
+// Push routing resolves the members of a workspace and their devices, which belong
+// to users rather than to any one workspace.
+// eslint-disable-next-line no-restricted-imports -- routes across members and their devices
+import { unscopedPrisma } from '../db/unscoped.js';
+import { membersViewing } from '../realtime/hub.js';
+
+/**
+ * Web Push to a workspace's agents.
+ *
+ * Two behaviours worth keeping from the original, both about not being annoying:
+ *  - an agent whose socket is already VIEWING the conversation gets nothing; a
+ *    notification for a message on screen in front of you is noise,
+ *  - subscriptions the push service reports as gone (404/410) are pruned, so a
+ *    replaced phone stops costing a failed send on every message forever.
+ */
 
 let configured = false;
 
-/** Configure web-push with VAPID details once. No-op (disabled) if keys unset. */
 function ensureConfigured(): boolean {
   if (configured) return true;
   if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return false;
@@ -23,97 +35,120 @@ export interface PushPayload {
   conversationId: string;
   title: string;
   body: string;
-  // Deep link opened on notification click (relative to the admin origin).
+  /** Deep link opened on click. Workspace-aware, so it lands in the right inbox. */
   url: string;
 }
 
-interface SubscriptionRow {
-  id: string;
-  agent_id: string;
-  endpoint: string;
-  p256dh: string;
-  auth: string;
-}
-
-/**
- * Send a push to every subscribed agent, EXCEPT agents currently viewing this
- * conversation over WS (they can already see it). Subscriptions rejected by the
- * push service with 404/410 (gone) are pruned so we stop trying.
- */
-export async function pushToAgents(payload: PushPayload): Promise<void> {
+async function pushToWorkspace(
+  workspaceId: string,
+  websiteId: string,
+  payload: PushPayload,
+): Promise<void> {
   if (!ensureConfigured()) return;
 
-  const viewers = agentsViewing(payload.conversationId);
-  // If the conversation is assigned, only its owner is pushed; otherwise the
-  // whole team (the unassigned pool) is notified.
-  const conv = await prisma.conversations.findUnique({
-    where: { id: payload.conversationId },
-    select: { assigned_agent_id: true },
+  const conv = await unscopedPrisma.conversations.findFirst({
+    where: { id: payload.conversationId, workspace_id: workspaceId },
+    select: { assigned_member_id: true },
   });
-  const assignedTo = conv?.assigned_agent_id ?? null;
+  if (!conv) return;
 
-  const subs = await prisma.push_subscriptions.findMany({
-    select: { id: true, agent_id: true, endpoint: true, p256dh: true, auth: true },
+  const viewing = membersViewing(workspaceId, payload.conversationId);
+
+  // An assigned conversation notifies only its owner; an unassigned one notifies
+  // the pool. Notifying everyone about an assigned chat trains people to ignore
+  // notifications, which costs more than the occasional missed handoff.
+  const members = await unscopedPrisma.workspace_members.findMany({
+    where: {
+      workspace_id: workspaceId,
+      status: 'active',
+      ...(conv.assigned_member_id ? { id: conv.assigned_member_id } : {}),
+      // Respect per-website scoping: a member granted other websites must not be
+      // notified about this one.
+      OR: [{ all_websites: true }, { websites: { some: { website_id: websiteId } } }],
+    },
+    select: { id: true, user_id: true },
   });
 
-  const body = JSON.stringify(payload);
-  const stale: string[] = [];
+  const recipients = members.filter((m) => !viewing.has(m.id)).map((m) => m.user_id);
+  if (recipients.length === 0) return;
+
+  const subs = await unscopedPrisma.push_subscriptions.findMany({
+    where: { user_id: { in: recipients } },
+    select: { id: true, endpoint: true, p256dh: true, auth: true },
+  });
 
   await Promise.all(
-    subs.map(async (sub: SubscriptionRow) => {
-      if (assignedTo && sub.agent_id !== assignedTo) return; // assigned elsewhere
-      if (viewers.has(sub.agent_id)) return; // actively viewing — skip
+    subs.map(async (sub) => {
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-          body,
+          JSON.stringify(payload),
         );
       } catch (err) {
-        const statusCode = (err as { statusCode?: number }).statusCode;
-        if (statusCode === 404 || statusCode === 410) {
-          stale.push(sub.id); // subscription is gone — prune it
-        } else {
-          // eslint-disable-next-line no-console
-          console.error('[push] send failed', statusCode ?? err);
+        const status = (err as { statusCode?: number }).statusCode;
+        if (status === 404 || status === 410) {
+          await unscopedPrisma.push_subscriptions.delete({ where: { id: sub.id } }).catch(() => undefined);
         }
       }
     }),
   );
-
-  if (stale.length > 0) {
-    await prisma.push_subscriptions.deleteMany({ where: { id: { in: stale } } });
-  }
 }
 
-/** Push for a brand-new conversation (no one is viewing it yet). */
+/** Deep link into the right workspace's inbox. */
+function inboxUrl(workspaceSlug: string, conversationId: string): string {
+  return `/w/${workspaceSlug}/inbox/${conversationId}`;
+}
+
+async function slugOf(workspaceId: string): Promise<string> {
+  const ws = await unscopedPrisma.workspaces.findUnique({
+    where: { id: workspaceId },
+    select: { slug: true },
+  });
+  return ws?.slug ?? '';
+}
+
 export async function pushNewConversation(
+  workspaceId: string,
+  websiteId: string,
   conversationId: string,
   visitorName: string | null,
-  page: string | null,
 ): Promise<void> {
-  const who = visitorName || 'A visitor';
-  await pushToAgents({
+  await pushToWorkspace(workspaceId, websiteId, {
     type: 'conversation',
     conversationId,
-    title: 'New chat started',
-    body: page ? `${who} on ${page}` : `${who} started a chat`,
-    url: `/app?conversation=${conversationId}`,
+    title: 'New conversation',
+    body: visitorName ? `${visitorName} started a chat` : 'A visitor started a chat',
+    url: inboxUrl(await slugOf(workspaceId), conversationId),
   });
 }
 
-/** Push for a new visitor message; suppressed for agents viewing it. */
 export async function pushVisitorMessage(
+  workspaceId: string,
+  websiteId: string,
   conversationId: string,
   visitorName: string | null,
-  preview: string,
+  content: string,
 ): Promise<void> {
-  const who = visitorName || 'Visitor';
-  const short = preview.length > 120 ? `${preview.slice(0, 120)}…` : preview;
-  await pushToAgents({
+  await pushToWorkspace(workspaceId, websiteId, {
     type: 'message',
     conversationId,
-    title: who,
-    body: short,
-    url: `/app?conversation=${conversationId}`,
+    title: visitorName ?? 'Visitor',
+    body: content.slice(0, 140),
+    url: inboxUrl(await slugOf(workspaceId), conversationId),
+  });
+}
+
+export async function pushHandoff(
+  workspaceId: string,
+  websiteId: string,
+  conversationId: string,
+  summary: string | null,
+): Promise<void> {
+  await pushToWorkspace(workspaceId, websiteId, {
+    type: 'message',
+    conversationId,
+    title: 'Handoff requested',
+    body: summary?.slice(0, 140) ?? 'A visitor needs a human.',
+    url: inboxUrl(await slugOf(workspaceId), conversationId),
   });
 }

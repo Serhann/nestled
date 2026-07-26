@@ -10,19 +10,17 @@ import { ensureSeedAdmin } from './db/seedAdmin.js';
 import { startRetentionJob } from './lib/retention.js';
 import { assertTenantModelsRegistered } from './db/tenant.js';
 import { registerAuthPlugin } from './plugins/auth.js';
-// ── v1 (multi-tenant) ────────────────────────────────────────────────────────
+import { registerRealtime } from './realtime/gateway.js';
 import { authV1Routes } from './routes/v1/auth.js';
 import { meV1Routes } from './routes/v1/me.js';
 import { workspaceV1Routes } from './routes/v1/workspaces.js';
 import { teamV1Routes } from './routes/v1/team.js';
-
-// ── Not yet ported (Phase 5) ─────────────────────────────────────────────────
-// realtime/gateway.ts and routes/{auth,widget,conversations,agentConversations,
-// settings,agents,knowledgeBase,triggers,push,presence,attachments,canned,sites}.ts
-// still speak the pre-tenant model names, so they are NOT registered — importing
-// them would boot a server whose routes 500 on first query. They stay on disk
-// until Phase 5 ports them onto req.db, tracked by:
-//   npx eslint server/src | grep -c "db/prisma"
+import { widgetV1Routes } from './routes/v1/widget.js';
+import { conversationV1Routes } from './routes/v1/conversations.js';
+import { contentV1Routes } from './routes/v1/content.js';
+import { settingsV1Routes } from './routes/v1/settings.js';
+import { presenceV1Routes } from './routes/v1/presence.js';
+import { pushV1Routes } from './routes/v1/push.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -91,13 +89,25 @@ export async function buildServer() {
   // than a route silently querying across customers. Must precede every route.
   await app.register(registerAuthPlugin);
 
-  // The v1 identity plane. Everything tenant-scoped lives under
-  // /api/v1/w/:workspaceId/..., so the tenant is a path segment rather than
-  // ambient state — see auth/tokens.ts for why.
+  // Realtime sockets.
+  await app.register(registerRealtime);
+
+  // Everything tenant-scoped lives under /api/v1/w/:workspaceId/..., so the tenant
+  // is a path segment rather than ambient state — see auth/tokens.ts for why.
   await app.register(authV1Routes);
   await app.register(meV1Routes);
   await app.register(workspaceV1Routes);
   await app.register(teamV1Routes);
+  await app.register(conversationV1Routes);
+  await app.register(contentV1Routes);
+  await app.register(settingsV1Routes);
+  await app.register(presenceV1Routes);
+  await app.register(pushV1Routes);
+
+  // The PUBLIC widget plane, registered last. It is the only surface an anonymous
+  // visitor on a customer's site can reach, and it resolves its tenant from an
+  // unguessable website key rather than any ambient context.
+  await app.register(widgetV1Routes);
 
   return app;
 }

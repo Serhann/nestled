@@ -52,11 +52,6 @@ export default tseslint.config(
                 'workspace isolation — see server/src/db/tenant.ts for why, and db/unscoped.ts ' +
                 'for the short list of places allowed to import it.',
             },
-            {
-              group: ['**/db/prisma', '**/db/prisma.js'],
-              message:
-                'db/prisma.ts is the legacy unscoped client and is being removed. Use req.db.',
-            },
           ],
         },
       ],

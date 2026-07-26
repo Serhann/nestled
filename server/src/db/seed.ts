@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { prisma } from './prisma.js';
+import { unscopedPrisma as prisma } from './unscoped.js';
 import { runMigrations } from './migrate.js';
 import { hashPassword } from '../auth/password.js';
 
