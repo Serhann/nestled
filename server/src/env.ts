@@ -34,6 +34,22 @@ const schema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OLLAMA_URL: z.string().optional(),
 
+  // Public URLs, used to build links in outbound email. Getting these wrong sends
+  // customers verification links to the wrong host, so they are explicit.
+  APP_URL: z.string().default('http://localhost:5173/app'),
+  MARKETING_URL: z.string().default('http://localhost:5173'),
+
+  // ── Transactional email (SMTP) ───────────────────────────────────────────────
+  // When SMTP_HOST is unset, mail is queued to outbound_emails and logged instead
+  // of sent, so local development never needs a mail server and never silently
+  // drops a message.
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_SECURE: z.enum(['true', 'false']).default('false'),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  MAIL_FROM: z.string().default('Nestled <noreply@nestled.chat>'),
+
   // Optional secondary notification channel.
   DISCORD_WEBHOOK_URL: z.string().optional(),
 

@@ -4,26 +4,25 @@ import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import multipart from '@fastify/multipart';
 import { env, allowedOrigins, isProd } from './env.js';
-import { prisma } from './db/prisma.js';
+import { unscopedPrisma } from './db/unscoped.js';
 import { runMigrations } from './db/migrate.js';
 import { ensureSeedAdmin } from './db/seedAdmin.js';
 import { startRetentionJob } from './lib/retention.js';
 import { assertTenantModelsRegistered } from './db/tenant.js';
 import { registerAuthPlugin } from './plugins/auth.js';
-import { registerRealtime } from './realtime/gateway.js';
-import { authRoutes } from './routes/auth.js';
-import { widgetRoutes } from './routes/widget.js';
-import { conversationRoutes } from './routes/conversations.js';
-import { agentConversationRoutes } from './routes/agentConversations.js';
-import { settingsRoutes } from './routes/settings.js';
-import { agentRoutes } from './routes/agents.js';
-import { knowledgeBaseRoutes } from './routes/knowledgeBase.js';
-import { triggerRoutes } from './routes/triggers.js';
-import { pushRoutes } from './routes/push.js';
-import { presenceRoutes } from './routes/presence.js';
-import { attachmentRoutes } from './routes/attachments.js';
-import { cannedRoutes } from './routes/canned.js';
-import { siteRoutes } from './routes/sites.js';
+// ── v1 (multi-tenant) ────────────────────────────────────────────────────────
+import { authV1Routes } from './routes/v1/auth.js';
+import { meV1Routes } from './routes/v1/me.js';
+import { workspaceV1Routes } from './routes/v1/workspaces.js';
+import { teamV1Routes } from './routes/v1/team.js';
+
+// ── Not yet ported (Phase 5) ─────────────────────────────────────────────────
+// realtime/gateway.ts and routes/{auth,widget,conversations,agentConversations,
+// settings,agents,knowledgeBase,triggers,push,presence,attachments,canned,sites}.ts
+// still speak the pre-tenant model names, so they are NOT registered — importing
+// them would boot a server whose routes 500 on first query. They stay on disk
+// until Phase 5 ports them onto req.db, tracked by:
+//   npx eslint server/src | grep -c "db/prisma"
 
 export async function buildServer() {
   const app = Fastify({
@@ -46,11 +45,19 @@ export async function buildServer() {
   });
 
   // Global rate limit floor; individual routes tighten it via `config.rateLimit`.
-  await app.register(rateLimit, {
-    global: true,
-    max: 300,
-    timeWindow: '1 minute',
-  });
+  //
+  // Skipped under NODE_ENV=test. The limiter's store is per-process and keyed by
+  // IP, so with it on, a test suite that logs in a few times shares one bucket and
+  // starts failing on timing rather than on behaviour — which trains people to
+  // re-run tests instead of reading them. The trade-off is explicit: rate limits
+  // are configuration verified by the plugin, and are NOT covered by these tests.
+  if (env.NODE_ENV !== 'test') {
+    await app.register(rateLimit, {
+      global: true,
+      max: 300,
+      timeWindow: '1 minute',
+    });
+  }
 
   await app.register(websocket);
 
@@ -60,7 +67,7 @@ export async function buildServer() {
   // Health check for load balancers / compose healthchecks.
   app.get('/healthz', async (_req, reply) => {
     try {
-      await prisma.$queryRaw`SELECT 1`;
+      await unscopedPrisma.$queryRaw`SELECT 1`;
       return reply.send({ status: 'ok', db: 'up' });
     } catch {
       return reply.code(503).send({ status: 'degraded', db: 'down' });
@@ -84,21 +91,13 @@ export async function buildServer() {
   // than a route silently querying across customers. Must precede every route.
   await app.register(registerAuthPlugin);
 
-  // Realtime (WS) and REST routes.
-  await app.register(registerRealtime);
-  await app.register(authRoutes);
-  await app.register(widgetRoutes);
-  await app.register(conversationRoutes);
-  await app.register(agentConversationRoutes);
-  await app.register(settingsRoutes);
-  await app.register(agentRoutes);
-  await app.register(knowledgeBaseRoutes);
-  await app.register(triggerRoutes);
-  await app.register(pushRoutes);
-  await app.register(presenceRoutes);
-  await app.register(attachmentRoutes);
-  await app.register(cannedRoutes);
-  await app.register(siteRoutes);
+  // The v1 identity plane. Everything tenant-scoped lives under
+  // /api/v1/w/:workspaceId/..., so the tenant is a path segment rather than
+  // ambient state — see auth/tokens.ts for why.
+  await app.register(authV1Routes);
+  await app.register(meV1Routes);
+  await app.register(workspaceV1Routes);
+  await app.register(teamV1Routes);
 
   return app;
 }
@@ -122,7 +121,7 @@ async function main() {
 
   const shutdown = async () => {
     await app.close();
-    await prisma.$disconnect();
+    await unscopedPrisma.$disconnect();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);

@@ -855,6 +855,12 @@ model plans {
   name      String
   is_public Boolean @default(true)
   sort_order Int    @default(0)
+  /// The plan a new workspace TRIALS on. Exactly one row should have this set.
+  /// Trials deliberately start on a capable tier, not on `free`: a 14-day trial
+  /// that cannot invite a teammate or add a second website isn't an evaluation of
+  /// the product, and the customer discovers the limits as friction rather than as
+  /// a reason to upgrade. On trial expiry the workspace drops to `free`.
+  is_trial_default Boolean @default(false)
 
   stripe_product_id       String?
   stripe_price_monthly_id String?

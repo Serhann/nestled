@@ -503,6 +503,7 @@ CREATE TABLE "plans" (
     "name" TEXT NOT NULL,
     "is_public" BOOLEAN NOT NULL DEFAULT true,
     "sort_order" INTEGER NOT NULL DEFAULT 0,
+    "is_trial_default" BOOLEAN NOT NULL DEFAULT false,
     "stripe_product_id" TEXT,
     "stripe_price_monthly_id" TEXT,
     "stripe_price_yearly_id" TEXT,
@@ -1285,22 +1286,26 @@ CREATE TRIGGER trg_bump_conversation
 -- `workspaces.plan_id` is NOT NULL, and signup has to find a plan to point at.
 -- Stripe price ids are filled in per environment from the ops panel (Phase 12).
 INSERT INTO "plans" (
-  "id", "code", "name", "is_public", "sort_order",
+  "id", "code", "name", "is_public", "sort_order", "is_trial_default",
   "price_monthly_cents", "price_yearly_cents", "included_seats",
   "max_seats", "max_websites", "max_conversations_month", "max_ai_replies_month",
   "max_kb_entries", "max_bot_flows", "max_triggers", "storage_mb", "retention_days",
   "allow_remove_branding", "allow_live_view", "allow_bot"
 ) VALUES
-  (gen_random_uuid(), 'free',     'Free',     true, 0,
+  (gen_random_uuid(), 'free',     'Free',     true, 0, false,
      0,      0,    1,
      1,  1,    100,   50,   25,  0,  1,   100,  30,  false, false, false),
-  (gen_random_uuid(), 'starter',  'Starter',  true, 1,
+  (gen_random_uuid(), 'starter',  'Starter',  true, 1, false,
      1900,   19000, 2,
      3,  1,    1000,  500,  200, 1,  10,  2000, 180, false, false, true),
-  (gen_random_uuid(), 'pro',      'Pro',      true, 2,
+  (gen_random_uuid(), 'pro',      'Pro',      true, 2, true,
      4900,   49000, 5,
      10, 5,    5000,  2500, 1000, 10, 50,  10000, 365, true,  true,  true),
-  (gen_random_uuid(), 'business', 'Business', true, 3,
+  (gen_random_uuid(), 'business', 'Business', true, 3, false,
      9900,   99000, 15,
      50, 25,   25000, 10000, 5000, 50, 200, 50000, 730, true, true,  true)
 ON CONFLICT ("code") DO NOTHING;
+
+-- Exactly one plan may be the trial default; more than one makes "which plan does
+-- a new workspace start on?" depend on row order.
+CREATE UNIQUE INDEX "plans_single_trial_default" ON "plans" ((true)) WHERE "is_trial_default";

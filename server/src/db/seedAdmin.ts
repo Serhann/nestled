@@ -23,8 +23,9 @@ export async function ensureSeedAdmin(): Promise<void> {
   const count = await prisma.users.count();
   if (count > 0) return;
 
-  // Start the first workspace on the most capable public plan: a self-hosted
-  // install shouldn't be silently limited by a plan nobody chose.
+  // The most capable public plan, with status 'active' rather than 'trialing': a
+  // self-hosted install is not evaluating anything and shouldn't be silently
+  // limited by a plan nobody chose, nor expire in 14 days.
   const plan = await prisma.plans.findFirst({
     where: { is_public: true },
     orderBy: { sort_order: 'desc' },
