@@ -77,6 +77,24 @@ const schema = z.object({
   UPLOAD_DIR: z.string().default('./uploads'),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
 
+  // ── Stripe billing ───────────────────────────────────────────────────────────
+  // When STRIPE_SECRET_KEY is unset, billing runs in "unconfigured" mode: plans
+  // and limits still apply (they are database facts), but checkout returns 503
+  // rather than pretending. Self-hosters therefore get a working product without
+  // a Stripe account.
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  // Where Checkout returns the customer. Falls back to APP_URL.
+  STRIPE_RETURN_URL: z.string().optional(),
+
+  // ── Platform (ops) surface ───────────────────────────────────────────────────
+  // Staff sessions are opaque tokens verified against platform_sessions on every
+  // request, so there is no platform JWT secret by design.
+  PLATFORM_SESSION_TTL_HOURS: z.coerce.number().int().positive().default(12),
+  // Bootstraps the first platform user on an empty platform_users table.
+  SEED_PLATFORM_EMAIL: z.string().optional(),
+  SEED_PLATFORM_PASSWORD: z.string().optional(),
+
   // Optional error sink (Sentry-compatible DSN). When set, the error handler
   // has a forwarding hook point.
   SENTRY_DSN: z.string().optional(),
