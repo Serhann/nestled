@@ -7,7 +7,7 @@ import { env, allowedOrigins, isProd } from './env.js';
 import { unscopedPrisma } from './db/unscoped.js';
 import { runMigrations } from './db/migrate.js';
 import { ensureSeedAdmin } from './db/seedAdmin.js';
-import { startRetentionJob } from './lib/retention.js';
+import { startBackgroundJobs } from './lib/jobs.js';
 import { assertTenantModelsRegistered } from './db/tenant.js';
 import { registerAuthPlugin } from './plugins/auth.js';
 import { registerRealtime } from './realtime/gateway.js';
@@ -146,8 +146,8 @@ async function main() {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  // Optional data-retention sweep (env-gated). See src/lib/retention.ts.
-  startRetentionJob();
+  // Recurring sweeps: retention, and (Phase 12) trial/dunning/purge. See lib/jobs.ts.
+  startBackgroundJobs();
 }
 
 // Boot everywhere except the test runner (tests import buildServer directly).
