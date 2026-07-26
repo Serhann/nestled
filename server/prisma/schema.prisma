@@ -1,11 +1,27 @@
 // ============================================================================
-// JetChat Prisma schema — self-hosted PostgreSQL (replaces the raw-pg layer).
+// Nestled Prisma schema — multi-tenant PostgreSQL.
 //
-// Fields are kept snake_case so the Prisma Client returns objects identical in
-// shape to the previous raw-pg rows (the REST API and frontend expect
-// snake_case keys). CHECK constraints, the message-count trigger, and the
-// singleton settings seed rows live in the initial migration SQL — Prisma's
-// schema language can't express them, so they are appended there by hand.
+// Four rules hold everywhere in this file. They are what make tenant isolation
+// cheap to enforce and impossible to forget:
+//
+//  1. Every tenant-scoped row carries `workspace_id`, NOT NULL. No exceptions for
+//     "you can join to get it" — a uniform predicate is what lets db/tenant.ts
+//     inject scoping mechanically, and what lets RLS be added later for free.
+//  2. Cross-tenant references are rejected by POSTGRES, not by code review.
+//     `websites`, `conversations`, `workspace_members` and `bot_flows` each carry
+//     @@unique([workspace_id, id]), and their children FK on the composite pair.
+//     A nested `connect` to another tenant's row fails at the database.
+//  3. The public/private trust split is PHYSICAL. Widget-readable config lives in
+//     `website_settings`; secrets live in `workspace_private_settings`. There is
+//     no code path from the public widget route to a secret-bearing table.
+//  4. Every tenant model must be registered in TENANT_MODELS (db/tenant.ts). A
+//     boot assertion walks Prisma.dmmf and throws if one isn't, so adding a
+//     tenant table without scoping it cannot reach production.
+//
+// Fields stay snake_case so Prisma Client rows match the REST/JSON shapes the
+// frontend expects. CHECK constraints, composite foreign keys, partial unique
+// indexes, GIN indexes and the message-count trigger are appended by hand in the
+// migration SQL — Prisma's schema language can't express them.
 // ============================================================================
 
 generator client {
@@ -19,456 +35,1077 @@ datasource db {
   extensions = [pgcrypto]
 }
 
-// ---------------------------------------------------------------------------
-// Agents (support staff). First registered agent becomes admin.
-// ---------------------------------------------------------------------------
-model agents {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name          String
-  email         String   @unique
-  password_hash String
-  role          String   @default("agent") // CHECK (role IN ('admin','agent'))
-  avatar_url    String?
-  avatar_mime   String?
-  is_online     Boolean  @default(false)
-  last_seen     DateTime @default(now()) @db.Timestamptz(6)
-  created_at    DateTime @default(now()) @db.Timestamptz(6)
+// ===========================================================================
+// TENANCY & IDENTITY
+// ===========================================================================
 
-  refresh_tokens     refresh_tokens[]
-  push_subscriptions push_subscriptions[]
-  conversations      conversations[]
-  conversation_notes conversation_notes[]
-  audit_log          audit_log[]
+/// A customer company. The root of every tenant-scoped row.
+model workspaces {
+  id   String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name String
+  slug String @unique // app.nestled.chat/w/<slug>
+  timezone String @default("UTC") // IANA; default for new websites
+
+  /// Billing mirrors. Denormalized here so a plan-limit check touches a row the
+  /// auth plugin already loaded. WRITTEN ONLY by the Stripe webhook handler and
+  /// the trial/dunning job — never by a request handler.
+  plan_id             String    @db.Uuid
+  subscription_status String    @default("trialing") // CHECK: see migration
+  trial_ends_at       DateTime? @db.Timestamptz(6)
+  stripe_customer_id  String?   @unique
+  /// During grace the widget keeps serving — never break a prospect's live site.
+  grace_until  DateTime? @db.Timestamptz(6)
+  /// Set on cancel; the purge job reads it. Webhooks never delete data.
+  purge_after  DateTime? @db.Timestamptz(6)
+  deleted_at   DateTime? @db.Timestamptz(6)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  plan plans @relation(fields: [plan_id], references: [id])
+
+  websites                   websites[]
+  members                    workspace_members[]
+  invites                    invites[]
+  private_settings           workspace_private_settings?
+  website_settings           website_settings[]
+  website_business_hours     website_business_hours[]
+  website_domains            website_domains[]
+  conversations              conversations[]
+  messages                   messages[]
+  attachments                attachments[]
+  conversation_notes         conversation_notes[]
+  stored_files               stored_files[]
+  knowledge_base             knowledge_base[]
+  canned_responses           canned_responses[]
+  starters                   starters[]
+  triggers                   triggers[]
+  bot_flows                  bot_flows[]
+  bot_flow_runs              bot_flow_runs[]
+  routing_rules              routing_rules[]
+  persons                    persons[]
+  visitor_links              visitor_links[]
+  person_signals             person_signals[]
+  visitor_ips                visitor_ips[]
+  ai_usage                   ai_usage[]
+  usage_counters             usage_counters[]
+  audit_log                  audit_log[]
+  outbound_emails            outbound_emails[]
+  subscription               subscriptions?
+  invoices                   invoices[]
+  impersonation_sessions     impersonation_sessions[]
+
+  @@index([subscription_status])
+  @@index([deleted_at])
 }
 
-// Refresh tokens: only a SHA-256 hash is stored.
+/// A human. Login is global and spans workspaces; the role, presence and seat are
+/// per membership. This is the split that makes "one account, several customers"
+/// work — an agency managing three clients is one user, three memberships.
+model users {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                String    @unique // stored lowercased
+  password_hash        String
+  name                 String
+  avatar_file_id       String?   @db.Uuid
+  email_verified_at    DateTime? @db.Timestamptz(6)
+  default_workspace_id String?   @db.Uuid
+  timezone             String?
+  last_login_at        DateTime? @db.Timestamptz(6)
+  deleted_at           DateTime? @db.Timestamptz(6)
+  created_at           DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  memberships    workspace_members[]
+  refresh_tokens refresh_tokens[]
+  tokens         user_tokens[]
+  push           push_subscriptions[]
+  sent_invites   invites[]           @relation("invite_author")
+  notes          conversation_notes[]
+  avatar_file    stored_files?       @relation("user_avatar", fields: [avatar_file_id], references: [id], onDelete: SetNull)
+
+  @@index([deleted_at])
+}
+
+/// A user's role inside one workspace. `all_websites` + member_website_access is
+/// orthogonal to role: a workspace admin can be narrowed to a single website, and
+/// both the capability check and the tenant client honour it.
+model workspace_members {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  user_id      String   @db.Uuid
+  role         String   @default("agent") // CHECK (owner|admin|agent)
+  status       String   @default("active") // CHECK (active|suspended)
+  all_websites Boolean  @default(true) // false → consult member_website_access
+  is_online    Boolean  @default(false) // per-workspace presence
+  last_seen    DateTime @default(now()) @db.Timestamptz(6)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  user      users      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  websites      member_website_access[]
+  conversations conversations[]
+  messages      messages[]
+  bot_versions  bot_flow_versions[]
+
+  @@unique([workspace_id, user_id])
+  /// Composite-FK target: lets conversations.assigned_member_id be proven to
+  /// belong to the same workspace by the database.
+  @@unique([workspace_id, id])
+  @@index([workspace_id, role])
+  @@index([user_id])
+}
+
+model member_website_access {
+  member_id  String @db.Uuid
+  website_id String @db.Uuid
+
+  member  workspace_members @relation(fields: [member_id], references: [id], onDelete: Cascade)
+  website websites          @relation(fields: [website_id], references: [id], onDelete: Cascade)
+
+  @@id([member_id, website_id])
+  @@index([website_id])
+}
+
+model invites {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id  String    @db.Uuid
+  email         String // lowercased
+  role          String    @default("agent") // CHECK (owner|admin|agent)
+  all_websites  Boolean   @default(true)
+  website_ids   String[]  @db.Uuid // honoured when all_websites = false
+  token_hash    String    @unique // reuses auth/tokens.ts hashToken()
+  invited_by_id String?   @db.Uuid
+  expires_at    DateTime  @db.Timestamptz(6)
+  accepted_at   DateTime? @db.Timestamptz(6)
+  revoked_at    DateTime? @db.Timestamptz(6)
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  author    users?     @relation("invite_author", fields: [invited_by_id], references: [id], onDelete: SetNull)
+
+  // A partial unique index (one PENDING invite per email per workspace) is added
+  // in the migration SQL — Prisma can't express a WHERE clause on an index.
+  @@index([workspace_id, accepted_at])
+}
+
+/// Email verification + password reset. One opaque-token-hashed-at-rest pattern
+/// now backs five things: refresh tokens, these two, invites, and the proactive
+/// claim token — all through auth/tokens.ts.
+model user_tokens {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String    @db.Uuid
+  kind        String // CHECK (email_verify|password_reset)
+  token_hash  String    @unique
+  expires_at  DateTime  @db.Timestamptz(6)
+  consumed_at DateTime? @db.Timestamptz(6)
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+
+  user users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, kind])
+}
+
+/// Refresh tokens: only a SHA-256 hash is stored. Deliberately NOT workspace
+/// scoped — a session belongs to the human and spans workspaces; the short-lived
+/// access token is what carries workspace context.
 model refresh_tokens {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agent_id   String    @db.Uuid
-  token_hash String    @unique
-  expires_at DateTime  @db.Timestamptz(6)
-  created_at DateTime  @default(now()) @db.Timestamptz(6)
-  revoked_at DateTime? @db.Timestamptz(6)
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id      String    @db.Uuid
+  /// Rotation family. Reuse of a rotated token revokes the whole family, which is
+  /// what turns token theft into a detectable event instead of a silent one.
+  session_id   String    @db.Uuid
+  token_hash   String    @unique
+  user_agent   String?
+  ip           String?
+  expires_at   DateTime  @db.Timestamptz(6)
+  last_used_at DateTime? @db.Timestamptz(6)
+  revoked_at   DateTime? @db.Timestamptz(6)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
 
-  agent agents @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  user users @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  @@index([agent_id], map: "idx_refresh_tokens_agent")
+  @@index([user_id])
+  @@index([session_id])
 }
 
-// ---------------------------------------------------------------------------
-// Conversations. visitor_token_hash scopes anonymous access to this one row.
-// ---------------------------------------------------------------------------
-model conversations {
-  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  visitor_id         String
-  visitor_name       String?
-  visitor_email      String?
-  visitor_token_hash String
-  status             String   @default("open") // CHECK (status IN ('open','pending','resolved'))
-  assigned_agent_id  String?  @db.Uuid
-  needs_human        Boolean  @default(false)
-  message_count      Int      @default(0)
-  ai_greeted         Boolean  @default(false)
-  metadata           Json     @default(dbgenerated("'{}'::jsonb"))
-  created_at         DateTime @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime @default(now()) @db.Timestamptz(6)
-
-  assigned_agent     agents?              @relation(fields: [assigned_agent_id], references: [id], onDelete: SetNull)
-  messages           messages[]
-  attachments        attachments[]
-  conversation_notes conversation_notes[]
-  ai_usage           ai_usage[]
-
-  @@index([status], map: "idx_conversations_status")
-  @@index([updated_at(sort: Desc)], map: "idx_conversations_updated_at")
-  @@index([visitor_id], map: "idx_conversations_visitor_id")
-  @@index([assigned_agent_id], map: "idx_conversations_assigned")
-}
-
-// ---------------------------------------------------------------------------
-// Messages.
-// ---------------------------------------------------------------------------
-model messages {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  conversation_id String   @db.Uuid
-  content         String
-  sender_type     String // CHECK (sender_type IN ('visitor','agent','ai'))
-  sender_id       String?
-  metadata        Json     @default(dbgenerated("'{}'::jsonb"))
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
-
-  conversation conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-  attachments  attachments[]
-
-  @@index([conversation_id, created_at], map: "idx_messages_conversation")
-}
-
-// ---------------------------------------------------------------------------
-// Knowledge base.
-// ---------------------------------------------------------------------------
-model knowledge_base {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  question   String
-  answer     String
-  category   String   @default("general")
-  keywords   String[] @default([])
-  priority   Int      @default(0)
-  is_active  Boolean  @default(true)
-  sites      String[] @default([]) // which sites/modes this applies to; empty = all
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
-
-  @@index([is_active], map: "idx_kb_active")
-  @@index([category], map: "idx_kb_category")
-}
-
-// ---------------------------------------------------------------------------
-// Settings, split by trust boundary. Single-row tables (id = 1 enforced by a
-// CHECK constraint added in the migration SQL).
-// ---------------------------------------------------------------------------
-model public_settings {
-  id                         Int      @id @default(1)
-  widget_title               String   @default("Chat with us")
-  welcome_message            String   @default("Hi! How can we help you today?")
-  primary_color              String   @default("#c67139")
-  widget_position            String   @default("right") // CHECK (IN ('left','right'))
-  widget_avatar_url          String?
-  ai_enabled                 Boolean  @default(true)
-  pre_chat_enabled           Boolean  @default(false)
-  pre_chat_fields            Json     @default(dbgenerated("'[]'::jsonb"))
-  auto_welcome_enabled       Boolean  @default(false)
-  auto_welcome_message       String?
-  auto_welcome_delay         Int      @default(5)
-  notification_sound_enabled Boolean  @default(true)
-  magic_browse_enabled       Boolean  @default(false)
-  updated_at                 DateTime @default(now()) @db.Timestamptz(6)
-}
-
-model private_settings {
-  id                         Int      @id @default(1)
-  ai_provider                String   @default("anthropic") // CHECK (IN ('knowledge_base','anthropic','openai','ollama'))
-  ai_model                   String   @default("claude-opus-4-8")
-  ai_response_mode           String   @default("first_message") // CHECK (IN ('off','first_message','when_no_agent_online','always'))
-  system_prompt              String   @default("You are a helpful customer support assistant for JetFood, a food-ordering platform. Answer only about JetFood and its services. Never invent order statuses or refunds — direct those to a human. Reply in English, concisely and professionally.")
-  anthropic_api_key          String?
-  openai_api_key             String?
-  openai_model               String   @default("gpt-4o-mini")
-  ollama_url                 String?
-  ollama_model               String   @default("llama2")
-  discord_webhook_url        String?
-  discord_webhook_enabled    Boolean  @default(false)
-  discord_notify_new_chat    Boolean  @default(true)
-  discord_notify_new_message Boolean  @default(false)
-  updated_at                 DateTime @default(now()) @db.Timestamptz(6)
-}
-
-// ---------------------------------------------------------------------------
-// Triggers system.
-// ---------------------------------------------------------------------------
-model triggers {
-  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name               String
-  identifier         String   @unique
-  is_active          Boolean  @default(true)
-  priority           Int      @default(0)
-  fire_count         Int      @default(0)
-  conversation_count Int      @default(0)
-  sites              String[] @default([]) // which sites/modes this applies to; empty = all
-  created_at         DateTime @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime @default(now()) @db.Timestamptz(6)
-
-  trigger_actions   trigger_actions[]
-  trigger_events    trigger_events[]
-  trigger_behaviors trigger_behaviors[]
-  trigger_platforms trigger_platforms[]
-
-  @@index([is_active, priority], map: "idx_triggers_active")
-}
-
-model trigger_actions {
-  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  trigger_id         String   @db.Uuid
-  show_message       Boolean  @default(false)
-  message_content    String?
-  localized_messages Json     @default(dbgenerated("'{}'::jsonb"))
-  open_chatbox       Boolean  @default(false)
-  play_sound         Boolean  @default(false)
-  created_at         DateTime @default(now()) @db.Timestamptz(6)
-
-  trigger triggers @relation(fields: [trigger_id], references: [id], onDelete: Cascade)
-
-  @@index([trigger_id], map: "idx_trigger_actions_trigger")
-}
-
-model trigger_events {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  trigger_id        String   @db.Uuid
-  on_leave_intent   Boolean  @default(false)
-  on_click_link     Boolean  @default(false)
-  click_selectors   String[] @default([])
-  on_pages          Boolean  @default(false)
-  page_urls         String[] @default([])
-  on_url_parameters Boolean  @default(false)
-  url_parameters    Json     @default(dbgenerated("'{}'::jsonb"))
-  after_delay       Boolean  @default(false)
-  delay_seconds     Int      @default(0)
-  created_at        DateTime @default(now()) @db.Timestamptz(6)
-
-  trigger triggers @relation(fields: [trigger_id], references: [id], onDelete: Cascade)
-
-  @@index([trigger_id], map: "idx_trigger_events_trigger")
-}
-
-model trigger_behaviors {
-  id                          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  trigger_id                  String   @db.Uuid
-  show_as_website             Boolean  @default(false)
-  execute_if_online           Boolean  @default(false)
-  execute_on_first_visit      Boolean  @default(false)
-  execute_if_no_other_trigger Boolean  @default(false)
-  country_restriction         String[] @default([])
-  created_at                  DateTime @default(now()) @db.Timestamptz(6)
-
-  trigger triggers @relation(fields: [trigger_id], references: [id], onDelete: Cascade)
-
-  @@index([trigger_id], map: "idx_trigger_behaviors_trigger")
-}
-
-model trigger_platforms {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  trigger_id      String   @db.Uuid
-  desktop_enabled Boolean  @default(true)
-  mobile_enabled  Boolean  @default(true)
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
-
-  trigger triggers @relation(fields: [trigger_id], references: [id], onDelete: Cascade)
-
-  @@index([trigger_id], map: "idx_trigger_platforms_trigger")
-}
-
-// ---------------------------------------------------------------------------
-// Audit log for admin actions.
-// ---------------------------------------------------------------------------
-model audit_log {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agent_id    String?  @db.Uuid
-  agent_email String?
-  action      String
-  target_type String?
-  target_id   String?
-  details     Json     @default(dbgenerated("'{}'::jsonb"))
-  ip_address  String?
-  created_at  DateTime @default(now()) @db.Timestamptz(6)
-
-  agent agents? @relation(fields: [agent_id], references: [id], onDelete: SetNull)
-
-  @@index([created_at(sort: Desc)], map: "idx_audit_log_created")
-  @@index([agent_id], map: "idx_audit_log_agent")
-}
-
-// ---------------------------------------------------------------------------
-// Web Push subscriptions (Phase 2).
-// ---------------------------------------------------------------------------
+/// A push-notification device. Belongs to the human, not a workspace — routing to
+/// the right workspace is resolved from membership at send time.
 model push_subscriptions {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agent_id   String   @db.Uuid
+  user_id    String   @db.Uuid
   endpoint   String   @unique
   p256dh     String
   auth       String
   user_agent String?
-  created_at DateTime @default(now()) @db.Timestamptz(6)
   last_seen  DateTime @default(now()) @db.Timestamptz(6)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
 
-  agent agents @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  user users @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  @@index([agent_id], map: "idx_push_subscriptions_agent")
+  @@index([user_id])
 }
 
-// ---------------------------------------------------------------------------
-// Attachments (Phase 4).
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// WEBSITES & SETTINGS
+// ===========================================================================
+
+/// One place a customer embeds the widget. The second level of tenancy: a real
+/// FK'd owner of rows, unlike the old `sites` table which owned nothing.
+model websites {
+  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String @db.Uuid
+  /// "nst_" + 24 base62, SERVER-generated. Unguessable on purpose: a readable
+  /// tenant selector would let any visitor enumerate other customers' widget
+  /// config, copy, starters and domain lists.
+  public_key      String    @unique
+  name            String
+  primary_domain  String?
+  is_active       Boolean   @default(true)
+  allowed_domains String[]  @default([])
+  enforce_domains Boolean   @default(false)
+  /// Shared HMAC secret for signed visitor attributes. Admin-only; never leaves
+  /// the private settings routes.
+  identity_secret String?
+  /// First verified widget-config hit — the signal that completes onboarding.
+  installed_at    DateTime? @db.Timestamptz(6)
+  deleted_at      DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  settings      website_settings?
+  hours         website_business_hours?
+  domains       website_domains[]
+  conversations conversations[]
+  member_access member_website_access[]
+  knowledge_base knowledge_base[]
+  canned_responses canned_responses[]
+  starters      starters[]
+  triggers      triggers[]
+  bot_flows     bot_flows[]
+  routing_rules routing_rules[]
+  visitor_links visitor_links[]
+  ai_usage      ai_usage[]
+
+  /// The keystone: every website-scoped child FKs on (workspace_id, id), so
+  /// Postgres rejects a child pointing at another tenant's website.
+  @@unique([workspace_id, id])
+  @@index([workspace_id, is_active])
+}
+
+/// PUBLIC-SAFE ONLY. Everything here is served to anonymous visitors by the
+/// widget boot route. A secret in this table is a leak by construction — that is
+/// exactly why the split is two tables and not two column groups.
+model website_settings {
+  website_id   String @id @db.Uuid
+  workspace_id String @db.Uuid
+
+  // ── Theme. Explicit columns: few, validated, rendered into CSS variables. ──
+  primary_color    String  @default("#4f46e5")
+  color_mode       String  @default("light") // CHECK (light|dark|auto)
+  radius_px        Int     @default(16)
+  font_family      String  @default("system")
+  position         String  @default("right") // CHECK (left|right)
+  offset_x         Int     @default(20)
+  offset_y         Int     @default(20)
+  launcher_style   String  @default("bubble") // CHECK (bubble|pill|custom_icon)
+  launcher_file_id String? @db.Uuid
+  avatar_file_id   String? @db.Uuid
+  logo_file_id     String? @db.Uuid
+  /// Plan-gated. The resolver may force this true regardless of what is stored,
+  /// so a client cannot flip it.
+  show_branding    Boolean @default(true)
+
+  // ── Behaviour ──
+  ai_enabled               Boolean @default(true)
+  ai_response_mode         String  @default("first_message") // CHECK: see migration
+  system_prompt            String?
+  /// Customer-authored extra instructions. Assembled BEFORE the fixed style,
+  /// grounding and handoff rules so it can never override the contract.
+  ai_extra_rules           String?
+  pre_chat_enabled         Boolean @default(false)
+  pre_chat_fields          Json    @default(dbgenerated("'[]'::jsonb"))
+  auto_welcome_enabled     Boolean @default(false)
+  auto_welcome_message     String?
+  auto_welcome_delay       Int     @default(5)
+  file_upload_enabled      Boolean @default(true)
+  sound_enabled            Boolean @default(true)
+  /// Plan-gated (session replay is expensive to buffer).
+  live_view_enabled        Boolean @default(false)
+  transcript_email_enabled Boolean @default(true)
+  reset_after_resolve      Boolean @default(true)
+
+  /// Conversation starters and rating chips: ordered, customer-authored, and
+  /// validated by a zod schema that rejects unknown keys.
+  starters_enabled Boolean @default(true)
+  rating_tags      String[] @default([])
+
+  /// Visitor-facing copy OVERRIDES only, merged over DEFAULT_COPY in code. Storing
+  /// only what the customer changed means future default-copy improvements reach
+  /// everyone who never edited that string.
+  copy Json @default(dbgenerated("'{}'::jsonb"))
+
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  website   websites   @relation(fields: [website_id], references: [id], onDelete: Cascade)
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+model website_business_hours {
+  website_id   String  @id @db.Uuid
+  workspace_id String  @db.Uuid
+  enabled      Boolean @default(false)
+  timezone     String  @default("UTC") // IANA
+  /// [{ dow: 1, intervals: [["09:00","17:00"]] }, …]
+  rules        Json    @default(dbgenerated("'[]'::jsonb"))
+  /// [{ date: "2026-01-01", label: "New Year" }, …]
+  holidays     Json    @default(dbgenerated("'[]'::jsonb"))
+  /// CHECK (collect_email|message_only|hide_widget|bot_flow)
+  offline_behavior String  @default("collect_email")
+  offline_bot_flow_id String? @db.Uuid
+  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  website   websites   @relation(fields: [website_id], references: [id], onDelete: Cascade)
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id])
+}
+
+/// Every host the widget has actually loaded on. Kept (not dropped) because it is
+/// the "is it installed?" signal the onboarding wizard waits on, and the flag for
+/// unauthorized embeds.
+model website_domains {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  website_id   String   @db.Uuid
+  host         String
+  hits         Int      @default(0)
+  authorized   Boolean  @default(false)
+  first_seen   DateTime @default(now()) @db.Timestamptz(6)
+  last_seen    DateTime @default(now()) @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  website   websites   @relation(fields: [website_id], references: [id], onDelete: Cascade)
+
+  @@unique([website_id, host])
+  @@index([workspace_id])
+}
+
+/// SECRETS. Reachable only from admin-capability routes. No public route may ever
+/// select from this table.
+///
+/// Note there are no customer AI-provider keys here: AI is platform
+/// infrastructure, metered per workspace and plan-gated, so a customer-supplied
+/// key would be a support liability and an extra attack surface for no gain.
+model workspace_private_settings {
+  workspace_id String @id @db.Uuid
+
+  discord_webhook_url        String?
+  discord_webhook_enabled    Boolean @default(false)
+  discord_notify_new_chat    Boolean @default(true)
+  discord_notify_new_message Boolean @default(false)
+
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+}
+
+// ===========================================================================
+// CONVERSATIONS
+// ===========================================================================
+
+model conversations {
+  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String @db.Uuid
+  website_id   String @db.Uuid
+
+  visitor_id    String
+  person_id     String? @db.Uuid
+  visitor_name  String?
+  visitor_email String?
+  /// The visitor's bearer token for this conversation, hashed. Unique because it
+  /// is also the WS handshake lookup key.
+  visitor_token_hash String  @unique
+  /// Single-use, 60s token for proactive handover. The proactive frame carries
+  /// THIS, never the visitor token — so a leaked frame is worthless on its own.
+  claim_token_hash   String?
+  claim_expires_at   DateTime? @db.Timestamptz(6)
+
+  status             String  @default("open") // CHECK (open|pending|resolved)
+  source             String  @default("widget") // CHECK (widget|proactive|bot)
+  assigned_member_id String? @db.Uuid
+  needs_human        Boolean @default(false)
+  message_count      Int     @default(0)
+  ai_greeted         Boolean @default(false)
+  tags               String[] @default([])
+
+  first_response_at DateTime? @db.Timestamptz(6)
+  resolved_at       DateTime? @db.Timestamptz(6)
+  rating_stars      Int?
+  rating_tags       String[]  @default([])
+  rating_comment    String?
+
+  /// UNVERIFIED client hints: ip, geo, page, utm, user agent, prechat answers.
+  metadata          Json @default(dbgenerated("'{}'::jsonb"))
+  /// HMAC-VERIFIED attributes only. The split is the whole point: the AI prompt
+  /// and the agent's "verified" card read this, never `metadata`.
+  custom_attributes Json @default(dbgenerated("'{}'::jsonb"))
+
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  workspace workspaces         @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  website   websites           @relation(fields: [workspace_id, website_id], references: [workspace_id, id], onDelete: Cascade)
+  /// Declared single-column here for client ergonomics. The migration REPLACES
+  /// Prisma's foreign key with the composite (workspace_id, assigned_member_id)
+  /// one, using Postgres 15+ `ON DELETE SET NULL (assigned_member_id)` so only the
+  /// nullable column is cleared. A composite relation cannot be expressed here
+  /// because Prisma would have to null `workspace_id` too, which is NOT NULL.
+  assignee  workspace_members? @relation(fields: [assigned_member_id], references: [id], onDelete: SetNull)
+  person    persons?           @relation(fields: [person_id], references: [id], onDelete: SetNull)
+
+  messages      messages[]
+  attachments   attachments[]
+  notes         conversation_notes[]
+  bot_runs      bot_flow_runs[]
+  ai_usage      ai_usage[]
+
+  /// FK target for messages/attachments/notes/bot_runs.
+  @@unique([workspace_id, id])
+  @@index([workspace_id, status, updated_at(sort: Desc)])
+  @@index([website_id, updated_at(sort: Desc)])
+  @@index([workspace_id, assigned_member_id, status])
+  @@index([workspace_id, visitor_id])
+  @@index([person_id])
+}
+
+model messages {
+  id              String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String @db.Uuid
+  conversation_id String @db.Uuid
+  content         String
+  /// CHECK (visitor|agent|ai|bot|system)
+  sender_type      String
+  sender_member_id String? @db.Uuid
+  metadata         Json    @default(dbgenerated("'{}'::jsonb"))
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+
+  workspace    workspaces         @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  conversation conversations      @relation(fields: [workspace_id, conversation_id], references: [workspace_id, id], onDelete: Cascade)
+  sender       workspace_members? @relation(fields: [sender_member_id], references: [id], onDelete: SetNull)
+
+  attachments attachments[]
+
+  @@index([conversation_id, created_at])
+  /// Monthly metering + retention sweeps, without a join.
+  @@index([workspace_id, created_at])
+}
+
 model attachments {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  conversation_id String   @db.Uuid
-  message_id      String?  @db.Uuid
+  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String  @db.Uuid
+  conversation_id String  @db.Uuid
+  message_id      String? @db.Uuid
+  file_id         String  @db.Uuid
   filename        String
   mime            String
   size_bytes      Int
-  storage_path    String
   created_at      DateTime @default(now()) @db.Timestamptz(6)
 
-  conversation conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  workspace    workspaces    @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  conversation conversations @relation(fields: [workspace_id, conversation_id], references: [workspace_id, id], onDelete: Cascade)
   message      messages?     @relation(fields: [message_id], references: [id], onDelete: Cascade)
+  file         stored_files  @relation(fields: [file_id], references: [id], onDelete: Cascade)
 
-  @@index([conversation_id], map: "idx_attachments_conversation")
-}
-
-// ---------------------------------------------------------------------------
-// Canned responses + internal notes (Phase 6).
-// ---------------------------------------------------------------------------
-/// A deployment site (e.g. jetfood.com, tryjet.io). Its `key` matches the
-/// embed's data-mode. Per-site widget appearance overrides (null = inherit the
-/// global public_settings) and the quick-action set the widget shows.
-model sites {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  key             String   @unique
-  name            String
-  is_active       Boolean  @default(true)
-  primary_color   String?
-  widget_title    String?
-  welcome_message String?
-  widget_position String? // 'left' | 'right'
-  system_prompt   String? // per-site AI system prompt; null = use the global one
-  pre_chat_enabled Boolean? // null = inherit global; true = ask site fields; false = off
-  pre_chat_fields Json     @default("[]") // [{ name, label, type, required, placeholder }]
-  quick_actions   Json     @default("[]") // [{ intent, label? }] — empty = built-in pack
-  allowed_domains String[] @default([]) // hostnames allowed to embed; empty = anywhere
-  enforce_domains Boolean  @default(false) // hide the widget on unlisted domains
-  // Shared HMAC secret for signed visitor context (e.g. JetFood's PHP signs the
-  // logged-in customer + order data into a JWT; we verify it here so the data is
-  // trusted, not client-spoofable). Admin-only; never sent to the public widget.
-  context_secret  String? // null = signed context disabled for this site
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
-  updated_at      DateTime @default(now()) @db.Timestamptz(6)
-}
-
-/// Every domain the widget has actually been loaded on, per site. Lets admins
-/// spot the embed running on an unrecognised site.
-model site_domains {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  site_key   String
-  host       String
-  hits       Int      @default(1)
-  authorized Boolean  @default(true)
-  first_seen DateTime @default(now()) @db.Timestamptz(6)
-  last_seen  DateTime @default(now()) @db.Timestamptz(6)
-
-  @@unique([site_key, host])
-}
-
-/// A managed quick action shown in the widget. Fully data-driven: label, whether
-/// it auto-replies or escalates to an agent, the visitor/reply text (with
-/// {placeholders}), an optional intake form (fields), and a handoff suggestion.
-model quick_actions {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  key              String   @unique
-  label            String
-  kind             String   @default("human") // 'auto' | 'human'
-  visitor_template String   @default("")
-  reply_template   String   @default("")
-  suggestion       String?
-  fields           Json     @default("[]") // [{ name, label, required }]
-  priority         Int      @default(0)
-  is_active        Boolean  @default(true)
-  created_at       DateTime @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime @default(now()) @db.Timestamptz(6)
-}
-
-/// Every IP a visitor has connected from (tracked across sessions / IP changes).
-model visitor_ips {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  visitor_id String
-  ip         String
-  geo        Json?
-  hits       Int      @default(1)
-  first_seen DateTime @default(now()) @db.Timestamptz(6)
-  last_seen  DateTime @default(now()) @db.Timestamptz(6)
-
-  @@unique([visitor_id, ip])
-  @@index([visitor_id], map: "idx_visitor_ips_visitor")
-}
-
-model canned_responses {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  shortcut   String   @unique
-  title      String
-  content    String
-  sites      String[] @default([]) // which sites/modes this applies to; empty = all
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  @@index([conversation_id])
+  @@index([workspace_id])
 }
 
 model conversation_notes {
   id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String   @db.Uuid
   conversation_id String   @db.Uuid
-  agent_id        String?  @db.Uuid
-  agent_name      String?
+  author_user_id  String?  @db.Uuid
+  author_name     String
   content         String
   created_at      DateTime @default(now()) @db.Timestamptz(6)
 
-  conversation conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-  agent        agents?       @relation(fields: [agent_id], references: [id], onDelete: SetNull)
+  workspace    workspaces    @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  conversation conversations @relation(fields: [workspace_id, conversation_id], references: [workspace_id, id], onDelete: Cascade)
+  author       users?        @relation(fields: [author_user_id], references: [id], onDelete: SetNull)
 
-  @@index([conversation_id, created_at], map: "idx_conversation_notes_conversation")
+  @@index([conversation_id, created_at])
+  @@index([workspace_id])
 }
 
-// ---------------------------------------------------------------------------
-// AI usage accounting (Phase 7).
-// ---------------------------------------------------------------------------
+/// Every stored blob, in one table. Gives one place to compute the storage quota,
+/// one seam for S3, and — because the random id IS the public URL capability —
+/// fixes the old `/api/avatars/:id` problem where the URL was the agent's id.
+model stored_files {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  /// CHECK (attachment|branding|user_avatar)
+  kind         String
+  /// CHECK (local|s3)
+  backend      String   @default("local")
+  storage_key  String
+  mime         String
+  size_bytes   Int
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  workspace   workspaces    @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  attachments attachments[]
+  avatars     users[]       @relation("user_avatar")
+
+  @@index([workspace_id, kind])
+}
+
+// ===========================================================================
+// CONTENT & AUTOMATION
+// ===========================================================================
+
+/// `website_id` NULL means "applies to every website in the workspace". That
+/// convention replaces the old `sites String[]` on all four content models — the
+/// array could not be a foreign key, so nothing stopped it naming a dead site.
+model knowledge_base {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  website_id   String?  @db.Uuid
+  question     String
+  answer       String
+  category     String   @default("general")
+  keywords     String[] @default([])
+  priority     Int      @default(0)
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  website   websites?  @relation(fields: [website_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id, is_active])
+  @@index([website_id])
+}
+
+model canned_responses {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  website_id   String?  @db.Uuid
+  shortcut     String
+  title        String
+  content      String
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  website   websites?  @relation(fields: [website_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, shortcut])
+  @@index([website_id])
+}
+
+/// Conversation starters: the chips a visitor taps instead of typing. The generic
+/// successor to the order-intent quick actions — a label, an optional intake form,
+/// and what to do next, with no knowledge of the customer's business.
+model starters {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  website_id   String?  @db.Uuid
+  key          String
+  label        String
+  /// Posted on the visitor's behalf; falls back to `label`.
+  message      String?
+  /// CHECK (auto|human|bot)
+  kind         String   @default("auto")
+  /// Collected before the starter runs. Same shape as pre_chat_fields.
+  fields       Json     @default(dbgenerated("'[]'::jsonb"))
+  bot_flow_id  String?  @db.Uuid
+  icon         String?
+  priority     Int      @default(0)
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  website   websites?  @relation(fields: [website_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, key])
+  @@index([workspace_id, is_active, priority])
+  @@index([website_id])
+}
+
+/// Proactive campaigns. The four 1:1 child tables (actions/events/behaviors/
+/// platforms) are gone: they were never filtered on their own columns, and every
+/// save deleted and recreated all four rows. Four JSONB columns, validated by the
+/// zod schemas that already existed, do the same job without 4 tables, 4 indexes
+/// and 8 statements per write.
+model triggers {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String  @db.Uuid
+  website_id   String? @db.Uuid
+  name         String
+  identifier   String
+  is_active    Boolean @default(true)
+  priority     Int     @default(0)
+
+  fire_count         Int @default(0)
+  conversation_count Int @default(0)
+
+  actions   Json @default(dbgenerated("'{}'::jsonb"))
+  events    Json @default(dbgenerated("'{}'::jsonb"))
+  behaviors Json @default(dbgenerated("'{}'::jsonb"))
+  platforms Json @default(dbgenerated("'{}'::jsonb"))
+
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  website   websites?  @relation(fields: [website_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, identifier])
+  @@index([workspace_id, is_active, priority])
+  @@index([website_id])
+}
+
+/// A bot conversation graph. Execution is SERVER-side (see bot_flow_runs): flows
+/// must be consistent, auditable and able to consult the KB and assignment state,
+/// and server execution is also what makes them work unchanged if an email or
+/// Slack channel is added later.
+model bot_flows {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String  @db.Uuid
+  website_id   String? @db.Uuid
+  name         String
+  is_active    Boolean @default(false)
+  priority     Int     @default(0)
+  /// When this flow starts (page match, starter id, out-of-hours, …).
+  entry        Json    @default(dbgenerated("'{}'::jsonb"))
+  /// The builder's working copy; publishing snapshots it into a version row.
+  draft_graph  Json    @default(dbgenerated("'{}'::jsonb"))
+  published_version Int?
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  website   websites?  @relation(fields: [website_id], references: [id], onDelete: Cascade)
+
+  versions bot_flow_versions[]
+  runs     bot_flow_runs[]
+
+  @@unique([workspace_id, id])
+  @@index([workspace_id, is_active, priority])
+  @@index([website_id])
+}
+
+/// Publish = insert a version. Rollback = repoint published_version. Immutable, so
+/// a running conversation keeps executing the graph it started on.
+model bot_flow_versions {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  flow_id      String   @db.Uuid
+  version      Int
+  graph        Json
+  published_at DateTime @default(now()) @db.Timestamptz(6)
+  published_by String?  @db.Uuid
+
+  flow      bot_flows          @relation(fields: [flow_id], references: [id], onDelete: Cascade)
+  publisher workspace_members? @relation(fields: [published_by], references: [id], onDelete: SetNull)
+
+  @@unique([flow_id, version])
+}
+
+/// Flows are stateful across messages, so a run is a row.
+model bot_flow_runs {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String   @db.Uuid
+  conversation_id String   @db.Uuid
+  flow_id         String   @db.Uuid
+  flow_version    Int
+  current_node_id String?
+  state           Json     @default(dbgenerated("'{}'::jsonb"))
+  /// CHECK (running|completed|handoff|abandoned)
+  status          String   @default("running")
+  started_at      DateTime @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace    workspaces    @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  conversation conversations @relation(fields: [workspace_id, conversation_id], references: [workspace_id, id], onDelete: Cascade)
+  flow         bot_flows     @relation(fields: [flow_id], references: [id], onDelete: Cascade)
+
+  @@index([conversation_id, status])
+  @@index([workspace_id])
+}
+
+/// Auto-assignment. Deliberately an ordered rule table, not a graph — a graph UI
+/// here would be strictly worse than a list of when/then rows. No `teams` table in
+/// v1: `member_pool` covers the actual requirement without a second grouping idea.
+model routing_rules {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  website_id   String?  @db.Uuid
+  name         String
+  priority     Int      @default(0)
+  is_active    Boolean  @default(true)
+  /// page / country / attributes / hours
+  conditions   Json     @default(dbgenerated("'{}'::jsonb"))
+  /// CHECK (round_robin|least_active|specific)
+  strategy     String   @default("round_robin")
+  member_pool  String[] @default([]) @db.Uuid
+  cursor_member_id String? @db.Uuid
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  website   websites?  @relation(fields: [website_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id, is_active, priority])
+  @@index([website_id])
+}
+
+// ===========================================================================
+// VISITOR IDENTITY GRAPH
+//
+// Workspace-scoped, which is a deliberate change from the old global graph. Global
+// fusion in a multi-tenant product would tell workspace A that a visitor also
+// chatted with workspace B, and would merge people across unrelated customers by
+// device fingerprint. Cross-WEBSITE fusion inside one workspace is the legitimate
+// feature and still works.
+// ===========================================================================
+
+model persons {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id  String   @db.Uuid
+  display_name  String?
+  primary_email String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  visitor_links  visitor_links[]
+  person_signals person_signals[]
+  conversations  conversations[]
+
+  @@index([workspace_id])
+  @@index([workspace_id, primary_email])
+}
+
+model visitor_links {
+  workspace_id String   @db.Uuid
+  visitor_id   String
+  person_id    String   @db.Uuid
+  /// The website this visitor id was minted on (replaces the old `mode`).
+  website_id   String?  @db.Uuid
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  person    persons    @relation(fields: [person_id], references: [id], onDelete: Cascade)
+  website   websites?  @relation(fields: [website_id], references: [id], onDelete: SetNull)
+
+  @@id([workspace_id, visitor_id])
+  @@index([person_id])
+}
+
+model person_signals {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  person_id    String   @db.Uuid
+  /// CHECK (fingerprint|email)
+  kind         String
+  value        String
+  hits         Int      @default(1)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  person    persons    @relation(fields: [person_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, kind, value])
+  @@index([person_id])
+}
+
+model visitor_ips {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String   @db.Uuid
+  visitor_id   String
+  ip           String
+  geo          Json?
+  hits         Int      @default(1)
+  first_seen   DateTime @default(now()) @db.Timestamptz(6)
+  last_seen    DateTime @default(now()) @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([workspace_id, visitor_id, ip])
+  @@index([workspace_id, visitor_id])
+}
+
+// ===========================================================================
+// BILLING & METERING
+// ===========================================================================
+
+/// The plan catalog. Limits live here as columns (read on every limit check) with
+/// a `features` JSONB escape hatch, so sales can grant one customer an exception
+/// from the ops panel without a deploy.
+model plans {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String  @unique // free|starter|pro|business
+  name      String
+  is_public Boolean @default(true)
+  sort_order Int    @default(0)
+  /// The plan a new workspace TRIALS on. Exactly one row should have this set.
+  /// Trials deliberately start on a capable tier, not on `free`: a 14-day trial
+  /// that cannot invite a teammate or add a second website isn't an evaluation of
+  /// the product, and the customer discovers the limits as friction rather than as
+  /// a reason to upgrade. On trial expiry the workspace drops to `free`.
+  is_trial_default Boolean @default(false)
+
+  stripe_product_id       String?
+  stripe_price_monthly_id String?
+  stripe_price_yearly_id  String?
+  price_monthly_cents     Int @default(0)
+  price_yearly_cents      Int @default(0)
+  included_seats          Int @default(1)
+
+  max_seats               Int @default(1)
+  max_websites            Int @default(1)
+  max_conversations_month Int @default(200)
+  max_ai_replies_month    Int @default(100)
+  max_kb_entries          Int @default(50)
+  max_bot_flows           Int @default(0)
+  max_triggers            Int @default(3)
+  storage_mb              Int @default(500)
+  retention_days          Int @default(90)
+
+  allow_remove_branding Boolean @default(false)
+  allow_live_view       Boolean @default(false)
+  allow_bot             Boolean @default(false)
+
+  features Json @default(dbgenerated("'{}'::jsonb"))
+
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspaces    workspaces[]
+  subscriptions subscriptions[]
+}
+
+model subscriptions {
+  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String @unique @db.Uuid
+  plan_id      String @db.Uuid
+
+  stripe_subscription_id String  @unique
+  stripe_item_id         String?
+  /// Stripe's vocabulary, verbatim — translating it invites drift.
+  status                 String
+  interval               String // month|year
+  quantity               Int     @default(1) // seats billed
+
+  current_period_start DateTime  @db.Timestamptz(6)
+  current_period_end   DateTime  @db.Timestamptz(6)
+  trial_end            DateTime? @db.Timestamptz(6)
+  cancel_at_period_end Boolean   @default(false)
+  canceled_at          DateTime? @db.Timestamptz(6)
+  /// Out-of-order webhook guard: a handler drops any event older than this.
+  last_event_at        DateTime? @db.Timestamptz(6)
+
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  plan      plans      @relation(fields: [plan_id], references: [id])
+
+  @@index([status])
+}
+
+/// A mirror for the billing page. Stripe remains the source of truth.
+model invoices {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id       String    @db.Uuid
+  stripe_invoice_id  String    @unique
+  number             String?
+  status             String
+  amount_due         Int
+  amount_paid        Int
+  currency           String
+  hosted_invoice_url String?
+  invoice_pdf        String?
+  period_start       DateTime? @db.Timestamptz(6)
+  period_end         DateTime? @db.Timestamptz(6)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@index([workspace_id, created_at(sort: Desc)])
+}
+
+/// Idempotency ledger. The Stripe event id as PRIMARY KEY *is* the lock: an
+/// `ON CONFLICT DO NOTHING` insert that touches zero rows means "already handled".
+model stripe_events {
+  id           String    @id
+  type         String
+  payload      Json
+  received_at  DateTime  @default(now()) @db.Timestamptz(6)
+  processed_at DateTime? @db.Timestamptz(6)
+  attempts     Int       @default(0)
+  error        String?
+
+  @@index([processed_at])
+}
+
+/// What the limiter actually reads. `conversations` is incremented in the same
+/// transaction as the conversation insert, so it can never drift from reality;
+/// the rest are best-effort upserts.
+model usage_counters {
+  workspace_id String   @db.Uuid
+  /// conversations|ai_replies|ai_tokens_in|ai_tokens_out|emails|storage_bytes
+  metric       String
+  /// Month start. storage_bytes uses the epoch, since it is a level not a flow.
+  period_start DateTime @db.Date
+  value        BigInt   @default(0)
+  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@id([workspace_id, metric, period_start])
+}
+
 model ai_usage {
   id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String   @db.Uuid
+  website_id      String?  @db.Uuid
   conversation_id String?  @db.Uuid
   provider        String
   model           String
   input_tokens    Int      @default(0)
   output_tokens   Int      @default(0)
+  cost_micros     Int      @default(0)
   created_at      DateTime @default(now()) @db.Timestamptz(6)
 
+  workspace    workspaces     @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  website      websites?      @relation(fields: [website_id], references: [id], onDelete: SetNull)
   conversation conversations? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
 
-  @@index([created_at], map: "idx_ai_usage_created")
+  @@index([workspace_id, created_at])
 }
 
-// ---------------------------------------------------------------------------
-// Cross-site people pool.
+// ===========================================================================
+// PLATFORM (VENDOR) SURFACE
 //
-// `visitor_id` is minted in the host page's first-party localStorage, so the
-// same human on two different customer sites (different origins) shows up as
-// two unrelated visitor ids. We reconstruct one canonical *person* server-side
-// from device fingerprints (stable across origins) plus email. This graph is
-// ADMIN-ONLY — it is never exposed to visitor endpoints, so a visitor can still
-// only ever reach a conversation they hold the token for (security rule #7).
-// ---------------------------------------------------------------------------
-model persons {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  display_name  String?
-  primary_email String?
-  created_at    DateTime @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+// A different auth MECHANISM, not merely a different secret: opaque bearer
+// sessions checked against the database on every request. Platform traffic is
+// tiny, so the per-request lookup is free and buys instant revocation. No JWT
+// verifier is mounted under /platform/*, and /api/* never reads these tables.
+// ===========================================================================
 
-  visitors visitor_links[]
-  signals  person_signals[]
+model platform_users {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String    @unique
+  password_hash String
+  name          String
+  /// CHECK (superadmin|support|billing|readonly)
+  role          String    @default("support")
+  totp_secret   String?
+  /// Required before any write capability.
+  totp_enabled  Boolean   @default(false)
+  disabled_at   DateTime? @db.Timestamptz(6)
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
 
-  @@index([primary_email], map: "idx_persons_email")
+  sessions       platform_sessions[]
+  impersonations impersonation_sessions[]
 }
 
-// One row per client-minted visitor_id, pointing at the person it belongs to.
-model visitor_links {
-  visitor_id String   @id
-  person_id  String   @db.Uuid
-  mode       String? // site key this visitor id was seen on
-  first_seen DateTime @default(now()) @db.Timestamptz(6)
-  last_seen  DateTime @default(now()) @db.Timestamptz(6)
+model platform_sessions {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  platform_user_id String    @db.Uuid
+  token_hash       String    @unique
+  ip               String?
+  user_agent       String?
+  expires_at       DateTime  @db.Timestamptz(6)
+  revoked_at       DateTime? @db.Timestamptz(6)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
 
-  person persons @relation(fields: [person_id], references: [id], onDelete: Cascade)
+  platform_user platform_users @relation(fields: [platform_user_id], references: [id], onDelete: Cascade)
 
-  @@index([person_id], map: "idx_visitor_links_person")
+  @@index([platform_user_id])
 }
 
-// Unique identity signals (device fingerprint, email). The @@unique on
-// (kind, value) is what fuses two persons: seeing the same fingerprint again
-// resolves to the same person, and overlapping signals trigger a merge.
-model person_signals {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  person_id  String   @db.Uuid
-  kind       String // 'fingerprint' | 'email'
-  value      String
-  hits       Int      @default(1)
-  first_seen DateTime @default(now()) @db.Timestamptz(6)
-  last_seen  DateTime @default(now()) @db.Timestamptz(6)
+/// Every impersonation, with a mandatory reason, and no delete. This list is the
+/// control that makes impersonation defensible to a customer.
+model impersonation_sessions {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  platform_user_id String    @db.Uuid
+  workspace_id     String    @db.Uuid
+  target_user_id   String?   @db.Uuid
+  reason           String
+  /// CHECK (read_only|full)
+  scope            String    @default("read_only")
+  ip               String?
+  expires_at       DateTime  @db.Timestamptz(6) // <= 30 min
+  ended_at         DateTime? @db.Timestamptz(6)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
 
-  person persons @relation(fields: [person_id], references: [id], onDelete: Cascade)
+  platform_user platform_users @relation(fields: [platform_user_id], references: [id], onDelete: Cascade)
+  workspace     workspaces     @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
 
-  @@unique([kind, value], map: "uq_person_signals_kind_value")
-  @@index([person_id], map: "idx_person_signals_person")
+  audit_entries audit_log[]
+
+  @@index([workspace_id, created_at(sort: Desc)])
+}
+
+// ===========================================================================
+// OPS
+// ===========================================================================
+
+/// `workspace_id` NULL = a platform-level action. A staff action performed ON a
+/// workspace lands in THAT workspace's log, visible to the customer — which is
+/// the other half of what makes impersonation defensible.
+model audit_log {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String?  @db.Uuid
+  /// CHECK (user|platform_user|system|visitor)
+  actor_type   String
+  actor_id     String?  @db.Uuid
+  actor_email  String?
+  action       String
+  target_type  String?
+  target_id    String?
+  details      Json     @default(dbgenerated("'{}'::jsonb"))
+  ip_address   String?
+  request_id   String?
+  impersonation_session_id String? @db.Uuid
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  workspace     workspaces?             @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  impersonation impersonation_sessions? @relation(fields: [impersonation_session_id], references: [id], onDelete: SetNull)
+
+  @@index([workspace_id, created_at(sort: Desc)])
+  @@index([created_at(sort: Desc)])
+}
+
+/// Doubles as the retry queue and the email-quota source, so "did we send it?" and
+/// "how many did they send?" are the same table.
+model outbound_emails {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id        String?   @db.Uuid
+  to_email            String
+  template            String
+  subject             String
+  /// CHECK (queued|sent|failed)
+  status              String    @default("queued")
+  provider_message_id String?
+  error               String?
+  attempts            Int       @default(0)
+  related_type        String?
+  related_id          String?
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  sent_at             DateTime? @db.Timestamptz(6)
+
+  workspace workspaces? @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@index([status, created_at])
+  @@index([workspace_id, created_at(sort: Desc)])
 }

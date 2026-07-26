@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nestled sandbox — fake host page</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <style>
+      :root { color-scheme: light dark; --line: #e5e7eb; --muted: #6b7280; --bg: #f9fafb; --fg: #111827; --card: #fff; }
+      @media (prefers-color-scheme: dark) {
+        :root { --line: #2a2a2e; --muted: #9ca3af; --bg: #111113; --fg: #f4f4f5; --card: #18181b; }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        line-height: 1.5;
+        color: var(--fg);
+        background: var(--bg);
+      }
+      header {
+        padding: 1rem 1.5rem;
+        background: var(--card);
+        border-bottom: 1px solid var(--line);
+        font-weight: 700;
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+      }
+      main { max-width: 52rem; margin: 0 auto; padding: 2rem 1.5rem 12rem; }
+      h1 { font-size: 1.75rem; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
+      p.lede { color: var(--muted); margin: 0 0 1.5rem; }
+      section {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 0.75rem;
+        padding: 1rem 1.25rem;
+        margin-bottom: 0.75rem;
+      }
+      h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin: 0 0 0.75rem; }
+      .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+      button, input {
+        font: inherit;
+        font-size: 0.875rem;
+        padding: 0.4rem 0.75rem;
+        border: 1px solid var(--line);
+        border-radius: 0.5rem;
+        background: var(--card);
+        color: inherit;
+      }
+      button { cursor: pointer; font-weight: 600; }
+      button:hover { border-color: var(--muted); }
+      input { min-width: 11rem; font-weight: 400; }
+      code { background: var(--bg); padding: 0.1rem 0.35rem; border-radius: 0.25rem; font-size: 0.8125rem; }
+      #log {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.75rem;
+        white-space: pre-wrap;
+        max-height: 11rem;
+        overflow: auto;
+        color: var(--muted);
+        margin: 0;
+      }
+      .filler { color: var(--muted); }
+      .warn { color: #b45309; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span>Acme Inc.</span>
+      <span style="flex: 1"></span>
+      <input id="sb-key" placeholder="nst_… embed key" style="min-width: 20rem" />
+      <button onclick="loadWidget()">load widget</button>
+    </header>
+
+    <main>
+      <h1>Nestled sandbox</h1>
+      <p class="lede">
+        A fake customer site for exercising the widget in development. Paste the embed
+        key printed by <code>npm run seed</code> (or pass <code>?key=nst_…</code>) and hit
+        load. Excluded from the production build by <code>vite.config.ts</code>.
+      </p>
+      <p id="sb-hint" class="warn"></p>
+
+      <section>
+        <h2>Visibility</h2>
+        <div class="row">
+          <button onclick="Nestled('open')">open</button>
+          <button onclick="Nestled('close')">close</button>
+          <button onclick="Nestled('toggle')">toggle</button>
+          <button onclick="Nestled('show')">show launcher</button>
+          <button onclick="Nestled('hide')">hide launcher</button>
+          <button onclick="Nestled('config', { position: 'left' })">move left</button>
+          <button onclick="Nestled('config', { position: 'right' })">move right</button>
+          <button onclick="Nestled('reset')">reset visitor</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Identify — unverified traits</h2>
+        <div class="row">
+          <input id="sb-name" placeholder="Name" value="Jane Doe" />
+          <input id="sb-email" placeholder="Email" value="jane@acme.com" />
+          <button onclick="Nestled('identify', { name: val('sb-name'), email: val('sb-email') })">
+            identify
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Session data — arbitrary unsigned attributes</h2>
+        <div class="row">
+          <input id="sb-k" placeholder="key" value="plan" />
+          <input id="sb-v" placeholder="value" value="pro" />
+          <button onclick="Nestled('data', { [val('sb-k')]: val('sb-v') })">data</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Signed context — HMAC-verified by the server</h2>
+        <div class="row">
+          <input id="sb-token" placeholder="signed JWT from your backend" style="flex: 1" />
+          <button onclick="Nestled('context', val('sb-token'))">context</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Messaging</h2>
+        <div class="row">
+          <input id="sb-msg" placeholder="message" value="Hello from the host page" style="flex: 1" />
+          <button onclick="Nestled('sendMessage', val('sb-msg'))">sendMessage</button>
+          <input id="sb-bot" placeholder="starter id" value="question" />
+          <button onclick="Nestled('startBot', val('sb-bot'))">startBot</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Events (<code>Nestled('on', name, cb)</code>)</h2>
+        <pre id="log">waiting…</pre>
+      </section>
+
+      <section>
+        <h2>Scroll filler — for leave-intent and delay triggers</h2>
+        <p class="filler">
+          Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor
+          incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+          nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+          Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
+          fugiat nulla pariatur.
+        </p>
+      </section>
+    </main>
+
+    <script>
+      window.Nestled = window.Nestled || function () { (Nestled.q = Nestled.q || []).push(arguments); };
+      function val(id) { return document.getElementById(id).value; }
+      function log(line) {
+        var el = document.getElementById('log');
+        el.textContent = new Date().toLocaleTimeString() + '  ' + line + '\n' + el.textContent;
+      }
+
+      var key = new URLSearchParams(location.search).get('key') || '';
+      document.getElementById('sb-key').value = key;
+
+      function loadWidget() {
+        var next = document.getElementById('sb-key').value.trim();
+        if (!next) return;
+        location.search = '?key=' + encodeURIComponent(next);
+      }
+
+      if (key) {
+        // Subscribe before the script loads: commands queue until the widget is ready.
+        ['ready', 'open', 'close', 'unread', 'proactive'].forEach(function (name) {
+          Nestled('on', name, function (payload) { log(name + '  ' + JSON.stringify(payload || {})); });
+        });
+        window.NestledId = key;
+        var s = document.createElement('script');
+        s.src = '/embed.js';
+        s.async = true;
+        // The Vite dev server proxies /api and /ws to :4000. Point somewhere else
+        // with ?api=http://localhost:4010 when the backend runs on another port.
+        var api = new URLSearchParams(location.search).get('api');
+        if (api) s.setAttribute('data-api-base', api);
+        document.head.appendChild(s);
+      } else {
+        document.getElementById('sb-hint').textContent =
+          'No embed key. Paste one above — `cd server && npm run seed` prints it.';
+      }
+    </script>
+  </body>
+</html>

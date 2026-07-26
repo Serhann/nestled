@@ -12,7 +12,7 @@
  */
 
 export interface PushConfig {
-  apiBase: string; // e.g. https://api.jetfood.com (no trailing slash)
+  apiBase: string; // e.g. https://api.nestled.chat (no trailing slash)
   getAccessToken: () => string | null; // agent JWT, or null if logged out
 }
 
@@ -75,7 +75,7 @@ export async function enablePush(config: PushConfig): Promise<
   // Persist config in the SW so pushsubscriptionchange can re-subscribe without
   // a page open (no JWT needed there — the server re-attributes by endpoint).
   navigator.serviceWorker.controller?.postMessage({
-    type: 'jetchat:push-config',
+    type: 'nestled:push-config',
     config: { apiBase: config.apiBase, vapidPublicKey, lastEndpoint: subscription.endpoint },
   });
 
@@ -104,7 +104,7 @@ export async function disablePush(config: PushConfig): Promise<void> {
 export function onNotificationNavigate(handler: (conversationId: string | null) => void): void {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.addEventListener('message', (event) => {
-    if (event.data && event.data.type === 'jetchat:navigate') {
+    if (event.data && event.data.type === 'nestled:navigate') {
       handler(event.data.conversationId ?? null);
     }
   });

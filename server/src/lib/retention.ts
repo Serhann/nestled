@@ -1,43 +1,93 @@
 import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { env } from '../env.js';
-import { prisma } from '../db/prisma.js';
+// A retention sweep is cross-tenant by definition: it runs per workspace, honouring
+// each one's plan-derived retention window.
+// eslint-disable-next-line no-restricted-imports -- background sweep spans workspaces
+import { unscopedPrisma } from '../db/unscoped.js';
+import { recordJobRun } from '../services/platform/metrics.js';
 
 /**
- * Optional data-retention sweep (Phase 10). When RETENTION_DAYS > 0, resolved
- * conversations older than that are deleted (cascading to their messages,
- * attachments rows, notes), and the attachment files on disk are removed first.
- * Presence is in-memory + TTL-swept already, so nothing to do there.
- * No-op when RETENTION_DAYS = 0.
+ * Data-retention sweep.
+ *
+ * Retention is now PER PLAN, not one global env number: a customer on a plan
+ * promising 365 days must not have their history deleted because the install-wide
+ * default is 30. `RETENTION_DAYS` survives only as a self-host override, and as the
+ * switch that enables the job at all.
+ *
+ * Files are removed before the rows, because a deleted row is an orphaned file
+ * nobody will ever find again — the opposite order leaks disk forever.
  */
 async function sweep(): Promise<void> {
-  const days = env.RETENTION_DAYS;
-  if (days <= 0) return;
-
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-
-  // Delete attachment files for conversations about to be purged.
-  const stale = await prisma.attachments.findMany({
-    where: { conversation: { status: 'resolved', updated_at: { lt: cutoff } } },
-    select: { storage_path: true },
+  const workspaces = await unscopedPrisma.workspaces.findMany({
+    where: { deleted_at: null },
+    select: { id: true, plan: { select: { retention_days: true } } },
   });
-  for (const row of stale) {
-    await rm(row.storage_path, { force: true }).catch(() => undefined);
+
+  for (const ws of workspaces) {
+    // The env value, when set, is an override for self-hosting; otherwise the plan
+    // decides. 0 on either means "keep forever".
+    const days = env.RETENTION_DAYS > 0 ? env.RETENTION_DAYS : ws.plan.retention_days;
+    if (days <= 0) continue;
+
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const where = {
+      workspace_id: ws.id,
+      status: 'resolved',
+      updated_at: { lt: cutoff },
+    } as const;
+
+    // Remove the blobs first. `stored_files` is the single place a storage key
+    // lives, so there is one path to build and one place to change for S3.
+    const stale = await unscopedPrisma.attachments.findMany({
+      where: { conversation: where },
+      select: { file: { select: { id: true, storage_key: true, backend: true } } },
+    });
+    for (const row of stale) {
+      if (row.file.backend !== 'local') continue; // S3 cleanup lands with S3 support
+      await rm(join(env.UPLOAD_DIR, row.file.storage_key), { force: true }).catch(() => undefined);
+    }
+    if (stale.length > 0) {
+      await unscopedPrisma.stored_files
+        .deleteMany({ where: { id: { in: stale.map((s) => s.file.id) } } })
+        .catch(() => undefined);
+    }
+
+    // Cascades to messages / attachments / notes / bot runs via ON DELETE CASCADE.
+    const res = await unscopedPrisma.conversations.deleteMany({ where });
+    if (res.count > 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[retention] purged ${res.count} resolved conversations >${days}d for workspace ${ws.id}`);
+    }
   }
 
-  // Cascades to messages / attachments / notes via FK ON DELETE CASCADE.
-  const res = await prisma.conversations.deleteMany({
-    where: { status: 'resolved', updated_at: { lt: cutoff } },
-  });
-  if (res.count > 0) {
-    // eslint-disable-next-line no-console
-    console.log(`[retention] purged ${res.count} resolved conversations > ${days}d`);
-  }
+  // The `purge_after` sweep used to live here. It belongs with the code that SETS
+  // that column, so it moved to services/billing/lifecycle.ts — two jobs racing to
+  // soft-delete the same workspace was harmless but meant neither one owned the
+  // rule. Both are started from lib/jobs.ts.
 }
 
-/** Run the sweep on boot and then daily. Errors are logged, never fatal. */
+/** Run on boot and then daily. Errors are logged, never fatal. */
 export function startRetentionJob(): void {
-  if (env.RETENTION_DAYS <= 0) return;
-  const run = () => sweep().catch((err) => console.error('[retention] failed', err));
-  run();
-  setInterval(run, 24 * 60 * 60 * 1000).unref();
+  const run = async () => {
+    // Timed and recorded so the ops health page can answer "did retention actually
+    // run?". A silently dead sweep is invisible until a customer asks why data they
+    // were promised would be deleted is still there.
+    const started = Date.now();
+    try {
+      await sweep();
+      recordJobRun('retention', { at: new Date(), ok: true, durationMs: Date.now() - started });
+    } catch (err) {
+      recordJobRun('retention', {
+        at: new Date(),
+        ok: false,
+        durationMs: Date.now() - started,
+        error: (err as Error).message,
+      });
+      // eslint-disable-next-line no-console
+      console.error('[retention] failed', err);
+    }
+  };
+  void run();
+  setInterval(() => void run(), 24 * 60 * 60 * 1000).unref();
 }

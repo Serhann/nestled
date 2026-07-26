@@ -1,4 +1,4 @@
-# JetChat Server (self-hosted backend)
+# Nestled Server (self-hosted backend)
 
 Node 22 + TypeScript + Fastify + PostgreSQL. Replaces the former Supabase
 backend (Postgres + RLS + edge functions + realtime) with a single self-hosted
@@ -142,7 +142,7 @@ Every visitor on the site — including anonymous ones who never open the chat �
 appears on the agent's Live Visitors board in real time (Crisp's "see everyone
 right now"). Presence runs in the **host page**, not the widget iframe.
 
-- Host-page client: `../public/presence.js` (`JetChatPresence.init({apiBase,onProactive})`).
+- Host-page client: `../public/presence.js` (`NestledPresence.init({apiBase,onProactive})`).
   It keeps a persistent `visitor_id` (localStorage), opens `/ws/presence`, sends
   a `hello` (url, referrer, UTM, device, screen, session start, new/returning),
   heartbeats every 25s, reports SPA navigations, and reconnects with backoff.
@@ -186,12 +186,14 @@ full-viewport transparent iframe. It renders a ~76×76 launcher iframe that cove
 resizes the iframe (full panel when open, full-screen on phones). The rest of the
 host page's bottom-right corner is always clickable.
 
-Embed snippet for jetfood.com:
+Embed snippet a customer pastes on their site:
 
 ```html
-<script src="https://widget.jetfood.com/embed.js"
-        data-api-base="https://api.jetfood.com"
-        data-position="right" async></script>
+<script>
+  window.Nestled = window.Nestled || function(){(Nestled.q=Nestled.q||[]).push(arguments)};
+  window.NestledId = "nst_xxxxxxxxxxxxxxxxxxxxxxxx";
+</script>
+<script async src="https://widget.nestled.chat/embed.js"></script>
 ```
 
 `data-api-base` is this backend. The embed also loads `presence.js` (Phase 3) and
@@ -215,7 +217,7 @@ per-site via the setting.
 ```bash
 docker compose up -d db            # or any Postgres on :55432
 cd server
-DATABASE_URL=postgres://jetchat:jetchat@localhost:55432/jetchat npm test
+DATABASE_URL=postgres://nestled:nestled@localhost:55432/nestled npm test
 ```
 
 `node:test` + Fastify `app.inject` (no socket). Covers the **Phase 1 security
@@ -236,12 +238,12 @@ CRUD + fire analytics, and KB retrieval scoring.
 
   ```bash
   # Backup (cron this)
-  docker compose exec -T db pg_dump -U jetchat jetchat | gzip > backup-$(date +%F).sql.gz
+  docker compose exec -T db pg_dump -U nestled nestled | gzip > backup-$(date +%F).sql.gz
   # Restore
-  gunzip -c backup-YYYY-MM-DD.sql.gz | docker compose exec -T db psql -U jetchat jetchat
+  gunzip -c backup-YYYY-MM-DD.sql.gz | docker compose exec -T db psql -U nestled nestled
   ```
 
-  Also back up the attachments volume (`jetchat_uploads`).
+  Also back up the attachments volume (`nestled_uploads`).
 
 ## Status
 

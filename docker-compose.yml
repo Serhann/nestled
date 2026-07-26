@@ -1,19 +1,28 @@
-# JetChat self-hosted stack: Fastify app + Postgres + Prisma.
-# One-command bring-up:  docker compose up --build
-# Prisma migrations (prisma migrate deploy) run automatically on app boot; seed
-# the first admin via SEED_ADMIN_* env or with:  docker compose exec app npm run seed
+# Nestled — LOCAL / self-hosted single-node stack: Fastify app + Postgres.
+#
+#   docker compose up --build
+#
+# Deliberately no `web` service: in development the frontend is served by Vite on
+# :5173, which proxies /api and /ws here. For a self-hosted deployment with the
+# built frontend and nginx in front, use docker-compose.production.yml instead.
+#
+# Migrations run on app boot here (MIGRATE_ON_BOOT defaults to true), which is
+# the right trade for one container. The production stack runs them as a separate
+# release step the app waits on.
+#
+# Seed a demo workspace with:  docker compose exec app npm run seed
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-jetchat}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jetchat}
-      POSTGRES_DB: ${POSTGRES_DB:-jetchat}
+      POSTGRES_USER: ${POSTGRES_USER:-nestled}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nestled}
+      POSTGRES_DB: ${POSTGRES_DB:-nestled}
     volumes:
-      - jetchat_pgdata:/var/lib/postgresql/data
+      - nestled_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-jetchat}']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-nestled}']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -33,10 +42,10 @@ services:
       NODE_ENV: production
       PORT: 4000
       HOST: 0.0.0.0
-      DATABASE_URL: postgres://${POSTGRES_USER:-jetchat}:${POSTGRES_PASSWORD:-jetchat}@db:5432/${POSTGRES_DB:-jetchat}
+      DATABASE_URL: postgres://${POSTGRES_USER:-nestled}:${POSTGRES_PASSWORD:-nestled}@db:5432/${POSTGRES_DB:-nestled}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://www.jetfood.com,https://jetfood.com,http://localhost:5173}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
       AI_PROVIDER: ${AI_PROVIDER:-anthropic}
       AI_MODEL: ${AI_MODEL:-claude-opus-4-8}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -44,7 +53,7 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@jetfood.com}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:support@nestled.chat}
       # Point at the mounted GeoLite2 DB (see the volume below); blank = disabled.
       GEOLITE2_DB_PATH: ${GEOLITE2_DB_PATH:-}
       UPLOAD_DIR: /data/uploads
@@ -56,15 +65,36 @@ services:
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
       SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin}
+      # Where the app and the marketing site live, for links in outbound email.
+      APP_URL: ${APP_URL:-http://localhost:5173/app}
+      MARKETING_URL: ${MARKETING_URL:-http://localhost:5173}
+      # Leave SMTP unset locally: mail is queued to outbound_emails and the body
+      # is logged, so a verification link is one `docker compose logs app` away
+      # and development never needs a mail server.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-Nestled <noreply@nestled.chat>}
+      # Unset, plans and limits still work — they are database facts. Only
+      # checkout and the billing portal are disabled.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_RETURN_URL: ${STRIPE_RETURN_URL:-}
+      # First staff account for the ops panel. Read-only until TOTP is enrolled.
+      SEED_PLATFORM_EMAIL: ${SEED_PLATFORM_EMAIL:-}
+      SEED_PLATFORM_PASSWORD: ${SEED_PLATFORM_PASSWORD:-}
+      PLATFORM_SESSION_TTL_HOURS: ${PLATFORM_SESSION_TTL_HOURS:-12}
     volumes:
       # GeoLite2 DB (read-only): place at ./server/geoip/GeoLite2-City.mmdb and
       # set GEOLITE2_DB_PATH=/data/geoip/GeoLite2-City.mmdb.
       - ./server/geoip:/data/geoip:ro
       # Uploaded attachments persist here across restarts.
-      - jetchat_uploads:/data/uploads
+      - nestled_uploads:/data/uploads
     ports:
       - '4000:4000'
 
 volumes:
-  jetchat_pgdata:
-  jetchat_uploads:
+  nestled_pgdata:
+  nestled_uploads:

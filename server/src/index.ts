@@ -4,25 +4,27 @@ import rateLimit from '@fastify/rate-limit';
 import websocket from '@fastify/websocket';
 import multipart from '@fastify/multipart';
 import { env, allowedOrigins, isProd } from './env.js';
-import { prisma } from './db/prisma.js';
+import { unscopedPrisma } from './db/unscoped.js';
 import { runMigrations } from './db/migrate.js';
 import { ensureSeedAdmin } from './db/seedAdmin.js';
-import { startRetentionJob } from './lib/retention.js';
+import { ensureSeedPlatformUser } from './db/seedPlatform.js';
+import { startBackgroundJobs } from './lib/jobs.js';
+import { assertTenantModelsRegistered } from './db/tenant.js';
+import { registerAuthPlugin } from './plugins/auth.js';
 import { registerRealtime } from './realtime/gateway.js';
-import { authRoutes } from './routes/auth.js';
-import { widgetRoutes } from './routes/widget.js';
-import { conversationRoutes } from './routes/conversations.js';
-import { agentConversationRoutes } from './routes/agentConversations.js';
-import { settingsRoutes } from './routes/settings.js';
-import { agentRoutes } from './routes/agents.js';
-import { knowledgeBaseRoutes } from './routes/knowledgeBase.js';
-import { triggerRoutes } from './routes/triggers.js';
-import { pushRoutes } from './routes/push.js';
-import { presenceRoutes } from './routes/presence.js';
-import { attachmentRoutes } from './routes/attachments.js';
-import { cannedRoutes } from './routes/canned.js';
-import { siteRoutes } from './routes/sites.js';
-import { quickActionRoutes } from './routes/quickActions.js';
+import { authV1Routes } from './routes/v1/auth.js';
+import { meV1Routes } from './routes/v1/me.js';
+import { workspaceV1Routes } from './routes/v1/workspaces.js';
+import { teamV1Routes } from './routes/v1/team.js';
+import { widgetV1Routes } from './routes/v1/widget.js';
+import { conversationV1Routes } from './routes/v1/conversations.js';
+import { contentV1Routes } from './routes/v1/content.js';
+import { settingsV1Routes } from './routes/v1/settings.js';
+import { presenceV1Routes } from './routes/v1/presence.js';
+import { pushV1Routes } from './routes/v1/push.js';
+import { automationV1Routes } from './routes/v1/automation.js';
+import { billingV1Routes } from './routes/v1/billing.js';
+import { platformRoutes } from './routes/platform/index.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -45,11 +47,19 @@ export async function buildServer() {
   });
 
   // Global rate limit floor; individual routes tighten it via `config.rateLimit`.
-  await app.register(rateLimit, {
-    global: true,
-    max: 300,
-    timeWindow: '1 minute',
-  });
+  //
+  // Skipped under NODE_ENV=test. The limiter's store is per-process and keyed by
+  // IP, so with it on, a test suite that logs in a few times shares one bucket and
+  // starts failing on timing rather than on behaviour — which trains people to
+  // re-run tests instead of reading them. The trade-off is explicit: rate limits
+  // are configuration verified by the plugin, and are NOT covered by these tests.
+  if (env.NODE_ENV !== 'test') {
+    await app.register(rateLimit, {
+      global: true,
+      max: 300,
+      timeWindow: '1 minute',
+    });
+  }
 
   await app.register(websocket);
 
@@ -59,7 +69,7 @@ export async function buildServer() {
   // Health check for load balancers / compose healthchecks.
   app.get('/healthz', async (_req, reply) => {
     try {
-      await prisma.$queryRaw`SELECT 1`;
+      await unscopedPrisma.$queryRaw`SELECT 1`;
       return reply.send({ status: 'ok', db: 'up' });
     } catch {
       return reply.code(503).send({ status: 'degraded', db: 'down' });
@@ -79,54 +89,77 @@ export async function buildServer() {
     });
   });
 
-  // Realtime (WS) and REST routes.
+  // Decorates req.db so that reading it without a tenant scope throws, rather
+  // than a route silently querying across customers. Must precede every route.
+  await app.register(registerAuthPlugin);
+
+  // Realtime sockets.
   await app.register(registerRealtime);
-  await app.register(authRoutes);
-  await app.register(widgetRoutes);
-  await app.register(conversationRoutes);
-  await app.register(agentConversationRoutes);
-  await app.register(settingsRoutes);
-  await app.register(agentRoutes);
-  await app.register(knowledgeBaseRoutes);
-  await app.register(triggerRoutes);
-  await app.register(pushRoutes);
-  await app.register(presenceRoutes);
-  await app.register(attachmentRoutes);
-  await app.register(cannedRoutes);
-  await app.register(siteRoutes);
-  await app.register(quickActionRoutes);
+
+  // Everything tenant-scoped lives under /api/v1/w/:workspaceId/..., so the tenant
+  // is a path segment rather than ambient state — see auth/tokens.ts for why.
+  await app.register(authV1Routes);
+  await app.register(meV1Routes);
+  await app.register(workspaceV1Routes);
+  await app.register(teamV1Routes);
+  await app.register(conversationV1Routes);
+  await app.register(contentV1Routes);
+  await app.register(settingsV1Routes);
+  await app.register(presenceV1Routes);
+  await app.register(pushV1Routes);
+  await app.register(automationV1Routes);
+  await app.register(billingV1Routes);
+
+  // The vendor's own surface. Mounted under /platform/*, authenticated by opaque
+  // staff sessions rather than the customer JWT — the two never overlap.
+  await app.register(platformRoutes);
+
+  // The PUBLIC widget plane, registered last. It is the only surface an anonymous
+  // visitor on a customer's site can reach, and it resolves its tenant from an
+  // unguessable website key rather than any ambient context.
+  await app.register(widgetV1Routes);
 
   return app;
 }
 
 async function main() {
-  // Migrations run automatically on boot (idempotent).
-  await runMigrations();
+  // Refuse to start if any model carrying workspace_id is missing from
+  // TENANT_MODELS. That registry is what makes db/tenant.ts inject scoping, so an
+  // unregistered tenant table would run UNSCOPED and leak across customers. A
+  // failed boot is the only acceptable outcome; there is no safe degraded mode.
+  assertTenantModelsRegistered();
+
+  // Migrations, unless a release step already ran them (see env.MIGRATE_ON_BOOT).
+  if (env.MIGRATE_ON_BOOT === 'true') {
+    await runMigrations();
+  }
   // Optionally seed the first admin from SEED_ADMIN_* (no-op once one exists).
   await ensureSeedAdmin();
+  // Optionally bootstrap the first ops-panel staff account from SEED_PLATFORM_*.
+  await ensureSeedPlatformUser();
 
   const app = await buildServer();
   await app.listen({ host: env.HOST, port: env.PORT });
   // eslint-disable-next-line no-console
-  console.log(`[jetchat] listening on http://${env.HOST}:${env.PORT}`);
+  console.log(`[nestled] listening on http://${env.HOST}:${env.PORT}`);
 
   const shutdown = async () => {
     await app.close();
-    await prisma.$disconnect();
+    await unscopedPrisma.$disconnect();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  // Optional data-retention sweep (env-gated). See src/lib/retention.ts.
-  startRetentionJob();
+  // Recurring sweeps: retention, and (Phase 12) trial/dunning/purge. See lib/jobs.ts.
+  startBackgroundJobs();
 }
 
 // Boot everywhere except the test runner (tests import buildServer directly).
 if (env.NODE_ENV !== 'test') {
   main().catch((err) => {
     // eslint-disable-next-line no-console
-    console.error('[jetchat] fatal boot error', err);
+    console.error('[nestled] fatal boot error', err);
     process.exit(1);
   });
 }

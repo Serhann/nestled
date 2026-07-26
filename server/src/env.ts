@@ -19,16 +19,20 @@ const schema = z.object({
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
-  // Comma-separated list of allowed browser origins for CORS.
+  // Comma-separated list of allowed browser origins for CORS. This governs the
+  // PRIVATE app surface only (app/ops). The public widget surface is embedded on
+  // arbitrary customer domains, so where the widget may run is enforced by a
+  // per-website domain allowlist, never by this list.
   ALLOWED_ORIGINS: z
     .string()
-    .default('https://www.jetfood.com,https://jetfood.com,http://localhost:5173'),
-
-  // Open agent registration only until the first admin exists. After that,
-  // set to 'false' (default) so registration is admin-only via the API.
-  ALLOW_OPEN_REGISTRATION: z
-    .enum(['true', 'false'])
-    .default('true'),
+    .default(
+      // The widget origin belongs here too. The widget document is served from
+      // widget.nestled.chat and calls /api from there, so leaving it out makes
+      // every boot and message fail in the browser with a CORS error that looks
+      // like the API is down. Customer domains do NOT belong here — where a
+      // widget may run is per-website, in websites.allowed_domains.
+      'https://app.nestled.chat,https://ops.nestled.chat,https://widget.nestled.chat,https://nestled.chat,http://localhost:5173',
+    ),
 
   // AI (Phase 7 expands this; adapters read these at call time).
   AI_PROVIDER: z.enum(['knowledge_base', 'anthropic', 'openai', 'ollama']).default('anthropic'),
@@ -36,6 +40,22 @@ const schema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   OLLAMA_URL: z.string().optional(),
+
+  // Public URLs, used to build links in outbound email. Getting these wrong sends
+  // customers verification links to the wrong host, so they are explicit.
+  APP_URL: z.string().default('http://localhost:5173/app'),
+  MARKETING_URL: z.string().default('http://localhost:5173'),
+
+  // ── Transactional email (SMTP) ───────────────────────────────────────────────
+  // When SMTP_HOST is unset, mail is queued to outbound_emails and logged instead
+  // of sent, so local development never needs a mail server and never silently
+  // drops a message.
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_SECURE: z.enum(['true', 'false']).default('false'),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  MAIL_FROM: z.string().default('Nestled <noreply@nestled.chat>'),
 
   // Optional secondary notification channel.
   DISCORD_WEBHOOK_URL: z.string().optional(),
@@ -45,7 +65,7 @@ const schema = z.object({
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   // Contact URI required by the push spec; a mailto: or https: URL.
-  VAPID_SUBJECT: z.string().default('mailto:admin@jetfood.com'),
+  VAPID_SUBJECT: z.string().default('mailto:support@nestled.chat'),
 
   // Path to a local MaxMind GeoLite2 .mmdb (Country or City). When unset or
   // missing, geo lookups fall back to the MaxMind web service (below) or, if
@@ -63,6 +83,33 @@ const schema = z.object({
   // Where uploaded attachments are stored on disk, and the per-file size cap.
   UPLOAD_DIR: z.string().default('./uploads'),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
+
+  // ── Stripe billing ───────────────────────────────────────────────────────────
+  // When STRIPE_SECRET_KEY is unset, billing runs in "unconfigured" mode: plans
+  // and limits still apply (they are database facts), but checkout returns 503
+  // rather than pretending. Self-hosters therefore get a working product without
+  // a Stripe account.
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  // Where Checkout returns the customer. Falls back to APP_URL.
+  STRIPE_RETURN_URL: z.string().optional(),
+
+  // Run `prisma migrate deploy` during boot.
+  //
+  // Convenient for a single container, and a footgun the moment there are two:
+  // both replicas race the same migration, and a slow one delays every restart
+  // behind it. The compose stack therefore turns this OFF and runs migrations as
+  // a one-shot release step the app waits on. It defaults to true so a bare
+  // `docker run` of the image still comes up with a usable database.
+  MIGRATE_ON_BOOT: z.enum(['true', 'false']).default('true'),
+
+  // ── Platform (ops) surface ───────────────────────────────────────────────────
+  // Staff sessions are opaque tokens verified against platform_sessions on every
+  // request, so there is no platform JWT secret by design.
+  PLATFORM_SESSION_TTL_HOURS: z.coerce.number().int().positive().default(12),
+  // Bootstraps the first platform user on an empty platform_users table.
+  SEED_PLATFORM_EMAIL: z.string().optional(),
+  SEED_PLATFORM_PASSWORD: z.string().optional(),
 
   // Optional error sink (Sentry-compatible DSN). When set, the error handler
   // has a forwarding hook point.

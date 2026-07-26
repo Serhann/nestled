@@ -1,44 +1,30 @@
 /*
- * JetChat host-page presence client (Phase 3).
+ * Nestled host-page presence client.
  *
- * Runs in the HOST PAGE context (jetfood.com), not inside the widget iframe, so
+ * Runs in the HOST PAGE context (the customer's own site), not inside the widget iframe, so
  * it can report every visitor — including anonymous ones who never open the
  * chat. It opens a WebSocket to the backend, announces the visitor, heartbeats,
  * tracks SPA navigation, and listens for a proactive "open the chat" push from
  * an agent.
  *
- * Usage (Phase 4's embed will call this):
- *   JetChatPresence.init({
- *     apiBase: 'https://api.jetfood.com',
- *     onProactive: ({ conversation_id, visitor_token, message, agent_name }) => {  ...open widget... },
+ * AUTHENTICATION. The socket takes a signed WIDGET SESSION token, minted by
+ * embed.js from the website's public key, and the server reads the visitor id
+ * and website OUT OF THAT TOKEN. It used to accept `?visitor_id=` from anyone,
+ * which combined with the proactive frame's payload was a full conversation
+ * takeover — see server/src/test/presenceSecurity.test.ts.
+ *
+ * Usage (embed.js does this):
+ *   NestledPresence.init({
+ *     apiBase: 'https://api.nestled.chat',
+ *     sessionToken: '<signed widget session>',
+ *     onProactive: ({ conversation_id, claim_token, message, agent_name }) => { ... },
  *   });
- * Or drop it in with data attributes:
- *   <script src="/presence.js" data-api-base="https://api.jetfood.com"></script>
  */
 (function () {
   'use strict';
 
   var HEARTBEAT_MS = 25000;
-  var VISITOR_KEY = 'jetchat_visitor_id';
-  var RETURNING_KEY = 'jetchat_returning';
-
-  function getVisitorId() {
-    try {
-      var id = localStorage.getItem(VISITOR_KEY);
-      if (!id) {
-        id =
-          'v_' +
-          Date.now().toString(36) +
-          '_' +
-          Math.random().toString(36).slice(2, 10);
-        localStorage.setItem(VISITOR_KEY, id);
-      }
-      return id;
-    } catch (e) {
-      // Private mode / storage blocked — fall back to a per-session id.
-      return 'v_ephemeral_' + Math.random().toString(36).slice(2, 12);
-    }
-  }
+  var RETURNING_KEY = 'nestled_returning';
 
   function isReturning() {
     try {
@@ -84,17 +70,17 @@
   function init(options) {
     options = options || {};
     var apiBase = (options.apiBase || '').replace(/\/$/, '');
-    if (!apiBase) {
-      console.error('JetChatPresence: apiBase is required');
+    var sessionToken = options.sessionToken || '';
+    if (!apiBase || !sessionToken) {
+      console.error('NestledPresence: apiBase and sessionToken are required');
       return;
     }
     var onProactive = typeof options.onProactive === 'function' ? options.onProactive : null;
     var recordScriptUrl = options.recordScriptUrl || null; // rrweb-record UMD, host origin
-    var mode = options.mode === 'saas' ? 'saas' : 'food'; // scenario pack / site
+    // Session replay is expensive to buffer and is plan-gated server-side; until
+    // /boot exposes `live_view_enabled` there is nothing here to switch it on.
+    var record = options.record === true;
 
-    // Prefer a shared visitor id (the embed passes the same one to the widget
-    // iframe) so presence, conversations, and proactive all agree on identity.
-    var visitorId = options.visitorId || getVisitorId();
     var fingerprint = options.fingerprint || ''; // cross-site device hash (embed-supplied)
     var contextToken = options.contextToken || ''; // signed host context (embed-supplied)
     var sessionStart = Date.now();
@@ -114,7 +100,6 @@
         screen: { w: window.screen.width, h: window.screen.height },
         returning: returning,
         sessionStart: sessionStart,
-        mode: mode,
         fingerprint: fingerprint,
         context_token: contextToken,
         // Client hints so the Live Visitors card matches the conversation
@@ -219,7 +204,7 @@
 
     function connect() {
       if (closed) return;
-      ws = new WebSocket(wsBaseFrom(apiBase) + '/ws/presence?visitor_id=' + encodeURIComponent(visitorId));
+      ws = new WebSocket(wsBaseFrom(apiBase) + '/ws/presence?token=' + encodeURIComponent(sessionToken));
 
       ws.onopen = function () {
         reconnectDelay = 1000;
@@ -239,7 +224,7 @@
         if (data && data.type === 'proactive') {
           // Let the widget adopt the conversation and open itself.
           if (onProactive) onProactive(data);
-          window.dispatchEvent(new CustomEvent('jetchat:proactive', { detail: data }));
+          window.dispatchEvent(new CustomEvent('nestled:proactive', { detail: data }));
         } else if (data && data.type === 'assist') {
           // Live Assist: an agent is guiding this visitor's screen.
           handleAssist(data);
@@ -282,15 +267,9 @@
     patchHistory();
     maybeStartRecording();
 
-    // ── MagicBrowse: record the HOST page (off by default; server-gated). ──
+    // ── Live view: record the HOST page (off unless explicitly enabled). ──
     function maybeStartRecording() {
-      if (!recordScriptUrl) return;
-      fetch(apiBase + '/api/widget-config')
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          if (d && d.settings && d.settings.magic_browse_enabled) startRecording();
-        })
-        .catch(function () {});
+      if (recordScriptUrl && record) startRecording();
     }
 
     function startRecording() {
@@ -299,12 +278,12 @@
         if (typeof record !== 'function') return;
         var buffer = [];
         // Privacy: mask every input, and block payment/PII containers, our own
-        // iframe, and anything the site marks data-jetchat-block.
+        // iframe, and anything the site marks data-nestled-block.
         record({
           emit: function (event) { buffer.push(event); },
           maskAllInputs: true,
-          blockSelector: 'iframe,[data-jetchat-block],.jetchat-block,[data-cc],[autocomplete*="cc-"]',
-          maskTextSelector: '[data-jetchat-mask],[name*="card"],[name*="cvc"],[name*="cvv"],[name*="ssn"]',
+          blockSelector: 'iframe,[data-nestled-block],.nestled-block,[data-cc],[autocomplete*="cc-"]',
+          maskTextSelector: '[data-nestled-mask],[name*="card"],[name*="cvc"],[name*="cvv"],[name*="ssn"]',
           checkoutEveryNms: 5000, // periodic full snapshot for late viewers
         });
         // Batch flush every 3s to budget bandwidth.
@@ -328,7 +307,7 @@
         if (heartbeatTimer) clearInterval(heartbeatTimer);
         if (ws) ws.close();
       },
-      /* A freshly signed host context (post-login, or a new order status). Keeps
+      /* A freshly signed host context (post-login, or any state change). Keeps
          the Live Visitors card + identified name/email current without a reload;
          the stored token is also what the next hello/reconnect carries. */
       setContext: function (token) {
@@ -336,16 +315,17 @@
         contextToken = token;
         send({ type: 'context', context_token: token });
       },
-      visitorId: visitorId,
+      /* Unsigned session attributes — Nestled('data', {...}). Display-only on the
+         agent side; anything that must be trusted goes through setContext. */
+      setData: function (attributes) {
+        if (!attributes || typeof attributes !== 'object') return;
+        send({ type: 'data', attributes: attributes });
+      },
     };
   }
 
-  var api = { init: init };
-  window.JetChatPresence = api;
-
-  // Auto-init from the script tag's data attributes, if present.
-  var self = document.currentScript;
-  if (self && self.getAttribute('data-api-base')) {
-    init({ apiBase: self.getAttribute('data-api-base') });
-  }
+  // No auto-init from data attributes any more: a session token can only be
+  // minted from the website's public key, so embed.js is the only caller that
+  // can supply one. A script tag on its own has nothing to authenticate with.
+  window.NestledPresence = { init: init };
 })();

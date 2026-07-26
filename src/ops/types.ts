@@ -1,0 +1,231 @@
+/**
+ * Response shapes, mirrored from server/src/routes/platform/*.
+ *
+ * Hand-written rather than generated: this panel consumes maybe twenty endpoints,
+ * and a codegen step in the build for that is a maintenance cost with no payer.
+ * Each type names the route it came from so the pair can be kept honest by reading.
+ */
+
+export interface Plan {
+  id: string;
+  code: string;
+  name: string;
+  is_public: boolean;
+  sort_order: number;
+  is_trial_default: boolean;
+  price_monthly_cents: number;
+  price_yearly_cents: number;
+  included_seats: number;
+  max_seats: number;
+  max_websites: number;
+  max_conversations_month: number;
+  max_ai_replies_month: number;
+  max_kb_entries: number;
+  max_bot_flows: number;
+  max_triggers: number;
+  storage_mb: number;
+  retention_days: number;
+  allow_remove_branding: boolean;
+  allow_live_view: boolean;
+  allow_bot: boolean;
+  _count?: { workspaces: number; subscriptions: number };
+}
+
+/** GET /platform/search */
+export interface SearchResult {
+  kind: 'workspace' | 'user' | 'website' | 'conversation' | 'person' | 'invoice';
+  id: string;
+  label: string;
+  sublabel: string | null;
+  workspaceId: string | null;
+  workspaceName: string | null;
+  matched: string;
+}
+
+export interface SearchResponse {
+  query: string;
+  interpretedAs: 'email' | 'website_key' | 'domain' | 'uuid' | 'text';
+  results: SearchResult[];
+}
+
+/** GET /platform/workspaces */
+export interface WorkspaceRow {
+  id: string;
+  name: string;
+  slug: string;
+  subscription_status: string;
+  trial_ends_at: string | null;
+  grace_until: string | null;
+  deleted_at: string | null;
+  created_at: string;
+  plan: { code: string; name: string };
+  _count: { members: number; websites: number; conversations: number };
+}
+
+export interface WorkspaceListResponse {
+  workspaces: WorkspaceRow[];
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+}
+
+/** GET /platform/workspaces/:id */
+export interface WorkspaceOverview {
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+    timezone: string;
+    subscription_status: string;
+    trial_ends_at: string | null;
+    grace_until: string | null;
+    purge_after: string | null;
+    deleted_at: string | null;
+    stripe_customer_id: string | null;
+    created_at: string;
+    plan: Plan;
+    subscription: { status: string; interval: string; current_period_end: string } | null;
+    _count: { members: number; websites: number; conversations: number; invites: number };
+  };
+  owners: { id: string; name: string; email: string; last_login_at: string | null }[];
+  signals: { last_conversation_at: string | null; installed_websites: number };
+}
+
+/** GET /platform/workspaces/:id/plan */
+export interface WorkspacePlanTab {
+  plan: Plan;
+  is_override: boolean;
+  subscription_status: string;
+  trial_ends_at: string | null;
+  grace_until: string | null;
+  invoices: {
+    id: string;
+    number: string | null;
+    status: string;
+    amount_due: number;
+    amount_paid: number;
+    currency: string;
+    hosted_invoice_url: string | null;
+    created_at: string;
+  }[];
+  catalog: Plan[];
+}
+
+/** GET /platform/workspaces/:id/usage */
+export interface WorkspaceUsageTab {
+  current: Record<string, number>;
+  levels: { seats: number; websites: number };
+  limits: Record<string, number>;
+  ai_this_period: { calls: number; input_tokens: number; output_tokens: number; cost_micros: number };
+}
+
+/** GET /platform/workspaces/:id/websites */
+export interface WorkspaceWebsite {
+  id: string;
+  name: string;
+  public_key: string;
+  primary_domain: string | null;
+  is_active: boolean;
+  installed_at: string | null;
+  deleted_at: string | null;
+  has_identity_secret: boolean;
+  _count: { conversations: number };
+  domains: { host: string; hits: number; authorized: boolean; last_seen: string }[];
+}
+
+/** GET /platform/workspaces/:id/members */
+export interface WorkspaceMember {
+  id: string;
+  role: string;
+  status: string;
+  all_websites: boolean;
+  is_online: boolean;
+  last_seen: string;
+  user: { id: string; name: string; email: string; email_verified_at: string | null; last_login_at: string | null };
+}
+
+/** GET /platform/workspaces/:id/conversations — metadata only, by design. */
+export interface WorkspaceConversation {
+  id: string;
+  status: string;
+  source: string;
+  visitor_name: string | null;
+  visitor_email: string | null;
+  message_count: number;
+  rating_stars: number | null;
+  created_at: string;
+  updated_at: string;
+  website: { id: string; name: string } | null;
+}
+
+export interface AuditEntry {
+  id: string;
+  actor_type: string;
+  actor_email: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ImpersonationSession {
+  id: string;
+  reason: string;
+  scope: 'read_only' | 'full';
+  ip: string | null;
+  created_at: string;
+  expires_at: string;
+  ended_at: string | null;
+  active: boolean;
+  mutations: number;
+  platform_user: { id: string; email: string; name: string };
+  workspace: { id: string; name: string; slug: string };
+}
+
+/** GET /platform/dunning */
+export interface DunningRow {
+  bucket: 'payment_failed' | 'grace' | 'trial_ending' | 'trial_expired' | 'pending_purge';
+  workspace_id: string;
+  name: string;
+  slug: string;
+  plan_code: string;
+  subscription_status: string;
+  days_remaining: number | null;
+  deadline: string | null;
+  amount_due_cents: number;
+  currency: string | null;
+  owner_email: string | null;
+  last_invoice_url: string | null;
+  priority: number;
+}
+
+export interface DunningResponse {
+  rows: DunningRow[];
+  totals: Record<string, { count: number; amount_due_cents: number }>;
+  total_at_risk_cents: number;
+}
+
+/** GET /platform/health */
+export interface HealthCheck {
+  status: 'ok' | 'warn' | 'fail';
+  detail: string;
+}
+
+export interface HealthReport {
+  generated_at: string;
+  process: { started_at: string; uptime_seconds: number; node_env: string };
+  database: HealthCheck & { latency_ms: number | null };
+  realtime: HealthCheck & {
+    workspacesWithAgents: number;
+    agentSockets: number;
+    visitorSockets: number;
+    conversationsWithVisitors: number;
+  };
+  push: HealthCheck & { configured: boolean; failures: number; errors: number; stored_subscriptions: number };
+  geoip: HealthCheck & { source: string; path: string | null; age_days: number | null };
+  retention: HealthCheck & { enabled: boolean; last_run: { at: string; ok: boolean } | null };
+  email: HealthCheck & { queued: number; failed: number; smtp_configured: boolean };
+  billing: HealthCheck & { unprocessed_stripe_events: number; stripe_configured: boolean };
+}
