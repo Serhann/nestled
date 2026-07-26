@@ -5,6 +5,7 @@ import { z } from 'zod';
 // eslint-disable-next-line no-restricted-imports -- resolves the tenant from a public key
 import { unscopedPrisma } from '../../db/unscoped.js';
 import { tenantDb } from '../../db/tenant.js';
+import { widgetEntitlement } from '../../services/billing/index.js';
 import { generateVisitorToken, tokenMatchesHash } from '../../auth/tokens.js';
 import { requireVisitor } from '../../plugins/auth.js';
 import { parseBody } from '../../lib/validate.js';
@@ -161,11 +162,13 @@ async function resolveWebsite(
  * complaint; the dashboard goes read-only instead.
  */
 function widgetEnabled(site: ResolvedWebsite): boolean {
-  if (site.workspaceStatus === 'suspended') return false;
-  if (site.workspaceStatus === 'trial_expired' || site.workspaceStatus === 'canceled') {
-    return Boolean(site.graceUntil && site.graceUntil > new Date());
-  }
-  return true;
+  // One implementation of the rule, shared with the billing lifecycle job and the
+  // dashboard's read-only state. Two copies of "is this account entitled" is how a
+  // workspace ends up with a live widget and a locked panel, or the reverse.
+  return widgetEntitlement({
+    subscription_status: site.workspaceStatus,
+    grace_until: site.graceUntil,
+  }).widget;
 }
 
 export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
