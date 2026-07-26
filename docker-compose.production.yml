@@ -3,7 +3,8 @@
 #
 # Three services on one private network:
 #   web  – nginx serving the built frontend + proxying /api and /ws  (PUBLIC)
-#   app  – Fastify backend (Prisma migrate deploy runs on boot)       (internal)
+#   app  – Fastify backend                                            (internal)
+#   migrate – one-shot `prisma migrate deploy`, must succeed before app starts
 #   db   – Postgres 16                                                (internal)
 #
 # Coolify setup:
@@ -44,6 +45,29 @@ services:
       retries: 5
       start_period: 20s
 
+  # Migrations as a RELEASE STEP, not a boot step.
+  #
+  # Running `migrate deploy` inside the app's own startup is fine with one
+  # container and wrong with two: both replicas race the same migration, and a
+  # slow one delays every restart behind it. As its own service that must exit
+  # successfully first, the ordering is explicit and a failed migration stops the
+  # deploy instead of half-starting it.
+  migrate:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ['npm', 'run', 'migrate']
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-nestled}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nestled}
+      # The env schema demands these even for a migration run.
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+
   app:
     build:
       context: ./server
@@ -52,7 +76,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
+      # The migrate service above already ran them.
+      MIGRATE_ON_BOOT: 'false'
       NODE_ENV: production
       APP_ENV: production
       PORT: 4000
@@ -86,6 +114,25 @@ services:
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
       SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin}
+      # Public URLs. Wrong values send verification links to the wrong host.
+      APP_URL: ${APP_URL:-https://app.nestled.chat}
+      MARKETING_URL: ${MARKETING_URL:-https://nestled.chat}
+      # Transactional email. Without SMTP_HOST, mail is queued to outbound_emails
+      # and logged rather than sent — signup verification then needs the log.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-Nestled <noreply@nestled.chat>}
+      # Billing. Unset, plans and limits still apply; only checkout is disabled.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_RETURN_URL: ${STRIPE_RETURN_URL:-}
+      # First platform (staff) user, for ops.nestled.chat. No-op once one exists.
+      SEED_PLATFORM_EMAIL: ${SEED_PLATFORM_EMAIL:-}
+      SEED_PLATFORM_PASSWORD: ${SEED_PLATFORM_PASSWORD:-}
+      PLATFORM_SESSION_TTL_HOURS: ${PLATFORM_SESSION_TTL_HOURS:-12}
     volumes:
       - nestled_uploads_prod:/data/uploads
       # Optional GeoLite2 DB (read-only); set GEOLITE2_DB_PATH to enable.

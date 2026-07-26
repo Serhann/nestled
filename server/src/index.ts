@@ -128,8 +128,10 @@ async function main() {
   // failed boot is the only acceptable outcome; there is no safe degraded mode.
   assertTenantModelsRegistered();
 
-  // Migrations run automatically on boot (idempotent).
-  await runMigrations();
+  // Migrations, unless a release step already ran them (see env.MIGRATE_ON_BOOT).
+  if (env.MIGRATE_ON_BOOT === 'true') {
+    await runMigrations();
+  }
   // Optionally seed the first admin from SEED_ADMIN_* (no-op once one exists).
   await ensureSeedAdmin();
 

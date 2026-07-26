@@ -87,6 +87,15 @@ const schema = z.object({
   // Where Checkout returns the customer. Falls back to APP_URL.
   STRIPE_RETURN_URL: z.string().optional(),
 
+  // Run `prisma migrate deploy` during boot.
+  //
+  // Convenient for a single container, and a footgun the moment there are two:
+  // both replicas race the same migration, and a slow one delays every restart
+  // behind it. The compose stack therefore turns this OFF and runs migrations as
+  // a one-shot release step the app waits on. It defaults to true so a bare
+  // `docker run` of the image still comes up with a usable database.
+  MIGRATE_ON_BOOT: z.enum(['true', 'false']).default('true'),
+
   // ── Platform (ops) surface ───────────────────────────────────────────────────
   // Staff sessions are opaque tokens verified against platform_sessions on every
   // request, so there is no platform JWT secret by design.

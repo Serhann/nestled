@@ -7,48 +7,17 @@
     <title>Nestled — live chat for your website</title>
     <meta
       name="description"
-      content="Nestled is live chat, visitor tracking and an AI assistant for your website. Install one snippet and start talking to your customers."
+      content="Live chat, live visitors and an AI assistant that answers from your own knowledge base. One snippet, and you are talking to your customers."
     />
-    <meta name="theme-color" content="#4F46E5" />
+    <meta name="theme-color" content="#c67139" />
   </head>
   <body>
     <!--
-      Marketing surface. Phase 14 replaces this with prerendered pages built from
-      src/site/pages/* (renderToString at build time + hydrated islands), so this
-      document stays crawlable HTML rather than an empty SPA shell.
+      Filled with prerendered markup by scripts/prerender.mjs after the client
+      build. Empty here on purpose: this file is the TEMPLATE, and the hashed
+      asset tags Vite injects into it are what every generated page reuses.
     -->
-    <main
-      style="
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
-        color: #111827;
-        padding: 2rem;
-        text-align: center;
-      "
-    >
-      <div style="max-width: 34rem">
-        <h1 style="font-size: 2.25rem; line-height: 1.1; margin: 0 0 0.75rem; letter-spacing: -0.02em">
-          Nestled
-        </h1>
-        <p style="font-size: 1.125rem; color: #4b5563; margin: 0 0 1.5rem">
-          Live chat, visitor tracking and an AI assistant for your website.
-        </p>
-        <a
-          href="/app"
-          style="
-            display: inline-block;
-            background: #4f46e5;
-            color: #fff;
-            text-decoration: none;
-            padding: 0.7rem 1.4rem;
-            border-radius: 0.6rem;
-            font-weight: 600;
-          "
-          >Go to the app</a
-        >
-      </div>
-    </main>
+    <div id="site-root"></div>
+    <script type="module" src="/src/entries/site.tsx"></script>
   </body>
 </html>
