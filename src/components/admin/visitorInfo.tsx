@@ -1,6 +1,5 @@
 import { Globe, History, ShieldCheck } from 'lucide-react';
 import {
-  conversationSource,
   type PersonProfile,
   type VerifiedContext,
   type VisitorIp,
@@ -91,61 +90,43 @@ export function Metric({ label, value, good }: { label: string; value: string; g
   );
 }
 
-/** Trusted (HMAC-verified) customer + order context from the host site. */
+/**
+ * Trusted (HMAC-verified) facts about this visitor, signed by the website owner.
+ *
+ * Domain-neutral by design: a reserved identity block plus the customer's own flat
+ * attribute bag. The previous version rendered order cards, restaurant names and
+ * ETAs — one customer's schema baked into the product.
+ */
 export function VerifiedContextCard({ context }: { context: VerifiedContext }) {
   const cust = context.customer;
-  const ord = context.current_order;
-  const money = (t?: string | number, c?: string) => (t == null ? null : `${t}${c ? ' ' + c : ''}`);
+  const attributes = Object.entries(context.attributes ?? {}).filter(([, v]) => v !== null && v !== '');
+  if (!cust && attributes.length === 0) return null;
   return (
     <div className="mb-1 rounded-2xl border border-emerald-200 bg-emerald-50/60 p-3">
       <div className="flex items-center gap-1.5 mb-2">
         <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-        <p className="text-[11px] font-bold tracking-wide text-emerald-700">VERIFIED CONTEXT</p>
+        <p className="text-[11px] font-bold tracking-wide text-emerald-700">VERIFIED</p>
       </div>
       {cust && (
         <div className="mb-2 text-xs text-gray-700 space-y-0.5">
           {cust.name && <p className="font-semibold text-gray-800">{cust.name}</p>}
           {cust.email && <p className="truncate">{cust.email}</p>}
           {cust.phone && <p>{cust.phone}</p>}
-          {typeof cust.orders_count === 'number' && (
-            <p className="text-gray-500">{cust.orders_count} orders total</p>
-          )}
         </div>
       )}
-      {ord && (
-        <div className="rounded-xl bg-white border border-emerald-100 p-2.5 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-gray-800">{ord.id ? `Order #${ord.id}` : 'Current order'}</span>
-            {ord.status && <Badge tone="green">{ord.status}</Badge>}
-          </div>
-          <div className="mt-1 text-gray-600 space-y-0.5">
-            {ord.restaurant && <p>{ord.restaurant}</p>}
-            {ord.eta && <p>ETA {ord.eta}</p>}
-            {money(ord.total, ord.currency) && <p>{money(ord.total, ord.currency)}</p>}
-          </div>
-        </div>
-      )}
-      {context.recent_orders && context.recent_orders.length > 0 && (
-        <details className="mt-2 text-xs">
-          <summary className="cursor-pointer text-emerald-700 font-medium">
-            Recent orders ({context.recent_orders.length})
-          </summary>
-          <ul className="mt-1 space-y-1">
-            {context.recent_orders.slice(0, 10).map((o, i) => (
-              <li key={o.id ?? i} className="flex items-baseline gap-2 text-gray-600">
-                <span className="font-mono truncate">{o.id ? `#${o.id}` : '—'}</span>
-                {o.status && <span className="text-gray-400">{o.status}</span>}
-                {o.date && <span className="ml-auto text-gray-400 shrink-0">{o.date}</span>}
-              </li>
-            ))}
-          </ul>
-        </details>
+      {attributes.length > 0 && (
+        <dl className="rounded-xl bg-white border border-emerald-100 p-2.5 text-xs space-y-1">
+          {attributes.map(([key, value]) => (
+            <div key={key} className="flex items-baseline gap-2">
+              <dt className="text-gray-500 font-mono truncate">{key}</dt>
+              <dd className="ml-auto text-gray-800 text-right break-words min-w-0">{String(value)}</dd>
+            </div>
+          ))}
+        </dl>
       )}
     </div>
   );
 }
-
-/** Every IP this visitor has connected from (across sessions / IP changes). */
 export function IpHistoryBlock({ ips }: { ips: VisitorIp[] }) {
   if (ips.length === 0) return null;
   return (
@@ -192,8 +173,8 @@ export function CrossSitePersonBlock({
       {person.sites.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-2">
           {person.sites.map((s) => (
-            <Badge key={s} tone={s === 'saas' ? 'violet' : 'amber'}>
-              {conversationSource({ widget_mode: s }).label}
+            <Badge key={s} tone="violet">
+              {s}
             </Badge>
           ))}
         </div>
@@ -214,9 +195,7 @@ export function CrossSitePersonBlock({
                 disabled={!onOpenConversation}
                 className="w-full flex items-center gap-2 text-left text-xs rounded-lg px-2 py-1.5 hover:bg-gray-50 disabled:hover:bg-transparent transition"
               >
-                <Badge tone={c.mode === 'saas' ? 'violet' : 'amber'}>
-                  {conversationSource({ widget_mode: c.mode ?? undefined }).label}
-                </Badge>
+                {c.siteKey && <Badge tone="violet">{c.siteKey}</Badge>}
                 <span className="truncate text-gray-700 flex-1">
                   {c.visitor_name || 'Visitor'} · {c.message_count} msg
                 </span>

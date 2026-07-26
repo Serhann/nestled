@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { MessageCircle, X, Send, Minimize2, Paperclip, Volume2, VolumeX, FileText, Smile, ShoppingBag, Loader2, Check, ChevronRight, Star, Clock, MessageSquareText, AlertTriangle, CreditCard, Sparkles, Tag, Headphones, type LucideIcon } from 'lucide-react';
+import { MessageCircle, X, Send, Minimize2, Paperclip, Volume2, VolumeX, FileText, Smile, Loader2, Check, ChevronRight, Star, MessageSquareText, Headphones } from 'lucide-react';
 import {
   apiBase,
   attachmentUrl,
@@ -17,11 +17,10 @@ import {
   sendMessage as apiSendMessage,
   sendTyping,
   uploadAttachment,
-  quickAction as apiQuickAction,
+  websiteKey,
   type WidgetConfig,
   type WidgetMessage,
   type PreChatField,
-  type QuickIntent,
 } from '../lib/api';
 import { strings } from '../lib/strings';
 import { getFingerprint } from '../lib/fingerprint';
@@ -36,8 +35,8 @@ function hostUrl(): string {
 
 /**
  * True when the widget runs inside the embed iframe (the normal case): the host
- * page sizes the iframe via the `jetchat:resize` messages, so the panel should
- * fill it (inset-0). When rendered standalone (the /chat page opened directly)
+ * page sizes the iframe via the `nestled:resize` messages, so the panel should
+ * fill it (inset-0). When rendered standalone (the /widget page opened directly)
  * it must instead be a constrained floating card so it doesn't cover the page.
  */
 function isEmbedded(): boolean {
@@ -48,7 +47,7 @@ function isEmbedded(): boolean {
   }
 }
 
-/** Visitor identity from embed params (ue/un/up/uid/oid) or direct URL params. */
+/** Visitor identity from embed params (ue/un/up/uid) or direct URL params. */
 function readIdentity(): Record<string, string> {
   const p = new URLSearchParams(window.location.search);
   const id: Record<string, string> = {};
@@ -57,7 +56,6 @@ function readIdentity(): Record<string, string> {
     ['un', 'user_name', 'name'],
     ['up', 'user_phone', 'phone'],
     ['uid', 'user_id', 'user_id'],
-    ['oid', 'order_id', 'order_id'],
   ];
   for (const [short, long, key] of map) {
     const v = p.get(short) || p.get(long);
@@ -67,8 +65,8 @@ function readIdentity(): Record<string, string> {
 }
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-const CONV_KEY = 'jetchat_conv';
-const MUTE_KEY = 'jetchat_muted';
+const CONV_KEY = 'nestled_conv';
+const MUTE_KEY = 'nestled_muted';
 
 interface StoredConversation {
   id: string;
@@ -79,9 +77,9 @@ function getVisitorId(): string {
   const params = new URLSearchParams(window.location.search);
   const fromParam = params.get('vid');
   if (fromParam) return fromParam;
-  // Standalone (/chat opened directly): namespace by site key so the same origin
-  // can preview multiple sites without sharing one identity.
-  const key = `jetchat_visitor_id_${params.get('mode') || 'food'}`;
+  // Standalone (/widget opened directly): namespace by website key so the same
+  // origin can preview several websites without sharing one identity.
+  const key = `nestled_vid_${params.get('site') || 'default'}`;
   let id = localStorage.getItem(key);
   if (!id) {
     id = `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -106,233 +104,20 @@ function fmtTime(iso: string): string {
 }
 
 /**
- * The visitor's current order context, fed by the host site (JetFood) so the
- * widget can show order-aware quick actions. Initial values arrive as embed URL
- * params (o_id/o_status/…); live updates arrive via the `jetchat:order` message
- * the embed forwards from `JetChat('order', {...})`.
+ * A conversation starter: a labelled chip the visitor can tap instead of typing.
+ *
+ * This replaces the old order-intent packs. Starters are pure configuration —
+ * the widget knows a label, an optional icon name and an optional intake form,
+ * and nothing about what the customer's business does. Phase 9 builds the
+ * management UI; Phase 10 makes them server-driven via the boot payload.
  */
-export interface OrderContext {
-  id?: string;
-  status?: string;
-  eta?: string;
-  restaurant?: string;
-  url?: string;
-  total?: string;
-  items?: string; // short line, e.g. "Margherita, garlic bread"
-  placed?: string; // human time, e.g. "Yesterday, 8:12 PM"
-}
-
-function readOrder(): OrderContext {
-  const p = new URLSearchParams(window.location.search);
-  const o: OrderContext = {};
-  // Only assign keys that actually have a value — never set them to `undefined`,
-  // or a later `{ ...context, ...order }` merge would clobber real context data
-  // with these empty keys.
-  const set = (param: string, key: keyof OrderContext) => {
-    const v = p.get(param);
-    if (v) o[key] = v;
-  };
-  set('o_id', 'id');
-  set('o_status', 'status');
-  set('o_eta', 'eta');
-  set('o_rest', 'restaurant');
-  set('o_url', 'url');
-  set('o_total', 'total');
-  return o;
-}
-
-// The signed context JWT (from the host, e.g. JetFood) carries the customer's
-// order data. The server verifies its signature for the agent side; here we
-// only decode the payload to render the visitor THEIR OWN orders — no trust
-// needed for that, so no signature check. Returns null on any decode failure.
-interface ContextOrder {
-  id?: string | number;
-  status?: string;
-  eta?: string;
-  restaurant?: string;
-  total?: string | number;
-  currency?: string;
-  date?: string;
-  url?: string;
-}
-interface ContextPayload {
-  current_order?: ContextOrder;
-  recent_orders?: ContextOrder[];
-}
-function decodeContextPayload(token: string): ContextPayload | null {
-  try {
-    const part = token.split('.')[1];
-    if (!part) return null;
-    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-    return JSON.parse(new TextDecoder().decode(bytes)) as ContextPayload;
-  } catch {
-    return null;
-  }
-}
-function orderFromContext(o: ContextOrder | undefined): OrderContext | null {
-  if (!o) return null;
-  const total =
-    o.total != null && o.total !== '' ? `${o.currency ?? ''}${o.total}`.trim() : undefined;
-  const mapped: OrderContext = {
-    id: o.id != null ? String(o.id) : undefined,
-    status: o.status,
-    eta: o.eta,
-    restaurant: o.restaurant,
-    url: o.url,
-    total,
-    placed: o.date,
-  };
-  // Drop empty keys so merges don't clobber existing values with undefined.
-  (Object.keys(mapped) as (keyof OrderContext)[]).forEach((k) => mapped[k] == null && delete mapped[k]);
-  return mapped;
-}
-
-type OrderPhase = 'in_progress' | 'delivered' | 'other';
-function orderPhase(status?: string): OrderPhase {
-  const s = (status || '').toLowerCase();
-  if (/cancel|refund|reject|fail|void/.test(s)) return 'other'; // terminal, no tracking
-  if (/deliver|complete|arrived|received|done|fulfil/.test(s)) return 'delivered';
-  if (
-    /prepar|cook|way|transit|out for|pick|route|assign|accept|confirm|process|delay|late|pending|placed|await|queue|dispatch|rider|driver|courier|ship|ready|kitchen|making|new/.test(
-      s,
-    )
-  )
-    return 'in_progress';
-  return 'other';
-}
-
-/** Human label + tone for the order status badge. */
-function orderStatusMeta(order: OrderContext): { label: string; tone: 'in' | 'done' | 'other' } {
-  const phase = orderPhase(order.status);
-  const label = order.status || (phase === 'delivered' ? 'Delivered' : phase === 'in_progress' ? 'On the way' : 'Order');
-  return { label, tone: phase === 'delivered' ? 'done' : phase === 'in_progress' ? 'in' : 'other' };
-}
-
-/** A quick-action row/chip: label + intent, with an optional leading icon,
- *  behaviour, and an intake form to collect before running. */
-export interface QuickAction {
+export interface Starter {
   label: string;
-  intent: QuickIntent;
-  icon?: LucideIcon;
+  /** Stable id, posted with the visitor's message so reporting can group them. */
+  id: string;
   kind?: 'auto' | 'human';
   fields?: { name: string; label: string; required: boolean }[];
 }
-
-/**
- * The site key the widget runs as, from the embed's `data-mode` (forwarded as
- * the `mode` URL param). 'food' is jetfood's order-tracking experience; any
- * other key is configured in the Site manager. Kept as a raw string so custom
- * sites work.
- */
-export type WidgetMode = string;
-
-function readMode(): WidgetMode {
-  return new URLSearchParams(window.location.search).get('mode') || 'food';
-}
-
-/** Icon for each quick-action intent (used when rendering site-configured or
- *  built-in actions). */
-const INTENT_ICONS: Record<string, LucideIcon> = {
-  where: Clock,
-  status: Clock,
-  late: Clock,
-  change_address: Clock,
-  missing_item: AlertTriangle,
-  wrong: AlertTriangle,
-  refund: CreditCard,
-  tech_issue: AlertTriangle,
-  billing: CreditCard,
-  demo: Sparkles,
-  pricing: Tag,
-  human: Headphones,
-};
-
-/** Default button label per intent when a site doesn't override it. */
-const QUICK_ACTION_DEFAULT_LABEL: Record<string, string> = {
-  where: "Where's my order?",
-  status: 'Order status',
-  late: 'Running late?',
-  change_address: 'Change address',
-  missing_item: 'Missing item',
-  wrong: 'Something was wrong',
-  refund: 'Request a refund',
-  tech_issue: 'Report a technical issue',
-  billing: 'Account & billing',
-  demo: 'Book a demo / trial',
-  pricing: 'Pricing & plans',
-  human: 'Talk to a human',
-};
-
-/** tryjet.io (SaaS) quick actions — support + lead-gen. 'human' is appended by
- *  the caller as the shared baseline. */
-const SAAS_ACTIONS: QuickAction[] = [
-  { label: 'Report a technical issue', intent: 'tech_issue', icon: AlertTriangle },
-  { label: 'Account & billing', intent: 'billing', icon: CreditCard },
-  { label: 'Book a demo / free trial', intent: 'demo', icon: Sparkles },
-  { label: 'Pricing & plans', intent: 'pricing', icon: Tag },
-];
-
-/**
- * Intents that only make sense with an order in context. Without one the server
- * can't answer them ("Where's my order?" → we'd be inventing a status), so they
- * are filtered out of the site-configured list as well as the built-in pack.
- */
-const ORDER_SCOPED_INTENTS = new Set<string>([
-  'where',
-  'status',
-  'late',
-  'change_address',
-  'missing_item',
-  'wrong',
-  'refund',
-]);
-
-/**
- * Order-aware quick actions. Informational intents ('where', 'status') are
- * answered automatically by the server; problem intents escalate to a human.
- * Empty when there is no order in context.
- */
-function orderQuickActions(order: OrderContext): QuickAction[] {
-  if (!order.id) return [];
-  switch (orderPhase(order.status)) {
-    case 'in_progress':
-      return [
-        { label: "Where's my order?", intent: 'where' },
-        { label: 'Running late?', intent: 'late' },
-        { label: 'Change address', intent: 'change_address' },
-      ];
-    case 'delivered':
-      return [
-        { label: 'Missing item', intent: 'missing_item' },
-        { label: 'Something was wrong', intent: 'wrong' },
-        { label: 'Request a refund', intent: 'refund' },
-      ];
-    default:
-      return [
-        { label: 'Order status', intent: 'status' },
-        { label: 'Talk to an agent', intent: 'human' },
-      ];
-  }
-}
-
-/** The four delivery stages shown in the order progress tracker. */
-const ORDER_STEPS = ['Placed', 'Preparing', 'On the way', 'Delivered'] as const;
-
-/**
- * Map a free-form order status to a 0-3 progress step so the widget can draw the
- * delivery tracker (design 2a/2c). Unknown/other statuses default to step 0.
- */
-function orderStep(status?: string): number {
-  const s = (status || '').toLowerCase();
-  if (/deliver|complete|arrived|received at|dropped|done|fulfil/.test(s)) return 3;
-  if (/way|transit|out for|pick|route|en route|dispatch|rider|driver|courier|delay|late|ship/.test(s)) return 2;
-  if (/prepar|cook|accept|confirm|process|kitchen|making|ready/.test(s)) return 1;
-  return 0; // placed / pending / new / queued / cancelled / unknown
-}
-
-/** Quick tags offered on the rate-your-delivery screen (design 2d). */
-const RATING_TAGS = ['Support was quick', 'Fair refund', 'On-time rider', 'Food quality', 'Packaging'] as const;
 
 export function ChatWidget() {
   const [config, setConfig] = useState<WidgetConfig | null>(null);
@@ -349,17 +134,16 @@ export function ChatWidget() {
   const [attachError, setAttachError] = useState<string | null>(null);
   const [triggerMessage, setTriggerMessage] = useState<string | null>(null);
   const [activeTriggerId, setActiveTriggerId] = useState<string | null>(null);
-  const [order, setOrder] = useState<OrderContext>(readOrder);
-  // The visitor's recent orders, fed by the host via JetChat('orders', [...]).
-  // Drives the order picker (design 2b) when there's more than one.
-  const [orders, setOrders] = useState<OrderContext[]>([]);
-  const [showPicker, setShowPicker] = useState(false);
+  // Unsigned session attributes the host set via Nestled('data', {...}). Display
+  // and agent-context only — never trusted. The HMAC-verified equivalent travels
+  // in `contextToken` and is validated server-side.
+  const [sessionData, setSessionData] = useState<Record<string, string>>({});
   // "Waiting for an agent" hold: after an escalation the visitor can't type
   // until an agent takes the chat (joins/assigns, or sends the first reply).
   const [waiting, setWaiting] = useState(false);
-  // Once the chat has reached an agent (via an escalating quick action or an
-  // agent joining/replying), stop offering the quick-action chips — the visitor
-  // is now talking to a person.
+  // Once the chat has reached an agent (via an escalating starter or an agent
+  // joining/replying), stop offering the starter chips — the visitor is now
+  // talking to a person.
   const [escalated, setEscalated] = useState(false);
   // Post-chat review state. Null = not reviewing.
   const [rating, setRating] = useState<{ stars: number; tags: string[]; comment: string; sent: boolean } | null>(null);
@@ -368,8 +152,8 @@ export function ChatWidget() {
   const [closeAfterReview, setCloseAfterReview] = useState(false);
   // The X-button "close this chat?" confirmation.
   const [confirmClose, setConfirmClose] = useState(false);
-  // Generic quick-action intake: collect an action's fields before running it.
-  const [intake, setIntake] = useState<{ action: QuickAction; values: Record<string, string> } | null>(null);
+  // Starter intake: collect a starter's fields before running it.
+  const [intake, setIntake] = useState<{ starter: Starter; values: Record<string, string> } | null>(null);
 
   // The visitor picked "Something else — just chat" on the intent home: swap the
   // action list for the welcome message + composer, even with no messages yet.
@@ -387,7 +171,7 @@ export function ChatWidget() {
   const visitorId = useRef(getVisitorId());
   const fingerprint = useRef(getFingerprint());
   // Signed host context (JWT). The embed passes it as `ctx`; the host may refresh
-  // it at runtime via jetchat:context. Verified server-side on conversation create.
+  // it at runtime via nestled:context. Verified server-side on conversation create.
   const contextToken = useRef(new URLSearchParams(window.location.search).get('ctx') || '');
   const identity = useRef<Record<string, string>>(readIdentity());
   const preChatRef = useRef<Record<string, string>>({});
@@ -400,16 +184,16 @@ export function ChatWidget() {
   openRef.current = open;
   const engineRef = useRef<TriggerEngine | null>(null);
   const triggersRan = useRef(false);
-  const orderRef = useRef(order);
-  orderRef.current = order;
+  const sessionDataRef = useRef(sessionData);
+  sessionDataRef.current = sessionData;
   const convRef = useRef(conversation);
   convRef.current = conversation;
 
-  const primaryColor = config?.primary_color || '#c67139';
+  const primaryColor = config?.primary_color || '#4f46e5';
   const embedded = isEmbedded();
   const side = config?.widget_position === 'left' ? 'left' : 'right';
-  const mode = useRef<WidgetMode>(readMode()).current;
-  const isFood = mode === 'food';
+  // The website this widget belongs to — an unguessable public key from the embed.
+  const site = useRef<string | null>(websiteKey()).current;
 
   // ── Load config + agent status ──────────────────────────────────────────────
   useEffect(() => {
@@ -459,7 +243,6 @@ export function ChatWidget() {
     setMessages([]);
     setEscalated(false);
     setWaiting(false);
-    setShowPicker(false);
     setIntake(null);
     setRating(null);
     setCloseAfterReview(false);
@@ -467,7 +250,7 @@ export function ChatWidget() {
     setShowPreChat(false);
     setAgentTyping(false);
     setUnread(0);
-    setPlainChat(false); // next visit starts back on the intent home
+    setPlainChat(false); // next visit starts back on the starter home
   }, []);
 
   // Open the post-chat review screen. `fromClose` = finishing it should close +
@@ -543,12 +326,12 @@ export function ChatWidget() {
         : state === 'minimized'
           ? { width: 384, height: 68 }
           : { width: 384, height: 640 };
-    window.parent.postMessage({ type: 'jetchat:resize', state, ...size }, '*');
+    window.parent.postMessage({ type: 'nestled:resize', state, ...size }, '*');
   }, [open, minimized]);
 
   // ── Standalone presence ──────────────────────────────────────────────────────
-  // When the widget runs on its own (demo / opened directly, not inside the embed
-  // iframe), open a presence connection so this visitor shows up on the admin's
+  // When the widget runs on its own (sandbox / opened directly, not inside the
+  // embed iframe), open a presence connection so this visitor shows up on the
   // Live Visitors board. In the real embed the host page's presence.js does this
   // (and reports the true host URL), so we skip it there to avoid double-tracking.
   useEffect(() => {
@@ -567,77 +350,52 @@ export function ChatWidget() {
     return () => p.stop();
   }, [embedded]);
 
-  // ── Seed order UI from the signed host context ───────────────────────────────
-  // JetFood signs the customer's current + recent orders into the context JWT.
-  // Decode it here to drive the order card and the "which order?" picker, so the
-  // host doesn't also have to call JetChat('order' | 'orders') separately.
-  useEffect(() => {
-    const payload = contextToken.current ? decodeContextPayload(contextToken.current) : null;
-    if (!payload) return;
-    const cur = orderFromContext(payload.current_order);
-    const recent = (payload.recent_orders ?? [])
-      .map(orderFromContext)
-      .filter((o): o is OrderContext => o !== null);
-    if (recent.length) setOrders(recent);
-    // Explicit URL/data-order hints (prev) win over the context; otherwise adopt
-    // the current order, or fall back to the most relevant recent one.
-    if (cur) {
-      setOrder((prev) => ({ ...cur, ...prev }));
-    } else if (recent.length) {
-      setOrder((prev) => {
-        if (prev.id) return prev;
-        const active = recent.find((o) => orderPhase(o.status) === 'in_progress') ?? recent[0];
-        return active ? { ...active, ...prev } : prev;
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Proactive: the embed forwards an agent-initiated chat ────────────────────
+  // ── Host bridge: messages the embed forwards from the host page ──────────────
+  //
+  // The widget deliberately does NOT decode the signed context token any more.
+  // Reading a JWT payload in the client to render data was both a layering
+  // mistake (the client learning the customer's domain model) and misleading
+  // (unverified in the browser, verified only on the server). Phase 10 replaces it
+  // with a server-rendered ContextCard the widget draws without interpreting.
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const data = event.data;
-      if (data && data.type === 'jetchat:proactive' && data.conversation_id && data.visitor_token) {
+      if (data && data.type === 'nestled:proactive' && data.conversation_id && data.visitor_token) {
         setConversation({ id: data.conversation_id, token: data.visitor_token });
         setShowPreChat(false);
         setOpen(true);
         setMinimized(false);
         setUnread(0);
-      } else if (data && data.type === 'jetchat:identify' && data.traits) {
+      } else if (data && data.type === 'nestled:identify' && data.traits) {
         // Late identity (e.g. after the visitor logs in on the host site).
         Object.assign(identity.current, data.traits);
-        if (data.traits.order && typeof data.traits.order === 'object') {
-          setOrder((prev) => ({ ...prev, ...data.traits.order }));
-        }
-      } else if (data && data.type === 'jetchat:context' && typeof data.token === 'string') {
+      } else if (data && data.type === 'nestled:data' && data.attributes) {
+        // Arbitrary unsigned session attributes — Nestled('data', {...}).
+        const incoming = data.attributes as Record<string, unknown>;
+        setSessionData((prev) => {
+          const next = { ...prev };
+          for (const [k, v] of Object.entries(incoming)) {
+            if (v == null) delete next[k];
+            else next[k] = String(v);
+          }
+          return next;
+        });
+      } else if (data && data.type === 'nestled:context' && typeof data.token === 'string') {
         // Refreshed signed context token (e.g. issued after the visitor logs in).
         contextToken.current = data.token;
-        const payload = decodeContextPayload(data.token);
-        if (payload) {
-          const cur = orderFromContext(payload.current_order);
-          const recent = (payload.recent_orders ?? [])
-            .map(orderFromContext)
-            .filter((o): o is OrderContext => o !== null);
-          if (recent.length) setOrders(recent);
-          if (cur) setOrder((prev) => ({ ...prev, ...cur })); // fresh runtime data wins
-        }
-        // If a conversation is live, push the fresh token so the AGENT panel's
-        // verified context (order status) updates in real time too.
+        // If a conversation is live, push the fresh token so the agent panel's
+        // verified-attributes card updates in real time too.
         const conv = convRef.current;
         if (conv) void updateConversationContext(conv.id, conv.token, data.token);
-      } else if (data && data.type === 'jetchat:order' && data.order && typeof data.order === 'object') {
-        // Live order update from the host site (status changed, delivered, …).
-        setOrder((prev) => ({ ...prev, ...data.order }));
-      } else if (data && data.type === 'jetchat:orders' && Array.isArray(data.orders)) {
-        // Full list of the visitor's recent orders (for the picker).
-        const list = (data.orders as OrderContext[]).filter((o) => o && o.id);
-        setOrders(list);
-        // Adopt the active (in-progress) order as the current context if none set.
-        setOrder((prev) => {
-          if (prev.id) return prev;
-          const active = list.find((o) => orderPhase(o.status) === 'in_progress') || list[0];
-          return active ? { ...prev, ...active } : prev;
-        });
+      } else if (data && data.type === 'nestled:open') {
+        setOpen(true);
+        setMinimized(false);
+        setUnread(0);
+      } else if (data && data.type === 'nestled:close') {
+        setOpen(false);
+      } else if (data && data.type === 'nestled:toggle') {
+        setOpen((o) => !o);
+        setMinimized(false);
       }
     };
     window.addEventListener('message', onMessage);
@@ -716,15 +474,15 @@ export function ChatWidget() {
     current_page: hostUrl(),
     screen_resolution: `${window.screen.width}x${window.screen.height}`,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    // Which scenario pack / site this chat came from (food = jetfood, saas = tryjet).
-    widget_mode: mode,
+    // Which website this chat came from (the embed's public key).
+    widget_site: site,
     // Attribute the conversation to the trigger that produced it (analytics).
     ...(activeTriggerId ? { trigger_id: activeTriggerId } : {}),
-    // The visitor's current order, so agents see the context in the profile.
-    ...(orderRef.current.id ? { order: orderRef.current } : {}),
+    // Unsigned host-supplied session attributes, for the agent's visitor card.
+    ...(Object.keys(sessionDataRef.current).length ? { attributes: sessionDataRef.current } : {}),
     // Pre-chat answers (site-configured lead capture), shown in the agent profile.
     ...(Object.keys(preChatRef.current).length ? { prechat: preChatRef.current, ...preChatRef.current } : {}),
-    // Known visitor identity (user_id, order_id, and any custom traits).
+    // Known visitor identity (user_id and any custom traits).
     ...identity.current,
   });
 
@@ -789,25 +547,30 @@ export function ChatWidget() {
     }
   };
 
-  // Run an order quick action. Informational intents get an instant automated
-  // reply; problem intents escalate to a human — the server decides and returns
-  // both the visitor request and the bot reply.
-  const handleQuickAction = async (intent: QuickIntent, fields?: { store?: string; state?: string }) => {
+  /**
+   * Run a conversation starter: post its message on the visitor's behalf, plus any
+   * collected intake values, as a normal visitor message. From there the ordinary
+   * pipeline takes over (AI answers, or hands off to a human).
+   *
+   * This deliberately no longer calls a bespoke server endpoint. The old
+   * `/quick-action` route rendered order templates server-side and could flag
+   * `needs_human` itself; Phase 11's bot flows own that escalation path, via a
+   * `handoff` node, for every channel rather than just this one.
+   */
+  const runStarter = async (starter: Starter, fields?: Record<string, string>) => {
     if (sending) return;
     setShowPreChat(false);
     setSending(true);
     try {
       const conv = await ensureConversation();
-      const { messages: msgs, needs_human } = await apiQuickAction(conv.id, conv.token, intent, orderRef.current, fields);
-      setMessages((prev) => {
-        const seen = new Set(prev.map((m) => m.id));
-        return [...prev, ...msgs.filter((m) => m && !seen.has(m.id))];
-      });
-      // Escalated to an agent → hold the composer until an agent takes the chat.
-      if (needs_human) {
-        setWaiting(true);
-        setEscalated(true);
-      }
+      const detail = fields
+        ? Object.entries(fields)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join('\n')
+        : '';
+      const content = [starter.label, detail].filter(Boolean).join('\n');
+      const { message } = await apiSendMessage(conv.id, conv.token, content);
+      setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
     } catch {
       setAttachError(strings.genericError);
     } finally {
@@ -815,24 +578,24 @@ export function ChatWidget() {
     }
   };
 
-  // Route a quick action. If it defines intake fields, collect them first, then
-  // run it with those values; otherwise run it immediately.
-  const startAction = (action: QuickAction) => {
+  // Route a starter. If it defines intake fields, collect them first, then run it
+  // with those values; otherwise run it immediately.
+  const startStarter = (starter: Starter) => {
     if (sending) return;
-    if (action.fields && action.fields.length > 0) setIntake({ action, values: {} });
-    else void handleQuickAction(action.intent);
+    if (starter.fields && starter.fields.length > 0) setIntake({ starter, values: {} });
+    else void runStarter(starter);
   };
 
   const submitIntake = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!intake) return;
-    const missing = intake.action.fields?.some((f) => f.required && !(intake.values[f.name] ?? '').trim());
+    const missing = intake.starter.fields?.some((f) => f.required && !(intake.values[f.name] ?? '').trim());
     if (missing) return;
     const values: Record<string, string> = {};
     for (const [k, v] of Object.entries(intake.values)) if (v.trim()) values[k] = v.trim();
-    const intent = intake.action.intent;
+    const starter = intake.starter;
     setIntake(null);
-    await handleQuickAction(intent, values);
+    await runStarter(starter, values);
   };
 
   // Start a plain chat from the intent home ("Something else — just chat"). The
@@ -845,8 +608,8 @@ export function ChatWidget() {
     await ensureConversation().catch(() => undefined);
   };
 
-  // Submit the delivery rating (design 2d). Sent as a normal visitor message so
-  // it lands in the agent inbox with no backend schema change.
+  // Submit the post-chat rating. Sent as a normal visitor message so it lands in
+  // the agent inbox with no backend schema change.
   const submitRating = async () => {
     if (!rating || rating.stars === 0) return;
     setSending(true);
@@ -876,32 +639,23 @@ export function ChatWidget() {
     }
   };
 
-  // Quick actions come from the Site manager when configured; otherwise fall
-  // back to the built-in pack for this site key (food = order-aware; saas =
-  // support + lead-gen; anything else = just "talk to a human").
-  const configuredActions = config?.quick_actions ?? [];
-  const quickActions: QuickAction[] = (
-    configuredActions.length > 0
-      ? configuredActions.map((a) => ({
-          intent: a.intent,
-          label: a.label || QUICK_ACTION_DEFAULT_LABEL[a.intent] || a.intent,
-          icon: INTENT_ICONS[a.intent],
-          kind: a.kind,
-          fields: a.fields,
-        }))
-      : isFood
-        ? orderQuickActions(order)
-        : mode === 'saas'
-          ? [...SAAS_ACTIONS, { label: 'Talk to a human', intent: 'human', icon: Headphones }]
-          : [{ label: 'Talk to a human', intent: 'human', icon: Headphones }]
-    // Hide order-only actions until the host gives us an order to talk about.
-  ).filter((a) => order.id != null || !ORDER_SCOPED_INTENTS.has(a.intent));
-  // Offer the rating flow once an order looks delivered (food only).
-  const canRate = isFood && order.id != null && orderPhase(order.status) === 'delivered';
-  // The intent home shows before any messages, as long as there is something to
-  // pick. With no order in context every food action is filtered out, so the
-  // plain welcome message is shown instead of an empty "what do you need?" list.
-  const showIntentHome = messages.length === 0 && !plainChat && (quickActions.length > 0 || canRate);
+  // Conversation starters are entirely server-driven — the widget ships no
+  // built-in pack, because "what a visitor might want" is the customer's domain,
+  // not ours. Until Phase 9 configures them the list is empty and the widget shows
+  // the plain welcome message.
+  const starters: Starter[] = (config?.starters ?? []).map((s) => ({
+    id: s.id,
+    label: s.label,
+    kind: s.kind,
+    fields: s.fields,
+  }));
+  // The starter home shows before any messages, as long as there is something to
+  // pick; otherwise the welcome message + composer is shown directly.
+  const showStarterHome = messages.length === 0 && !plainChat && starters.length > 0;
+  // Rating chips are per-website configuration, not a fixed list — the old
+  // hardcoded set ("On-time rider", "Food quality") only made sense for one
+  // customer. Empty hides the block entirely.
+  const ratingTags = config?.rating_tags ?? [];
 
   const handleInputChange = (value: string) => {
     setInput(value);
@@ -1108,18 +862,10 @@ export function ChatWidget() {
                     </span>
                     <h4 className="font-display text-2xl">{closeAfterReview ? 'Thanks for chatting!' : 'All sorted!'}</h4>
                     <p className="text-sm text-white/90 mt-1">
-                      {closeAfterReview ? 'How was your experience?' : 'One last thing — how was your delivery?'}
+                      {closeAfterReview ? 'How was your experience?' : 'One last thing — how did we do?'}
                     </p>
                   </div>
                   <div className="flex-1 p-5 space-y-5">
-                    {order.id && (
-                      <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3">
-                        <div className="text-sm font-semibold text-gray-800">
-                          {order.restaurant ? `${order.restaurant} · ` : ''}#{order.id}
-                        </div>
-                        <div className="text-xs text-gray-500">Delivered{order.total ? ` · ${order.total}` : ''}</div>
-                      </div>
-                    )}
                     {/* Star rating */}
                     <div className="flex justify-center gap-2">
                       {[1, 2, 3, 4, 5].map((n) => (
@@ -1128,11 +874,12 @@ export function ChatWidget() {
                         </button>
                       ))}
                     </div>
-                    {/* Tags */}
+                    {/* Tags — configured per website; the block hides when empty. */}
+                    {ratingTags.length > 0 && (
                     <div>
                       <p className="text-[11px] font-bold tracking-wider text-gray-500 mb-2">WHAT STOOD OUT?</p>
                       <div className="flex flex-wrap gap-2">
-                        {RATING_TAGS.map((tag) => {
+                        {ratingTags.map((tag) => {
                           const on = rating.tags.includes(tag);
                           return (
                             <button
@@ -1149,6 +896,7 @@ export function ChatWidget() {
                         })}
                       </div>
                     </div>
+                    )}
                     <textarea
                       value={rating.comment}
                       onChange={(e) => setRating((r) => (r ? { ...r, comment: e.target.value } : r))}
@@ -1173,74 +921,14 @@ export function ChatWidget() {
                 </>
               )}
             </div>
-          ) : showPicker ? (
-            <div className="flex-1 overflow-y-auto bg-cream flex flex-col">
-              <div className="px-5 pt-5 pb-4">
-                <h4 className="font-display text-xl text-gray-800">Which order?</h4>
-                <p className="text-sm text-gray-600 mt-0.5">We'll pull up the details for you.</p>
-              </div>
-              <div className="flex-1 px-4 pb-4 space-y-2.5">
-                {orders.map((o) => {
-                  const { label, tone } = orderStatusMeta(o);
-                  const active = orderPhase(o.status) === 'in_progress';
-                  const badge =
-                    tone === 'done'
-                      ? { bg: '#e1eecc', fg: '#3d472b' }
-                      : tone === 'in'
-                        ? { bg: `color-mix(in srgb, ${primaryColor} 16%, #fff)`, fg: primaryColor }
-                        : { bg: '#eee7db', fg: '#645c50' };
-                  return (
-                    <button
-                      key={o.id}
-                      onClick={() => {
-                        setOrder(o);
-                        setShowPicker(false);
-                      }}
-                      className="w-full text-left rounded-2xl bg-white px-4 py-3 transition hover:border-gray-300 active:scale-[0.99]"
-                      style={{ border: active ? '2px solid #7a8a5e' : '1.5px solid #e5ded0' }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-gray-800 flex-1 truncate">{o.restaurant || `Order #${o.id}`}</span>
-                        <span className="text-[9px] font-bold rounded-full px-2 py-0.5 shrink-0" style={{ background: badge.bg, color: badge.fg }}>
-                          {label.toUpperCase()}
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-600 mt-1 truncate">
-                        #{o.id}
-                        {o.items ? ` · ${o.items}` : ''}
-                        {o.total ? ` · ${o.total}` : ''}
-                      </div>
-                      <div className="text-[11px] mt-1" style={{ color: active ? '#6f7f54' : '#9c9484' }}>
-                        {active ? `Arriving in ~${o.eta || 'soon'}` : o.placed || 'Delivered'}
-                      </div>
-                    </button>
-                  );
-                })}
-                <button
-                  onClick={() => {
-                    setShowPicker(false);
-                    void startPlainChat();
-                  }}
-                  className="w-full flex items-center gap-2.5 rounded-2xl px-4 py-3 mt-1"
-                  style={{ background: `color-mix(in srgb, ${primaryColor} 8%, #fff)`, border: `1px solid color-mix(in srgb, ${primaryColor} 22%, #fff)` }}
-                >
-                  <span className="text-xs text-left" style={{ color: primaryColor }}>
-                    Can't find it? Just describe the order and we'll look it up.
-                  </span>
-                </button>
-              </div>
-            </div>
           ) : intake ? (
             <div className="flex-1 overflow-y-auto bg-cream flex flex-col">
               <div className="px-5 pt-5 pb-4">
-                <h4 className="font-display text-xl text-gray-800 flex items-center gap-2">
-                  {intake.action.icon && <intake.action.icon className="w-5 h-5" style={{ color: primaryColor }} />}
-                  {intake.action.label}
-                </h4>
+                <h4 className="font-display text-xl text-gray-800">{intake.starter.label}</h4>
                 <p className="text-sm text-gray-600 mt-1">Just a couple of quick details so we can help.</p>
               </div>
               <form onSubmit={submitIntake} className="flex-1 px-5 flex flex-col gap-4">
-                {intake.action.fields?.map((f) => (
+                {intake.starter.fields?.map((f) => (
                   <div key={f.name}>
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">
                       {f.label}
@@ -1262,7 +950,7 @@ export function ChatWidget() {
                     type="submit"
                     disabled={
                       sending ||
-                      (intake.action.fields ?? []).some((f) => f.required && !(intake.values[f.name] ?? '').trim())
+                      (intake.starter.fields ?? []).some((f) => f.required && !(intake.values[f.name] ?? '').trim())
                     }
                     className="w-full py-3 text-white rounded-full font-semibold shadow-md hover:opacity-90 active:scale-[0.98] transition disabled:opacity-40"
                     style={{ backgroundColor: primaryColor }}
@@ -1356,59 +1044,28 @@ export function ChatWidget() {
           ) : (
             <>
               <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-cream">
-                {/* Order context card with delivery progress (food mode, host-fed). */}
-                {isFood && order.id && <OrderCard order={order} primaryColor={primaryColor} />}
-
-                {/* Intent home (design 2a): the visitor picks what they need
-                    before a conversation exists. Food = order actions; SaaS =
-                    support + lead-gen actions. */}
-                {showIntentHome && (
+                {/* Starter home: the visitor picks what they need before a
+                    conversation exists. Entirely config-driven — see `starters`. */}
+                {showStarterHome && (
                   <div className="pt-1">
                     <p className="text-[11px] font-bold tracking-wider text-gray-500 mb-2 px-1">
-                      {isFood ? 'WHAT DO YOU NEED?' : 'HOW CAN WE HELP?'}
+                      HOW CAN WE HELP?
                     </p>
                     <div className="flex flex-col gap-2">
-                      {quickActions.map((a) => {
-                        const Icon = a.icon ?? Clock;
-                        return (
-                          <button
-                            key={a.label}
-                            onClick={() => startAction(a)}
-                            disabled={sending}
-                            className="flex items-center gap-3 bg-white border-[1.5px] border-gray-200 rounded-full px-4 py-3 text-left transition hover:border-gray-300 active:scale-[0.99] disabled:opacity-50"
-                          >
-                            <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${primaryColor} 12%, #fff)` }}>
-                              <Icon className="w-4 h-4" style={{ color: primaryColor }} />
-                            </span>
-                            <span className="flex-1 text-sm font-semibold text-gray-800">{a.label}</span>
-                            <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
-                          </button>
-                        );
-                      })}
-                      {isFood && orders.length > 1 && (
+                      {starters.map((s) => (
                         <button
-                          onClick={() => setShowPicker(true)}
-                          className="flex items-center gap-3 bg-white border-[1.5px] border-gray-200 rounded-full px-4 py-3 text-left transition hover:border-gray-300 active:scale-[0.99]"
+                          key={s.id}
+                          onClick={() => startStarter(s)}
+                          disabled={sending}
+                          className="flex items-center gap-3 bg-white border-[1.5px] border-gray-200 rounded-full px-4 py-3 text-left transition hover:border-gray-300 active:scale-[0.99] disabled:opacity-50"
                         >
                           <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${primaryColor} 12%, #fff)` }}>
-                            <ShoppingBag className="w-4 h-4" style={{ color: primaryColor }} />
+                            <Headphones className="w-4 h-4" style={{ color: primaryColor }} />
                           </span>
-                          <span className="flex-1 text-sm font-semibold text-gray-800">A different order</span>
+                          <span className="flex-1 text-sm font-semibold text-gray-800">{s.label}</span>
                           <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
                         </button>
-                      )}
-                      {canRate && (
-                        <button
-                          onClick={() => startReview(false)}
-                          className="flex items-center gap-3 bg-white border-[1.5px] border-gray-200 rounded-full px-4 py-3 text-left transition hover:border-gray-300 active:scale-[0.99]"
-                        >
-                          <span className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: 'color-mix(in srgb, #7a8a5e 16%, #fff)' }}>
-                            <Star className="w-4 h-4" style={{ color: '#6f7f54' }} />
-                          </span>
-                          <span className="flex-1 text-sm font-semibold text-gray-800">Rate your delivery</span>
-                          <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
-                        </button>
-                      )}
+                      ))}
                       <button
                         onClick={startPlainChat}
                         disabled={sending}
@@ -1424,7 +1081,7 @@ export function ChatWidget() {
                   </div>
                 )}
 
-                {messages.length === 0 && !showIntentHome && (
+                {messages.length === 0 && !showStarterHome && (
                   <div className="pt-1 pb-1">
                     <div className="flex flex-col items-center text-center mb-4">
                       {config?.widget_avatar_url ? (
@@ -1499,28 +1156,17 @@ export function ChatWidget() {
                 </div>
               ) : (
                 <>
-                  {/* Order-aware quick actions (fed by the host). Right-aligned pill
-                      chips, matching the design's suggested-reply row. */}
-                  {(quickActions.length > 0 || canRate) && messages.length > 0 && !escalated && (
+                  {/* Starter chips, right-aligned like a suggested-reply row. */}
+                  {starters.length > 0 && messages.length > 0 && !escalated && (
                     <div className="flex gap-2 px-3 pt-2 pb-1 bg-white overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                       {/* Grows to right-align the chips when they fit, but shrinks
                           to 0 when they overflow so every chip stays scroll-reachable
                           (justify-end alone makes the leading chips unreachable). */}
                       <span aria-hidden className="flex-1 shrink min-w-0" />
-                      {canRate && (
+                      {starters.map((s) => (
                         <button
-                          onClick={() => startReview(false)}
-                          disabled={sending}
-                          className="shrink-0 rounded-full border-[1.5px] px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition active:scale-95 disabled:opacity-50 flex items-center gap-1"
-                          style={{ borderColor: '#7a8a5e', color: '#3d472b', background: '#eef3e2' }}
-                        >
-                          <Star className="w-3 h-3" style={{ color: '#6f7f54' }} /> Rate delivery
-                        </button>
-                      )}
-                      {quickActions.map((a) => (
-                        <button
-                          key={a.label}
-                          onClick={() => startAction(a)}
+                          key={s.id}
+                          onClick={() => startStarter(s)}
                           disabled={sending}
                           className="shrink-0 rounded-full border-[1.5px] px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition active:scale-95 disabled:opacity-50"
                           style={{
@@ -1529,7 +1175,7 @@ export function ChatWidget() {
                             background: `color-mix(in srgb, ${primaryColor} 9%, #fff)`,
                           }}
                         >
-                          {a.label}
+                          {s.label}
                         </button>
                       ))}
                     </div>
@@ -1562,7 +1208,7 @@ export function ChatWidget() {
                 </>
               )}
               <div className="text-center text-[10px] font-semibold tracking-wide text-gray-500 pb-2 -mt-1 bg-white">
-                Powered by JetChat
+                Powered by Nestled
               </div>
             </>
           )}
@@ -1644,83 +1290,6 @@ function MessageBubble({ message, primaryColor, token }: { message: WidgetMessag
           {senderName} · {time}
         </span>
       </div>
-    </div>
-  );
-}
-
-/**
- * Order context card with a live delivery progress tracker (design 2a/2c). Fed
- * by the host site via `JetChat('order', {...})`. The stepper is shown for
- * in-progress / delivered orders; an unknown status falls back to a plain badge.
- */
-function OrderCard({ order, primaryColor }: { order: OrderContext; primaryColor: string }) {
-  const { label, tone } = orderStatusMeta(order);
-  const phase = orderPhase(order.status);
-  const olive = '#7a8a5e';
-  const showStepper = phase === 'in_progress' || phase === 'delivered';
-  const current = orderStep(order.status);
-  const badge =
-    tone === 'done'
-      ? { bg: '#e1eecc', fg: '#3d472b' } // olive
-      : tone === 'in'
-        ? { bg: `color-mix(in srgb, ${primaryColor} 16%, #fff)`, fg: primaryColor }
-        : { bg: '#eee7db', fg: '#645c50' };
-  const sub = [order.restaurant, order.total].filter(Boolean).join(' · ');
-  return (
-    <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3.5 shadow-sm">
-      <div className="flex items-center gap-3">
-        <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${primaryColor} 12%, #fff)` }}>
-          <ShoppingBag className="w-5 h-5" style={{ color: primaryColor }} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-gray-800 truncate">Order #{order.id}</div>
-          <div className="text-xs text-gray-500 truncate">{sub || 'Your JetFood order'}</div>
-        </div>
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          <span className="text-[10px] font-bold rounded-full px-2.5 py-1 whitespace-nowrap" style={{ background: badge.bg, color: badge.fg }}>
-            {label}
-          </span>
-          {phase === 'in_progress' && order.eta && (
-            <span className="text-[10px] font-bold" style={{ color: olive }}>~{order.eta}</span>
-          )}
-        </div>
-      </div>
-
-      {showStepper && (
-        <div className="mt-3">
-          <div className="flex items-center">
-            {ORDER_STEPS.map((_, i) => {
-              const done = i < current;
-              const isCurrent = i === current;
-              const dotColor = done || isCurrent ? olive : '#d8d0c2';
-              return (
-                <div key={i} className="flex items-center" style={{ flex: i === ORDER_STEPS.length - 1 ? '0 0 auto' : '1 1 0%' }}>
-                  <span
-                    className="w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0"
-                    style={{
-                      background: isCurrent ? '#fff' : dotColor,
-                      border: isCurrent ? `3px solid ${olive}` : 'none',
-                      boxSizing: 'border-box',
-                    }}
-                  >
-                    {done && <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />}
-                  </span>
-                  {i < ORDER_STEPS.length - 1 && (
-                    <span className="h-1 flex-1 rounded-full" style={{ background: i < current ? olive : '#e4ddce' }} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div className="flex justify-between mt-1.5">
-            {ORDER_STEPS.map((s, i) => (
-              <span key={s} className="text-[9px] font-semibold" style={{ color: i === current ? '#3d472b' : '#9c9484' }}>
-                {s}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

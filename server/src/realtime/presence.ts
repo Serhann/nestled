@@ -1,7 +1,7 @@
 import type { WebSocket } from 'ws';
 import { broadcastToAgents } from './hub.js';
 import type { GeoLocation } from '../services/geo.js';
-import type { VisitorContext } from '../services/siteContext.js';
+import type { VerifiedContext } from '../services/verifiedAttributes.js';
 
 /**
  * Live visitor presence — everyone currently on the site, including anonymous
@@ -30,7 +30,7 @@ export interface PresenceEntry {
   ip: string;
   geo: GeoLocation | null;
   conversationId: string | null; // set if this visitor has an open conversation
-  mode: string; // which site / scenario pack this visitor is on (site key)
+  siteKey: string | null; // which site this visitor is on; null until identified
   name: string | null; // identified customer name (from verified host context)
   email: string | null; // identified customer email (from verified host context)
   // Client hints (display only) so the agent gets the same visitor card the
@@ -38,9 +38,9 @@ export interface PresenceEntry {
   userAgent: string | null;
   language: string | null;
   timezone: string | null;
-  // Trusted host context (HMAC-verified) — customer + orders, same shape the
-  // conversation metadata carries.
-  context: VisitorContext | null;
+  // Trusted host context (HMAC-verified) — the same shape the conversation
+  // metadata carries.
+  context: VerifiedContext | null;
   lastSeen: number;
 }
 
@@ -73,7 +73,7 @@ interface HelloData {
   screen?: { w: number; h: number };
   returning?: boolean;
   sessionStart?: number;
-  mode?: string;
+  site?: string;
   user_agent?: string;
   language?: string;
   timezone?: string;
@@ -81,9 +81,9 @@ interface HelloData {
 
 /**
  * Record a page visit if the URL actually changed. Shared by the hello path
- * (full page loads — the only navigation signal on non-SPA sites like JetFood)
- * and the SPA `update` path. Returns true if a new page was recorded. Guards
- * against duplicates so a WS reconnect on the same page never inflates counts.
+ * (full page loads — the only navigation signal on non-SPA host sites) and the
+ * SPA `update` path. Returns true if a new page was recorded. Guards against
+ * duplicates so a WS reconnect on the same page never inflates counts.
  */
 function recordPageVisit(entry: PresenceEntry, url: string | null | undefined, now: number): boolean {
   if (!url || url === entry.url) return false;
@@ -120,7 +120,10 @@ export function registerPresenceSocket(
         ip,
         geo,
         conversationId: null,
-        mode: hello.mode || 'food',
+        // No default site: guessing one attributes a visitor to a site they were
+        // never on. Phase 6 replaces this with the website id from the verified
+        // widget session token.
+        siteKey: hello.site ?? null,
         name: null,
         email: null,
         userAgent: hello.user_agent ?? null,
@@ -137,7 +140,7 @@ export function registerPresenceSocket(
     // and record the new page if the URL changed.
     tracked.entry.ip = ip;
     if (geo) tracked.entry.geo = geo;
-    if (hello.mode) tracked.entry.mode = hello.mode;
+    if (hello.site) tracked.entry.siteKey = hello.site;
     if (hello.screen) tracked.entry.screen = hello.screen;
     if (hello.user_agent) tracked.entry.userAgent = hello.user_agent;
     if (hello.language) tracked.entry.language = hello.language;
@@ -191,9 +194,9 @@ export function setPresenceIdentity(
   if (changed) scheduleBroadcast();
 }
 
-/** Store the HMAC-verified host context (customer + orders) on a present
- *  visitor so the live-visitor card can show it without a conversation. */
-export function setPresenceContext(visitorId: string, context: VisitorContext | null): void {
+/** Store the HMAC-verified host context on a present visitor so the live-visitor
+ *  card can show it without a conversation. */
+export function setPresenceContext(visitorId: string, context: VerifiedContext | null): void {
   const t = visitors.get(visitorId);
   if (!t || !context) return;
   t.entry.context = context;

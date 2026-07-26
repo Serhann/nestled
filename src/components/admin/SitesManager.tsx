@@ -1,15 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Globe2, Pencil, Palette, Check } from 'lucide-react';
+import { Plus, Trash2, Globe2, Pencil, Palette } from 'lucide-react';
 import {
   listSites,
   createSite,
   updateSite,
   deleteSite,
-  listQuickActions,
   listSiteDomains,
   type Site,
   type SiteInput,
-  type QuickActionDef,
   type SiteDomain,
   type SitePreChatField,
 } from '../../lib/adminApi';
@@ -35,31 +33,26 @@ function emptySite(): SiteInput {
     system_prompt: null,
     pre_chat_enabled: null,
     pre_chat_fields: [],
-    quick_actions: [],
     allowed_domains: [],
     enforce_domains: false,
     context_secret: null,
   };
 }
-function toInput(s: Site): SiteInput {
-  const { id: _id, ...rest } = s;
-  return { ...rest, quick_actions: [...(s.quick_actions ?? [])] };
+function toInput({ id, ...rest }: Site): SiteInput {
+  void id; // `id` is the route param, not part of the editable payload
+  return rest;
 }
 
 export function SitesManager({ onBack }: { onBack: () => void }) {
   const [sites, setSites] = useState<Site[]>([]);
-  const [catalog, setCatalog] = useState<QuickActionDef[]>([]);
   const [domains, setDomains] = useState<SiteDomain[]>([]);
   const [editing, setEditing] = useState<{ id: string | null; input: SiteInput } | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const catalogOrder = catalog.map((c) => c.key);
-
   const load = () => listSites().then(setSites).catch(() => undefined);
   useEffect(() => {
     void load();
-    listQuickActions().then(setCatalog).catch(() => undefined);
     listSiteDomains().then(setDomains).catch(() => undefined);
   }, []);
 
@@ -87,26 +80,14 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
   if (editing) {
     const inp = editing.input;
     const set = (p: Partial<SiteInput>) => setEditing({ ...editing, input: { ...inp, ...p } });
-    const color = inp.primary_color || '#c67139';
-
-    const isSel = (intent: string) => inp.quick_actions.some((a) => a.intent === intent);
-    const labelOf = (intent: string) => inp.quick_actions.find((a) => a.intent === intent)?.label ?? '';
-    const toggle = (intent: string) => {
-      const next = isSel(intent)
-        ? inp.quick_actions.filter((a) => a.intent !== intent)
-        : [...inp.quick_actions, { intent }];
-      next.sort((a, b) => catalogOrder.indexOf(a.intent) - catalogOrder.indexOf(b.intent));
-      set({ quick_actions: next });
-    };
-    const setLabel = (intent: string, label: string) =>
-      set({ quick_actions: inp.quick_actions.map((a) => (a.intent === intent ? { ...a, label: label || undefined } : a)) });
+    const color = inp.primary_color || '#4f46e5';
 
     return (
       <ManagePage>
         <PageHeader
           icon={Globe2}
           title={editing.id ? `Edit ${inp.name || 'site'}` : 'New site'}
-          subtitle="Give this site its own widget look and quick actions."
+          subtitle="Give this site its own widget look and behaviour."
           onBack={() => setEditing(null)}
           action={
             <PrimaryButton onClick={save} disabled={saving}>
@@ -121,11 +102,11 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
           <h3 className="font-semibold text-gray-800">Basics</h3>
           <div className="grid sm:grid-cols-2 gap-5">
             <Field label="Name">
-              <TextInput placeholder="TryJet" value={inp.name} onChange={(e) => set({ name: e.target.value })} />
+              <TextInput placeholder="Acme" value={inp.name} onChange={(e) => set({ name: e.target.value })} />
             </Field>
-            <Field label="Site key" hint="Used in the embed as data-mode. Lowercase, dashes.">
+            <Field label="Site key" hint="Used in the embed as data-website. Lowercase, dashes.">
               <TextInput
-                placeholder="tryjet"
+                placeholder="acme"
                 value={inp.key}
                 onChange={(e) => set({ key: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
               />
@@ -253,7 +234,7 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
           <Field label="System prompt">
             <TextArea
               rows={5}
-              placeholder="e.g. You are TryJet's support assistant. Be concise and technical…"
+              placeholder="e.g. You are Acme's support assistant. Be concise and friendly…"
               value={inp.system_prompt ?? ''}
               onChange={(e) => set({ system_prompt: e.target.value || null })}
             />
@@ -264,14 +245,14 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
         <Card className="p-5 sm:p-6 space-y-5">
           <h3 className="font-semibold text-gray-800">Allowed domains</h3>
           <p className="text-xs text-gray-500 -mt-2">
-            Which domains may embed this site's widget — one per line (e.g. <code className="font-mono">tryjet.io</code>,{' '}
-            <code className="font-mono">*.tryjet.io</code>). A bare domain also covers its subdomains. Leave blank to
+            Which domains may embed this site's widget — one per line (e.g. <code className="font-mono">acme.com</code>,{' '}
+            <code className="font-mono">*.acme.com</code>). A bare domain also covers its subdomains. Leave blank to
             allow anywhere. Either way, every domain the widget loads on is recorded below.
           </p>
           <Field label="Domains">
             <TextArea
               rows={3}
-              placeholder={'tryjet.io\napp.tryjet.io'}
+              placeholder={'acme.com\napp.acme.com'}
               value={inp.allowed_domains.join('\n')}
               onChange={(e) => set({ allowed_domains: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) })}
             />
@@ -311,7 +292,7 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
         <Card className="p-5 sm:p-6 space-y-4">
           <h3 className="font-semibold text-gray-800">Signed visitor context</h3>
           <p className="text-xs text-gray-500 -mt-2">
-            Let this site pass <b>trusted</b> customer &amp; order data into the chat. The host server signs
+            Let this site pass <b>trusted</b> customer data and attributes into the chat. The host server signs
             a JWT with this shared secret; we verify it, so the data can't be spoofed from the browser.
             Paste the same secret into your site's integration. Leave blank to disable.
           </p>
@@ -342,50 +323,6 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
           </p>
         </Card>
 
-        {/* Quick actions */}
-        <Card className="p-5 sm:p-6 space-y-4">
-          <h3 className="font-semibold text-gray-800">Quick actions</h3>
-          <p className="text-xs text-gray-500 -mt-2">
-            Pick which quick actions this site's widget shows, and optionally rename them. Manage the
-            actions themselves (behaviour, reply text, intake fields) in <b>Quick actions</b>. Leave all
-            unchecked to use the built-in set for the key ("food" = order tracking, "saas" = support).
-          </p>
-          <div className="space-y-2">
-            {catalog.length === 0 && <p className="text-sm text-gray-400">No quick actions defined yet.</p>}
-            {catalog.map((c) => {
-              const on = isSel(c.key);
-              return (
-                <div key={c.key} className={`rounded-2xl border p-3 transition ${on ? 'border-blue-300 bg-blue-50/50' : 'border-gray-200'}`}>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => toggle(c.key)}
-                      className={`w-5 h-5 rounded-md border-[1.5px] flex items-center justify-center shrink-0 transition ${on ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300'}`}
-                      aria-label={on ? 'Remove' : 'Add'}
-                    >
-                      {on && <Check className="w-3.5 h-3.5" />}
-                    </button>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-sm font-medium text-gray-800">{c.label}</span>
-                      <span className="ml-2 text-[11px] text-gray-400 font-mono">{c.key}</span>
-                    </div>
-                    <Badge tone={c.kind === 'auto' ? 'green' : 'amber'}>{c.kind === 'auto' ? 'auto-reply' : 'to agent'}</Badge>
-                    {c.fields.length > 0 && <Badge tone="violet">form</Badge>}
-                  </div>
-                  {on && (
-                    <div className="mt-2 pl-8">
-                      <TextInput
-                        placeholder={`Button label (default: ${c.label})`}
-                        value={labelOf(c.key)}
-                        onChange={(e) => setLabel(c.key, e.target.value)}
-                      />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </Card>
       </ManagePage>
     );
   }
@@ -396,7 +333,7 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
       <PageHeader
         icon={Globe2}
         title="Sites"
-        subtitle={`${sites.length} site${sites.length === 1 ? '' : 's'} — each with its own widget & quick actions`}
+        subtitle={`${sites.length} site${sites.length === 1 ? '' : 's'} — each with its own widget configuration`}
         onBack={onBack}
         action={
           <PrimaryButton onClick={() => setEditing({ id: null, input: emptySite() })}>
@@ -409,7 +346,7 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
         <EmptyState
           icon={Globe2}
           title="No sites yet"
-          hint="Add a site for each place you embed the widget, then give it its own look and quick actions."
+          hint="Add a site for each place you embed the widget, then give it its own look and behaviour."
           action={
             <PrimaryButton onClick={() => setEditing({ id: null, input: emptySite() })}>
               <Plus className="w-4 h-4" /> New site
@@ -434,7 +371,7 @@ export function SitesManager({ onBack }: { onBack: () => void }) {
                 <p className="text-xs text-gray-500 font-mono mt-0.5">data-mode="{s.key}"</p>
                 <div className="mt-2 flex items-center gap-1.5 flex-wrap">
                   <Badge tone="blue">
-                    {s.quick_actions.length > 0 ? `${s.quick_actions.length} quick actions` : 'built-in actions'}
+                    {s.allowed_domains.length > 0 ? `${s.allowed_domains.length} allowed domain${s.allowed_domains.length === 1 ? '' : 's'}` : 'any domain'}
                   </Badge>
                   {(s.widget_title || s.welcome_message || s.primary_color) && <Badge tone="violet">custom look</Badge>}
                   {s.system_prompt && <Badge tone="green">custom AI</Badge>}

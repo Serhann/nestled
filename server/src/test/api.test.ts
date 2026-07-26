@@ -16,8 +16,8 @@ process.env.JWT_REFRESH_SECRET ??= 'test-refresh-secret-abcdefghijklmnop';
 process.env.ALLOWED_ORIGINS ??= 'http://localhost:5173';
 // Tests run against a DEDICATED database (never the dev DB) — the suite
 // TRUNCATEs tables, so it must not share a DB with `npm run dev`. Default to
-// jetchat_test on the same server; create it if missing.
-process.env.DATABASE_URL ??= 'postgres://jetchat:jetchat@localhost:55432/jetchat_test';
+// nestled_test on the same server; create it if missing.
+process.env.DATABASE_URL ??= 'postgres://nestled:nestled@localhost:55432/nestled_test';
 
 {
   const url = new URL(process.env.DATABASE_URL);
@@ -109,7 +109,7 @@ let agentAccess = '';
 test('the first admin is seeded from env; public register is closed', async () => {
   // Bootstrap the first admin via the SEED_ADMIN_* path (how production does it).
   const { ensureSeedAdmin } = await import('../db/seedAdmin.js');
-  process.env.SEED_ADMIN_EMAIL = 'boss@jetfood.com';
+  process.env.SEED_ADMIN_EMAIL = 'boss@example.com';
   process.env.SEED_ADMIN_PASSWORD = 'supersecret1';
   process.env.SEED_ADMIN_NAME = 'Boss';
   await ensureSeedAdmin();
@@ -126,7 +126,7 @@ test('the first admin is seeded from env; public register is closed', async () =
   const login = await app.inject({
     method: 'POST',
     url: '/api/auth/login',
-    payload: { email: 'boss@jetfood.com', password: 'supersecret1' },
+    payload: { email: 'boss@example.com', password: 'supersecret1' },
   });
   assert.equal(login.statusCode, 200);
   assert.equal(login.json().agent.role, 'admin');
@@ -156,13 +156,13 @@ test('change-password: wrong current rejected, correct rotates and revokes sessi
   const oldLogin = await app.inject({
     method: 'POST',
     url: '/api/auth/login',
-    payload: { email: 'boss@jetfood.com', password: 'supersecret1' },
+    payload: { email: 'boss@example.com', password: 'supersecret1' },
   });
   assert.equal(oldLogin.statusCode, 401);
   const newLogin = await app.inject({
     method: 'POST',
     url: '/api/auth/login',
-    payload: { email: 'boss@jetfood.com', password: 'brandnew12' },
+    payload: { email: 'boss@example.com', password: 'brandnew12' },
   });
   assert.equal(newLogin.statusCode, 200);
   adminAccess = newLogin.json().access_token;
@@ -172,7 +172,7 @@ test('login rejects a wrong password', async () => {
   const res = await app.inject({
     method: 'POST',
     url: '/api/auth/login',
-    payload: { email: 'boss@jetfood.com', password: 'wrongpass1' },
+    payload: { email: 'boss@example.com', password: 'wrongpass1' },
   });
   assert.equal(res.statusCode, 401);
 });
@@ -182,14 +182,14 @@ test('role enforcement: agent cannot use admin endpoints', async () => {
     method: 'POST',
     url: '/api/agents',
     headers: { authorization: `Bearer ${adminAccess}` },
-    payload: { name: 'Aylin', email: 'aylin@jetfood.com', password: 'agentpass1', role: 'agent' },
+    payload: { name: 'Aylin', email: 'aylin@example.com', password: 'agentpass1', role: 'agent' },
   });
   assert.equal(created.statusCode, 201);
 
   const login = await app.inject({
     method: 'POST',
     url: '/api/auth/login',
-    payload: { email: 'aylin@jetfood.com', password: 'agentpass1' },
+    payload: { email: 'aylin@example.com', password: 'agentpass1' },
   });
   agentAccess = login.json().access_token;
 

@@ -1,7 +1,7 @@
 # ── Frontend (Vite MPA) served by nginx, which also proxies /api + /ws to the
 # backend `app` service. One public container per environment.
 #
-#   Build stage: compile the static site (admin/chat/demo/tryjet/index).
+#   Build stage: compile the static site (index/app/ops/widget).
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./

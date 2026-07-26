@@ -14,7 +14,7 @@ const cannedBody = z.object({
   title: z.string().min(1).max(120),
   content: z.string().min(1).max(4000),
   // Which sites/modes this applies to; empty = all sites.
-  sites: z.array(z.enum(['food', 'saas'])).default([]),
+  sites: z.array(z.string().regex(/^[a-z0-9-]{1,60}$/)).max(50).default([]),
 });
 
 /** Canned responses: agents read (for `/` autocomplete); admins manage. */

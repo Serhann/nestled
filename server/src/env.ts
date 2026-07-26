@@ -19,16 +19,13 @@ const schema = z.object({
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
-  // Comma-separated list of allowed browser origins for CORS.
+  // Comma-separated list of allowed browser origins for CORS. This governs the
+  // PRIVATE app surface only (app/ops). The public widget surface is embedded on
+  // arbitrary customer domains, so where the widget may run is enforced by a
+  // per-website domain allowlist, never by this list.
   ALLOWED_ORIGINS: z
     .string()
-    .default('https://www.jetfood.com,https://jetfood.com,http://localhost:5173'),
-
-  // Open agent registration only until the first admin exists. After that,
-  // set to 'false' (default) so registration is admin-only via the API.
-  ALLOW_OPEN_REGISTRATION: z
-    .enum(['true', 'false'])
-    .default('true'),
+    .default('https://app.nestled.chat,https://ops.nestled.chat,https://nestled.chat,http://localhost:5173'),
 
   // AI (Phase 7 expands this; adapters read these at call time).
   AI_PROVIDER: z.enum(['knowledge_base', 'anthropic', 'openai', 'ollama']).default('anthropic'),
@@ -45,7 +42,7 @@ const schema = z.object({
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   // Contact URI required by the push spec; a mailto: or https: URL.
-  VAPID_SUBJECT: z.string().default('mailto:admin@jetfood.com'),
+  VAPID_SUBJECT: z.string().default('mailto:support@nestled.chat'),
 
   // Path to a local MaxMind GeoLite2 .mmdb (Country or City). When unset or
   // missing, geo lookups fall back to the MaxMind web service (below) or, if

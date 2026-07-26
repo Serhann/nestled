@@ -97,7 +97,7 @@ export async function pushNewConversation(
     conversationId,
     title: 'New chat started',
     body: page ? `${who} on ${page}` : `${who} started a chat`,
-    url: `/admin?conversation=${conversationId}`,
+    url: `/app?conversation=${conversationId}`,
   });
 }
 
@@ -114,6 +114,6 @@ export async function pushVisitorMessage(
     conversationId,
     title: who,
     body: short,
-    url: `/admin?conversation=${conversationId}`,
+    url: `/app?conversation=${conversationId}`,
   });
 }

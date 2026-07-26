@@ -6,7 +6,7 @@ export interface Conversation {
   status: 'active' | 'resolved' | 'waiting';
   created_at: string;
   updated_at: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   message_count: number;
   ai_greeted: boolean;
 }
@@ -18,7 +18,7 @@ export interface Message {
   sender_type: 'visitor' | 'agent' | 'ai';
   sender_id: string | null;
   created_at: string;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 export interface KnowledgeBaseItem {

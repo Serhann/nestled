@@ -17,7 +17,6 @@ import {
   BookOpen,
   ChevronRight,
   Globe2,
-  MousePointerClick,
   KeyRound,
 } from 'lucide-react';
 import { LoginPanel } from './admin/LoginPanel';
@@ -31,7 +30,6 @@ import { TriggersPanel } from './admin/TriggersPanel';
 import { MagicBrowse, type ReplayFeed } from './admin/MagicBrowse';
 import { KnowledgeBasePanel } from './admin/KnowledgeBasePanel';
 import { SitesManager } from './admin/SitesManager';
-import { QuickActionsManager } from './admin/QuickActionsManager';
 import { Dashboard } from './admin/Dashboard';
 import {
   tokens,
@@ -54,7 +52,6 @@ type Section =
   | 'visitors'
   | 'agents'
   | 'sites'
-  | 'quick-actions'
   | 'kb'
   | 'canned'
   | 'triggers'
@@ -75,7 +72,6 @@ const NAV: NavItem[] = [
   { id: 'visitors', label: 'Live visitors', icon: Users, group: 'main' },
   { id: 'agents', label: 'Agents & users', icon: Users2, adminOnly: true, group: 'manage' },
   { id: 'sites', label: 'Sites', icon: Globe2, adminOnly: true, group: 'manage' },
-  { id: 'quick-actions', label: 'Quick actions', icon: MousePointerClick, adminOnly: true, group: 'manage' },
   { id: 'kb', label: 'Knowledge base', icon: BookOpen, adminOnly: true, group: 'manage' },
   { id: 'canned', label: 'Canned responses', icon: MessageSquareText, adminOnly: true, group: 'manage' },
   { id: 'triggers', label: 'Triggers', icon: Zap, adminOnly: true, group: 'manage' },
@@ -97,7 +93,7 @@ export function AdminPanel() {
   const [watching, setWatching] = useState<string | null>(null);
   const [replayFeed, setReplayFeed] = useState<ReplayFeed | null>(null);
 
-  const [sound, setSound] = useState(() => typeof localStorage !== 'undefined' && localStorage.getItem('jetchat_admin_sound') !== '0');
+  const [sound, setSound] = useState(() => typeof localStorage !== 'undefined' && localStorage.getItem('nestled_admin_sound') !== '0');
   const socketRef = useRef<AgentSocket | null>(null);
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedId;
@@ -113,7 +109,7 @@ export function AdminPanel() {
       onConversationUpdated: (conversationId) => {
         setListNonce((n) => n + 1);
         // If the updated conversation is the one open in ChatPanel, nudge it to
-        // refetch (e.g. live order-status / verified-context change).
+        // refetch (e.g. a verified-context change pushed by the host).
         if (conversationId && conversationId === selectedRef.current) {
           setChatRefresh((n) => n + 1);
         }
@@ -198,7 +194,7 @@ export function AdminPanel() {
   const toggleSound = () => {
     setSound((s) => {
       const next = !s;
-      localStorage.setItem('jetchat_admin_sound', next ? '1' : '0');
+      localStorage.setItem('nestled_admin_sound', next ? '1' : '0');
       if (next) playChime(); // confirm + unlock the audio context on enable
       return next;
     });
@@ -297,8 +293,6 @@ export function AdminPanel() {
         return <AgentsManager meId={agent.id} onBack={() => go('dashboard')} />;
       case 'sites':
         return <SitesManager onBack={() => go('dashboard')} />;
-      case 'quick-actions':
-        return <QuickActionsManager onBack={() => go('dashboard')} />;
       case 'canned':
         return <CannedManager onBack={() => go('dashboard')} />;
       case 'settings':
@@ -326,7 +320,7 @@ export function AdminPanel() {
     <div className="flex h-[100dvh] bg-canvas">
       {/* ── Desktop icon rail (Organic design) ──────────────────────────── */}
       <aside className="hidden md:flex md:flex-col items-center w-[70px] bg-gray-900 shrink-0 py-3 gap-1">
-        <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center mb-3 shadow-md" title="JetChat">
+        <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center mb-3 shadow-md" title="Nestled">
           <MessageSquare className="w-5 h-5 text-white" />
         </div>
         {visibleNav
@@ -492,8 +486,7 @@ function AccountView({
   const manage: { id: Section; label: string; icon: typeof Users2 }[] = [
     { id: 'agents', label: 'Agents & users', icon: Users2 },
     { id: 'sites', label: 'Sites', icon: Globe2 },
-    { id: 'quick-actions', label: 'Quick actions', icon: MousePointerClick },
-    { id: 'kb', label: 'Knowledge base', icon: BookOpen },
+      { id: 'kb', label: 'Knowledge base', icon: BookOpen },
     { id: 'canned', label: 'Canned responses', icon: MessageSquareText },
     { id: 'triggers', label: 'Triggers', icon: Zap },
     { id: 'settings', label: 'Settings & AI', icon: Settings },

@@ -21,10 +21,13 @@ export interface AIReplyInput {
   message: string;
   settings: AISettings;
   knowledge: KnowledgeItem[];
-  /** Pre-rendered block of HMAC-verified facts about this visitor (customer +
-   *  orders) from the host site, or an explicit "no active order" line. Trusted:
-   *  the model may quote it; without it the model must not describe any order. */
+  /** Pre-rendered block of HMAC-verified facts about this visitor from the host
+   *  site, or an explicit "no verified facts available" line. Trusted: the model
+   *  may quote it; without it the model must not describe any account state. */
   visitorContext?: string;
+  /** Customer-authored extra instructions. Injected BEFORE the fixed style,
+   *  grounding and handoff rules so it can never override the contract. */
+  extraRules?: string;
 }
 
 export interface AIUsage {

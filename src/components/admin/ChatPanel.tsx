@@ -37,7 +37,7 @@ import {
   listCanned,
   listAgents,
   assignConversation,
-  conversationSource,
+  conversationOrigin,
   translate,
   updateVisitor,
   listVisitorIps,
@@ -111,8 +111,8 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
   const [ips, setIps] = useState<VisitorIp[]>([]);
   const [person, setPerson] = useState<PersonProfile | null>(null);
   const [showTranslate, setShowTranslate] = useState(false);
-  const [translateTo, setTranslateTo] = useState(() => localStorage.getItem('jetchat_tx_in') || '');
-  const [replyLang, setReplyLang] = useState(() => localStorage.getItem('jetchat_tx_out') || '');
+  const [translateTo, setTranslateTo] = useState(() => localStorage.getItem('nestled_tx_in') || '');
+  const [replyLang, setReplyLang] = useState(() => localStorage.getItem('nestled_tx_out') || '');
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -205,10 +205,10 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
   const setTx = (dir: 'in' | 'out', lang: string) => {
     if (dir === 'in') {
       setTranslateTo(lang);
-      localStorage.setItem('jetchat_tx_in', lang);
+      localStorage.setItem('nestled_tx_in', lang);
     } else {
       setReplyLang(lang);
-      localStorage.setItem('jetchat_tx_out', lang);
+      localStorage.setItem('nestled_tx_out', lang);
     }
   };
 
@@ -324,24 +324,22 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
         timezone?: string;
         referrer?: string | null;
         screen_resolution?: string;
-        order_id?: string;
         user_id?: string;
         phone?: string;
         prechat?: Record<string, string>;
+        // Mirrors server/src/services/verifiedAttributes.ts.
         verified_context?: {
-          customer?: { id?: string | number; name?: string; email?: string; phone?: string; orders_count?: number; since?: string };
-          current_order?: { id?: string; status?: string; eta?: string; restaurant?: string; total?: string | number; currency?: string; date?: string; url?: string };
-          recent_orders?: { id?: string; status?: string; total?: string | number; date?: string; restaurant?: string }[];
+          customer?: { id?: string | number; name?: string; email?: string; phone?: string };
+          attributes?: Record<string, string | number | boolean | null>;
         };
+        attributes?: Record<string, string>;
         handoff?: {
           by?: string;
-          intent?: string;
           reason?: string;
           summary?: string;
           suggestion?: string;
           request?: string;
-          order?: { id?: string; status?: string; eta?: string; restaurant?: string; total?: string } | null;
-          fields?: { store?: string; state?: string } | null;
+          fields?: Record<string, string> | null;
           at?: string;
         };
       }
@@ -371,10 +369,9 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                 </span>
               )}
               {(() => {
-                const src = conversationSource(conversation?.metadata);
-                const tone =
-                  src.tone === 'saas' ? 'bg-violet-100 text-violet-700' : src.tone === 'food' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600';
-                return <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0 ${tone}`}>{src.label}</span>;
+                const src = conversationOrigin(conversation?.metadata);
+                if (!src) return null;
+                return <span className="text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0 bg-gray-100 text-gray-600">{src}</span>;
               })()}
               {handoff && (
                 <span className="inline-flex items-center gap-1 text-[9px] font-bold tracking-wide bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">
@@ -383,9 +380,7 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
               )}
             </p>
             <p className="text-xs text-gray-500 truncate flex items-center gap-1">
-              {handoff?.order?.restaurant && <span className="text-gray-600">{handoff.order.restaurant} · </span>}
               {handoff?.reason && <span className="text-blue-600 font-medium">{handoff.reason} · </span>}
-              {meta?.order_id && <span className="text-blue-600">Order #{meta.order_id} · </span>}
               {geoText && (
                 <>
                   <MapPin className="w-3 h-3 shrink-0" />
@@ -533,28 +528,20 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
               <div className="mt-2">
               {handoff.summary && <p className="text-sm text-gray-800 leading-relaxed mb-2">{handoff.summary}</p>}
               <p className="text-sm text-gray-800 leading-relaxed">
-                <span className="font-semibold">{handoff.reason ?? 'Handoff'}</span>
-                {handoff.order?.id && (
-                  <>
-                    {' on '}
-                    <b>#{handoff.order.id}{handoff.order.restaurant ? ` · ${handoff.order.restaurant}` : ''}</b>
-                    {handoff.order.status ? ` (${handoff.order.status}${handoff.order.eta ? `, ETA ${handoff.order.eta}` : ''})` : ''}
-                  </>
-                )}
-                .
+                <span className="font-semibold">{handoff.reason ?? 'Handoff'}</span>.
               </p>
-              {handoff.fields && (handoff.fields.store || handoff.fields.state) && (
+              {/* Whatever the starter's intake form collected — the field names are
+                  the customer's, so render them generically rather than by key. */}
+              {handoff.fields && Object.keys(handoff.fields).length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {handoff.fields.store && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-white border border-blue-200 text-blue-700 px-2.5 py-1 text-xs font-semibold">
-                      🏬 {handoff.fields.store}
+                  {Object.entries(handoff.fields).map(([key, value]) => (
+                    <span
+                      key={key}
+                      className="inline-flex items-center gap-1 rounded-full bg-white border border-blue-200 text-blue-700 px-2.5 py-1 text-xs font-semibold"
+                    >
+                      <span className="font-normal text-blue-500">{key}</span> {value}
                     </span>
-                  )}
-                  {handoff.fields.state && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-white border border-blue-200 text-blue-700 px-2.5 py-1 text-xs font-semibold">
-                      📍 {handoff.fields.state}
-                    </span>
-                  )}
+                  ))}
                 </div>
               )}
               {handoff.request && (
@@ -741,7 +728,6 @@ export function ChatPanel({ conversationId, meId, liveMessage, typing, presence,
                 {conversation?.visitor_email && <InfoRow label="Email" value={conversation.visitor_email} />}
                 {meta?.phone && <InfoRow label="Phone" value={meta.phone} />}
                 {meta?.user_id && <InfoRow label="User ID" value={meta.user_id} mono />}
-                {meta?.order_id && <InfoRow label="Order" value={`#${meta.order_id}`} />}
                 <InfoRow
                   icon={live?.device === 'mobile' ? <Smartphone className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}
                   label="Device"

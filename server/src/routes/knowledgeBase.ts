@@ -13,7 +13,7 @@ const kbBody = z.object({
   priority: z.number().int().min(0).max(100).default(0),
   is_active: z.boolean().default(true),
   // Which sites/modes this applies to; empty = all sites.
-  sites: z.array(z.enum(['food', 'saas'])).default([]),
+  sites: z.array(z.string().regex(/^[a-z0-9-]{1,60}$/)).max(50).default([]),
 });
 
 export async function knowledgeBaseRoutes(app: FastifyInstance): Promise<void> {

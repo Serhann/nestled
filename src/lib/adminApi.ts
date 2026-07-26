@@ -6,9 +6,9 @@
  * VITE_API_BASE for split-origin deploys.
  */
 
-const ACCESS_KEY = 'jetchat_admin_access';
-const REFRESH_KEY = 'jetchat_admin_refresh';
-const AGENT_KEY = 'jetchat_admin_agent';
+const ACCESS_KEY = 'nestled_admin_access';
+const REFRESH_KEY = 'nestled_admin_refresh';
+const AGENT_KEY = 'nestled_admin_agent';
 
 export interface AdminAgent {
   id: string;
@@ -34,25 +34,25 @@ export interface AdminConversation {
 }
 
 /**
- * Which site / scenario pack a conversation came from, for a scannable label in
- * the inbox. Derived from `widget_mode` (set by the embed's data-mode), falling
- * back to the host page's hostname.
+ * A scannable label for where a conversation came from: the host page's hostname.
+ *
+ * This used to map two hardcoded site keys to two brand names. In a multi-tenant
+ * product the label has to come from data — Phase 7 replaces this with the
+ * website's configured name, resolved from `widget_site`.
  */
-export function conversationSource(
+export function conversationOrigin(
   metadata: Record<string, unknown> | null | undefined,
-): { label: string; tone: 'food' | 'saas' | 'web' } {
-  const mode = metadata?.widget_mode;
-  if (mode === 'saas') return { label: 'TryJet', tone: 'saas' };
-  if (mode === 'food') return { label: 'JetFood', tone: 'food' };
+): string | null {
   const page = metadata?.current_page;
   if (typeof page === 'string') {
     try {
-      return { label: new URL(page).hostname.replace(/^www\./, ''), tone: 'web' };
+      return new URL(page).hostname.replace(/^www\./, '');
     } catch {
       /* not a URL */
     }
   }
-  return { label: 'Web', tone: 'web' };
+  const site = metadata?.widget_site;
+  return typeof site === 'string' && site ? site : null;
 }
 
 export interface AdminMessage {
@@ -83,28 +83,19 @@ export interface VisitorGeo {
   org?: string | null;
 }
 
-/** HMAC-verified host context (customer + orders) — same shape in conversation
- *  metadata (`verified_context`) and on a live-visitor presence entry. */
+/** HMAC-verified host context — same shape in conversation metadata
+ *  (`verified_context`) and on a live-visitor presence entry. Mirrors
+ *  server/src/services/verifiedAttributes.ts: a reserved identity set plus a flat
+ *  bag of customer-named attributes. */
 export interface VerifiedContext {
   customer?: {
     id?: string | number;
     name?: string;
     email?: string;
     phone?: string;
-    orders_count?: number;
-    since?: string;
   };
-  current_order?: {
-    id?: string;
-    status?: string;
-    eta?: string;
-    restaurant?: string;
-    total?: string | number;
-    currency?: string;
-    date?: string;
-    url?: string;
-  };
-  recent_orders?: { id?: string; status?: string; total?: string | number; date?: string; restaurant?: string }[];
+  attributes?: Record<string, string | number | boolean | null>;
+  events?: { name: string; at?: string; data?: Record<string, string | number | boolean | null> }[];
 }
 
 export interface LiveVisitor {
@@ -118,7 +109,7 @@ export interface LiveVisitor {
   ip: string;
   geo: VisitorGeo | null;
   conversationId: string | null;
-  mode?: string;
+  siteKey?: string | null;
   name?: string | null; // identified customer (from verified host context)
   email?: string | null;
   online: boolean;
@@ -128,25 +119,20 @@ export interface LiveVisitor {
   userAgent?: string | null;
   language?: string | null;
   timezone?: string | null;
-  context?: VerifiedContext | null; // trusted customer/order context
+  context?: VerifiedContext | null; // HMAC-verified host context
   sessionStart?: number;
 }
 
-/** Site / scenario label for a live visitor (mirrors conversationSource). */
-export function visitorSource(v: { mode?: string; url?: string | null }): {
-  label: string;
-  tone: 'food' | 'saas' | 'web';
-} {
-  if (v.mode === 'saas') return { label: 'TryJet', tone: 'saas' };
-  if (v.mode === 'food') return { label: 'JetFood', tone: 'food' };
+/** Where a live visitor is browsing (mirrors conversationOrigin). */
+export function visitorOrigin(v: { siteKey?: string | null; url?: string | null }): string | null {
   if (v.url) {
     try {
-      return { label: new URL(v.url).hostname.replace(/^www\./, ''), tone: 'web' };
+      return new URL(v.url).hostname.replace(/^www\./, '');
     } catch {
       /* not a URL */
     }
   }
-  return { label: 'Web', tone: 'web' };
+  return v.siteKey || null;
 }
 
 export function apiBase(): string {
@@ -325,7 +311,7 @@ export interface PersonProfile {
     visitor_id: string;
     visitor_name: string | null;
     status: string;
-    mode: string | null;
+    siteKey: string | null;
     message_count: number;
     updated_at: string;
   }[];
@@ -396,10 +382,6 @@ export async function deleteCanned(id: string): Promise<void> {
 }
 
 // ── Sites (site manager, admin) ───────────────────────────────────────────────
-export interface SiteQuickAction {
-  intent: string;
-  label?: string;
-}
 export interface Site {
   id: string;
   key: string;
@@ -412,7 +394,6 @@ export interface Site {
   system_prompt: string | null;
   pre_chat_enabled: boolean | null; // null = inherit global; true = site fields; false = off
   pre_chat_fields: SitePreChatField[];
-  quick_actions: SiteQuickAction[];
   allowed_domains: string[];
   enforce_domains: boolean;
   context_secret: string | null; // shared HMAC secret for signed host context
@@ -462,50 +443,6 @@ export async function updateSite(id: string, body: SiteInput): Promise<void> {
 }
 export async function deleteSite(id: string): Promise<void> {
   await authed(`/api/sites/${id}`, { method: 'DELETE' });
-}
-
-// ── Quick actions (managed, admin) ────────────────────────────────────────────
-export interface QuickActionField {
-  name: string;
-  label: string;
-  required: boolean;
-}
-export interface QuickActionDef {
-  id: string;
-  key: string;
-  label: string;
-  kind: 'auto' | 'human';
-  visitor_template: string;
-  reply_template: string;
-  suggestion: string | null;
-  fields: QuickActionField[];
-  priority: number;
-  is_active: boolean;
-}
-export type QuickActionInput = Omit<QuickActionDef, 'id'>;
-
-export async function listQuickActions(): Promise<QuickActionDef[]> {
-  const r = await authed('/api/quick-actions');
-  return (await jsonOrThrow<{ items: QuickActionDef[] }>(r)).items;
-}
-export async function createQuickAction(body: QuickActionInput): Promise<void> {
-  const r = await authed('/api/quick-actions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(r.status === 409 ? 'That key already exists' : 'Could not save');
-}
-export async function updateQuickAction(id: string, body: QuickActionInput): Promise<void> {
-  const r = await authed(`/api/quick-actions/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(r.status === 409 ? 'That key already exists' : 'Could not save');
-}
-export async function deleteQuickAction(id: string): Promise<void> {
-  await authed(`/api/quick-actions/${id}`, { method: 'DELETE' });
 }
 
 // ── Live translation (agent) ──────────────────────────────────────────────────
@@ -607,7 +544,6 @@ export interface TriggerInput {
   actions: {
     show_message: boolean;
     message_content: string | null;
-    localized_messages: Record<string, string>;
     open_chatbox: boolean;
     play_sound: boolean;
   };

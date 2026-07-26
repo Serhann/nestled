@@ -13,8 +13,7 @@ import { pushNewConversation, pushVisitorMessage, pushToAgents } from '../servic
 import { generateAIReply, summarizeConversation } from '../services/ai/index.js';
 import { recordVisitorIp } from '../services/visitorTracking.js';
 import { resolveIdentity } from '../services/identity.js';
-import { verifyContextToken } from '../services/siteContext.js';
-import { renderReply, renderTemplate, type OrderCtx } from '../lib/quickActionTemplate.js';
+import { verifyContextToken } from '../services/verifiedAttributes.js';
 
 const createBody = z.object({
   visitor_id: z.string().min(1).max(200),
@@ -33,25 +32,6 @@ const messageBody = z.object({
 interface AIModeSettings {
   ai_response_mode: 'off' | 'first_message' | 'when_no_agent_online' | 'always';
 }
-
-// ── Order-aware quick actions (data-driven) ──────────────────────────────────
-// The widget posts a quick-action `intent` (the action's key) + the visitor's
-// live order + any collected fields. The action definition (label, kind, the
-// visitor/reply templates, handoff suggestion) lives in the quick_actions table
-// and is managed in the admin — this route renders its templates server-side
-// (trusted, see lib/quickActionTemplate.ts) and escalates when kind === 'human'.
-const orderCtxSchema = z.object({
-  id: z.string().max(120).optional(),
-  status: z.string().max(120).optional(),
-  eta: z.string().max(120).optional(),
-  restaurant: z.string().max(200).optional(),
-});
-
-const quickActionBody = z.object({
-  intent: z.string().min(1).max(60), // the quick action's key
-  order: orderCtxSchema.optional(),
-  fields: z.record(z.string().max(60), z.string().max(1000)).optional(),
-});
 
 /**
  * Decide whether the AI should reply to this visitor message, then post it.
@@ -141,7 +121,7 @@ async function maybeAIReply(conversationId: string): Promise<void> {
         conversationId,
         title: 'Handoff requested',
         body: summary ? summary.slice(0, 120) : 'A visitor needs a human.',
-        url: `/admin?conversation=${conversationId}`,
+        url: `/app?conversation=${conversationId}`,
       });
     }
   } catch (err) {
@@ -166,7 +146,7 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     const convMode = (body.metadata?.widget_mode as string | undefined) ?? null;
 
     // Verify the host site's signed context (if any). A valid signature makes
-    // this customer/order data TRUSTED — the visitor can't have forged it. We
+    // this customer data TRUSTED — the visitor can't have forged it. We
     // then prefer the verified name/email over anything the browser supplied.
     const verifiedContext = await verifyContextToken(convMode, body.context_token);
     const trustedEmail = verifiedContext?.customer?.email ?? null;
@@ -286,93 +266,10 @@ export async function conversationRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ message });
   });
 
-  // Order-aware quick action (visitor-scoped). Posts the visitor's request and
-  // an instant bot reply; escalates to a human for problem intents.
-  app.post('/api/conversations/:id/quick-action', {
-    preHandler: requireVisitor('id'),
-    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
-  }, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const body = parseBody(quickActionBody, req.body, reply);
-    if (!body) return;
-
-    // Look up the managed action by key. Unknown/inactive → 400.
-    const def = await prisma.quick_actions.findUnique({ where: { key: body.intent } });
-    if (!def || !def.is_active) return reply.code(400).send({ error: 'Unknown quick action' });
-    const isHuman = def.kind === 'human';
-    const order: OrderCtx = body.order ?? {};
-    const fields: Record<string, string> = body.fields ?? {};
-
-    // No order in context + an order-scoped reply → ask for the order number
-    // instead of rendering a made-up status.
-    const bot = renderReply(def.reply_template, order, fields);
-    const missingOrder = bot.missingOrder;
-
-    const visitorText = renderTemplate(def.visitor_template, order, fields);
-    const visitorMsg = await insertMessage({ conversationId: id, content: visitorText, senderType: 'visitor' });
-    // A resolved conversation re-opens on new visitor activity.
-    void prisma.conversations
-      .updateMany({ where: { id, status: 'resolved' }, data: { status: 'open' } })
-      .catch(() => undefined);
-
-    const botMsg = await insertMessage({
-      conversationId: id,
-      content: bot.text,
-      senderType: 'ai',
-      metadata: { quick_action: body.intent, auto: !isHuman, no_order: missingOrder || undefined },
-    });
-
-    if (isHuman) {
-      // Escalate: flag for a human and notify every agent. Stamp a handoff
-      // summary onto the conversation metadata so the admin inbox can show the
-      // "escalated by bot" context + suggested action (design t3).
-      const existing = await prisma.conversations.findUnique({
-        where: { id },
-        select: { metadata: true },
-      });
-      const prevMeta = (existing?.metadata as Record<string, unknown> | null) ?? {};
-      const summary = await summarizeConversation(id);
-      const handoff = {
-        by: 'bot' as const,
-        intent: body.intent,
-        reason: def.label,
-        summary: summary ?? undefined,
-        suggestion: def.suggestion ?? undefined,
-        request: visitorText,
-        order: order.id ? order : null,
-        fields: Object.keys(fields).length > 0 ? fields : null,
-        at: new Date().toISOString(),
-      };
-      const updated = await prisma.conversations.update({
-        where: { id },
-        data: {
-          needs_human: true,
-          status: 'open',
-          metadata: { ...prevMeta, handoff } as object,
-        },
-        select: { id: true, needs_human: true, status: true },
-      });
-      broadcastToAgents({ type: 'conversation:updated', conversation: updated });
-      await pushToAgents({
-        type: 'message',
-        conversationId: id,
-        title: 'Agent requested',
-        body: visitorText,
-        url: `/admin?conversation=${id}`,
-      });
-    }
-    void notifyNewMessage(id, visitorText, 'visitor');
-
-    return reply.code(201).send({
-      messages: [visitorMsg, botMsg].filter(Boolean),
-      needs_human: isHuman,
-    });
-  });
-
   // Refresh the signed host context on a live conversation (visitor-scoped).
-  // The host (JetFood) re-signs a fresh JWT when the order status changes and
-  // the widget POSTs it here; we re-verify it and update the trusted context on
-  // the conversation so the agent sees the new status in real time.
+  // The host re-signs a fresh JWT whenever the visitor's state changes and the
+  // widget POSTs it here; we re-verify it and update the trusted attributes on
+  // the conversation so the agent sees the new values in real time.
   app.post('/api/conversations/:id/context', {
     preHandler: requireVisitor('id'),
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },

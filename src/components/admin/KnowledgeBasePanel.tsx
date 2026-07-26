@@ -112,7 +112,7 @@ export function KnowledgeBasePanel({ onBack }: { onBack: () => void }) {
         <EmptyState
           icon={BookOpen}
           title="No knowledge yet"
-          hint="Add entries so the AI can answer common questions instantly — hours, delivery areas, refund policy, and more."
+          hint="Add entries so the AI can answer common questions instantly — opening hours, pricing, refund policy, and more."
           action={
             <PrimaryButton onClick={() => setEditing({ id: null, input: empty() })}>
               <Plus className="w-4 h-4" /> New entry

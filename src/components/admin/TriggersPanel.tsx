@@ -17,7 +17,7 @@ function emptyTrigger(): TriggerInput {
     is_active: true,
     priority: 0,
     sites: [],
-    actions: { show_message: true, message_content: '', localized_messages: {}, open_chatbox: false, play_sound: false },
+    actions: { show_message: true, message_content: '', open_chatbox: false, play_sound: false },
     events: {
       on_leave_intent: false,
       on_click_link: false,

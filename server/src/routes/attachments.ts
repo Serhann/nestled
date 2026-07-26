@@ -25,15 +25,6 @@ function kindOf(mime: string): 'image' | 'file' {
   return mime.startsWith('image/') ? 'image' : 'file';
 }
 
-interface AttachmentRow {
-  id: string;
-  conversation_id: string;
-  filename: string;
-  mime: string;
-  size_bytes: number;
-  storage_path: string;
-}
-
 /**
  * Read a multipart upload, validate size/type, persist to disk, record the
  * attachment, and create a message that references it. Shared by the visitor

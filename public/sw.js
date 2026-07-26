@@ -1,5 +1,5 @@
 /*
- * JetChat admin service worker — Web Push (Phase 2).
+ * Nestled app service worker — Web Push + shell cache.
  *
  * Responsibilities:
  *   - show a notification from the server push payload (works with the app
@@ -15,15 +15,15 @@
  */
 
 const PUSH_CONFIG_URL = '/__push-config'; // synthetic key in CacheStorage
-const PUSH_CONFIG_CACHE = 'jetchat-push-config';
+const PUSH_CONFIG_CACHE = 'nestled-push-config';
 
 // Bump SHELL_VERSION on deploy to bust the app-shell cache. Hashed Vite asset
 // filenames change on their own; this version only gates the static shell.
 const SHELL_VERSION = 'v2';
-const SHELL_CACHE = `jetchat-shell-${SHELL_VERSION}`;
-// The installable PWA is the admin app at /admin — precache that shell (not the
+const SHELL_CACHE = `nestled-shell-${SHELL_VERSION}`;
+// The installable PWA is the team app at /app — precache that shell (not the
 // marketing landing at /).
-const SHELL_URLS = ['/admin', '/manifest.json', '/icon-192.png', '/icon-512.png'];
+const SHELL_URLS = ['/app', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -39,7 +39,7 @@ self.addEventListener('activate', (event) => {
       const keys = await caches.keys();
       await Promise.all(
         keys
-          .filter((k) => k.startsWith('jetchat-shell-') && k !== SHELL_CACHE)
+          .filter((k) => k.startsWith('nestled-shell-') && k !== SHELL_CACHE)
           .map((k) => caches.delete(k)),
       );
       await self.clients.claim();
@@ -58,7 +58,7 @@ self.addEventListener('fetch', (event) => {
 
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req).catch(() => caches.match('/admin').then((r) => r || fetch(req))),
+      fetch(req).catch(() => caches.match('/app').then((r) => r || fetch(req))),
     );
     return;
   }
@@ -83,18 +83,18 @@ self.addEventListener('push', (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch {
-    data = { title: 'JetChat', body: event.data ? event.data.text() : 'New activity' };
+    data = { title: 'Nestled', body: event.data ? event.data.text() : 'New activity' };
   }
 
-  const title = data.title || 'JetChat';
+  const title = data.title || 'Nestled';
   const options = {
     body: data.body || 'You have new activity',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
     // One notification per conversation replaces the previous one for it.
-    tag: data.conversationId ? `conv-${data.conversationId}` : 'jetchat',
+    tag: data.conversationId ? `conv-${data.conversationId}` : 'nestled',
     renotify: true,
-    data: { url: data.url || '/admin', conversationId: data.conversationId || null },
+    data: { url: data.url || '/app', conversationId: data.conversationId || null },
   };
 
   event.waitUntil(
@@ -114,7 +114,7 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/admin';
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/app';
   const conversationId = event.notification.data && event.notification.data.conversationId;
 
   event.waitUntil(
@@ -130,7 +130,7 @@ self.addEventListener('notificationclick', (event) => {
       for (const client of clientList) {
         // Focus an existing admin window and tell the SPA where to route.
         await client.focus();
-        client.postMessage({ type: 'jetchat:navigate', conversationId, url: targetUrl });
+        client.postMessage({ type: 'nestled:navigate', conversationId, url: targetUrl });
         return;
       }
       await self.clients.openWindow(targetUrl);
@@ -169,7 +169,7 @@ self.addEventListener('pushsubscriptionchange', (event) => {
 
 // Client hands the SW its config (API base + VAPID key) to persist for later.
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'jetchat:push-config') {
+  if (event.data && event.data.type === 'nestled:push-config') {
     event.waitUntil(writePushConfig(event.data.config));
   }
 });

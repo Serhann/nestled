@@ -13,7 +13,7 @@ import {
 import {
   listVisitorIps,
   getVisitorPerson,
-  visitorSource,
+  visitorOrigin,
   type LiveVisitor,
   type PersonProfile,
   type VisitorIp,
@@ -30,11 +30,6 @@ import {
   duration,
 } from './visitorInfo';
 
-const SOURCE_TONE: Record<'food' | 'saas' | 'web', string> = {
-  food: 'bg-blue-100 text-blue-700',
-  saas: 'bg-violet-100 text-violet-700',
-  web: 'bg-gray-100 text-gray-600',
-};
 
 /**
  * Live Visitors detail drawer — the same visitor card the conversation sidebar
@@ -80,7 +75,7 @@ export function VisitorDetail({
   const geoText = visitor.geo
     ? [visitor.geo.city, visitor.geo.region, visitor.geo.country].filter(Boolean).join(', ')
     : '';
-  const src = visitorSource(visitor);
+  const src = visitorOrigin(visitor);
   const utm = Object.entries(visitor.utm ?? {});
 
   return (
@@ -93,8 +88,8 @@ export function VisitorDetail({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-sm font-semibold text-gray-800 truncate">{name}</span>
-              <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${SOURCE_TONE[src.tone]}`}>
-                {src.label}
+              <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold bg-gray-100 text-gray-600">
+                {src}
               </span>
             </div>
             <p className="text-[11px] text-gray-500 flex items-center gap-1.5">

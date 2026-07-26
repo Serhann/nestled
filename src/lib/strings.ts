@@ -1,8 +1,8 @@
 /*
- * All visitor-facing widget copy, in one place, English-only. JetFood serves US
- * customers — no Turkish (or any other language) may render to a site visitor.
- * The old widget had Turkish strings scattered inline and an alert() in Turkish;
- * everything now routes through here.
+ * All visitor-facing widget copy, in one place, English-only by product decision
+ * (no i18n layer). Nothing may render to a site visitor from an inline literal —
+ * everything routes through here, which is also what makes every string editable
+ * per website once Phase 9 layers customer overrides on top of these defaults.
  */
 export const strings = {
   headerDefaultTitle: 'Chat with us',

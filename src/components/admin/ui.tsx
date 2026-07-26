@@ -195,7 +195,7 @@ export function Toggle({
 
 // Site key → display name, kept fresh whenever a SiteScope loads the list. The
 // seeded sites are the sensible default so labels resolve before any fetch.
-const SITE_NAMES: Record<string, string> = { food: 'JetFood', saas: 'TryJet' };
+const SITE_NAMES: Record<string, string> = {};
 
 /** Human label for a `sites` array (empty = All sites). */
 export function siteScopeLabel(sites: string[] | undefined): string {

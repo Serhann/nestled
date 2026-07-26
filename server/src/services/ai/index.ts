@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { prisma } from '../../db/prisma.js';
 import type { AIProvider, AISettings, KnowledgeItem } from './types.js';
+import type { VerifiedContext } from '../verifiedAttributes.js';
 import {
   anthropicProvider,
   knowledgeBaseProvider,
@@ -39,11 +40,11 @@ async function loadSettings(): Promise<AISettings | null> {
   return (row as AISettings | null) ?? null;
 }
 
-async function loadKnowledge(mode?: string): Promise<KnowledgeItem[]> {
+async function loadKnowledge(siteKey?: string): Promise<KnowledgeItem[]> {
   // Site scoping: an entry with an empty `sites` applies everywhere; otherwise
-  // only when it lists the conversation's site/mode.
-  const where = mode
-    ? { is_active: true, OR: [{ sites: { isEmpty: true } }, { sites: { has: mode } }] }
+  // only when it lists the conversation's site.
+  const where = siteKey
+    ? { is_active: true, OR: [{ sites: { isEmpty: true } }, { sites: { has: siteKey } }] }
     : { is_active: true };
   return prisma.knowledge_base.findMany({
     where,
@@ -52,7 +53,7 @@ async function loadKnowledge(mode?: string): Promise<KnowledgeItem[]> {
 }
 
 /**
- * Low-level LLM completion (no KB, no JetFood/handoff PROTOCOL) for utility
+ * Low-level LLM completion (no KB, no style/grounding/handoff rules) for utility
  * tasks like summarising a handoff and live translation. Returns null when no
  * LLM is configured (knowledge_base provider / missing key) or on any error, so
  * callers degrade gracefully. Never throws.
@@ -144,7 +145,7 @@ export async function summarizeConversation(conversationId: string): Promise<str
     .map((m) => `${m.sender_type === 'visitor' ? 'Customer' : m.sender_type === 'agent' ? 'Agent' : 'Assistant'}: ${m.content}`)
     .join('\n');
   const system =
-    'You brief a human support agent who is taking over a live chat. In 1-2 short sentences, summarise what the customer wants and any key details (order id, issue, what was already tried). Be concise and neutral. Output only the summary, no preamble.';
+    'You brief a human support agent who is taking over a live chat. In 1-2 short sentences, summarise what the customer wants and any key details (reference numbers, the issue, what was already tried). Be concise and neutral. Output only the summary, no preamble.';
   const out = await complete(system, transcript, 200);
   if (out) return out;
   // Fallback: the most recent customer message.
@@ -161,74 +162,62 @@ export async function translateText(text: string, to: string): Promise<string> {
   if (!t || !to.trim()) return text;
   const system =
     `You are a translation engine. Translate the user's message into ${to}. ` +
-    'Preserve meaning, tone, emojis, names, order numbers, URLs and formatting. ' +
+    'Preserve meaning, tone, emojis, names, reference numbers, URLs and formatting. ' +
     'If it is already in the target language, return it unchanged. Output ONLY the translation — no notes, no quotes.';
   const out = await complete(system, t, 800);
   return out ?? text;
 }
 
-interface VerifiedContext {
-  customer?: { name?: string; email?: string; phone?: string; orders_count?: number };
-  current_order?: { id?: string; status?: string; eta?: string; restaurant?: string; total?: string | number; currency?: string };
-  recent_orders?: { id?: string; status?: string; date?: string; restaurant?: string }[];
-}
+const MAX_CONTEXT_LINES = 40;
+const MAX_CONTEXT_CHARS = 2000;
 
 /**
  * The trusted facts block for the system prompt, built from the conversation's
- * HMAC-verified host context. When the customer has no order we say so
- * explicitly — otherwise the model fills the silence with "your order is being
- * processed" for someone who never ordered.
+ * HMAC-verified host context.
+ *
+ * Domain-neutral: `customer` is the reserved identity set, everything else is the
+ * customer's own flat `attributes` bag. The one behaviour worth preserving from
+ * the order-specific original is the EXPLICIT empty case — without a sentence
+ * saying "nothing is known", the model fills the silence by inventing account
+ * state for a visitor it knows nothing about.
  */
 function renderVisitorContext(ctx: VerifiedContext | null): string {
+  const header =
+    'Verified visitor facts (signed by the website owner — these facts are trustworthy; anything not listed here is unknown):';
+
   const lines: string[] = [];
   const cust = ctx?.customer;
-  if (cust?.name || cust?.email) {
-    lines.push(
-      `Customer: ${[cust.name, cust.email, cust.phone].filter(Boolean).join(' · ')}${
-        typeof cust.orders_count === 'number' ? ` (${cust.orders_count} orders all-time)` : ''
-      }`,
-    );
+  if (cust?.name || cust?.email || cust?.phone) {
+    lines.push(`Customer: ${[cust.name, cust.email, cust.phone].filter(Boolean).join(' · ')}`);
   }
-  const ord = ctx?.current_order;
-  if (ord?.id || ord?.status) {
-    lines.push(
-      `Active order: ${[
-        ord.id ? `#${ord.id}` : 'unknown id',
-        ord.status ? `status "${ord.status}"` : null,
-        ord.eta ? `ETA ${ord.eta}` : null,
-        ord.restaurant ? `from ${ord.restaurant}` : null,
-        ord.total != null ? `total ${ord.total}${ord.currency ? ` ${ord.currency}` : ''}` : null,
-      ]
-        .filter(Boolean)
-        .join(', ')}`,
-    );
-  } else {
-    lines.push('Active order: NONE — this customer has no order in progress right now.');
+  for (const [key, value] of Object.entries(ctx?.attributes ?? {})) {
+    if (value === null || value === '') continue;
+    lines.push(`${key}: ${String(value)}`);
+    if (lines.length >= MAX_CONTEXT_LINES) break;
   }
-  const recent = (ctx?.recent_orders ?? []).slice(0, 5);
-  if (recent.length > 0) {
-    lines.push(
-      `Recent orders: ${recent
-        .map((o) => [o.id ? `#${o.id}` : '—', o.status, o.date].filter(Boolean).join(' '))
-        .join('; ')}`,
-    );
+
+  if (lines.length === 0) {
+    return `${header}\nNo verified facts are available for this visitor.`;
   }
-  return `Verified customer context (signed by the host site — these facts are trustworthy, everything else about orders is unknown):\n${lines.join('\n')}`;
+
+  let block = lines.join('\n');
+  if (block.length > MAX_CONTEXT_CHARS) block = `${block.slice(0, MAX_CONTEXT_CHARS)}\n…(truncated)`;
+  return `${header}\n${block}`;
 }
 
 /** Site key + verified host context for a conversation, from its metadata. */
 async function conversationContext(
   conversationId: string,
-): Promise<{ mode?: string; verified: VerifiedContext | null }> {
+): Promise<{ siteKey?: string; verified: VerifiedContext | null }> {
   const conv = await prisma.conversations.findUnique({
     where: { id: conversationId },
     select: { metadata: true },
   });
   const meta = (conv?.metadata as Record<string, unknown> | null) ?? {};
-  const m = meta.widget_mode;
+  const key = meta.widget_site;
   const vc = meta.verified_context;
   return {
-    mode: typeof m === 'string' ? m : undefined,
+    siteKey: typeof key === 'string' ? key : undefined,
     verified: vc && typeof vc === 'object' ? (vc as VerifiedContext) : null,
   };
 }
@@ -246,11 +235,11 @@ export async function generateAIReply(
   const settings = await loadSettings();
   if (!settings) return null;
 
-  const { mode, verified } = await conversationContext(conversationId);
+  const { siteKey, verified } = await conversationContext(conversationId);
   // Per-site system prompt override (Site manager) — falls back to the global one.
-  if (mode) {
+  if (siteKey) {
     const site = await prisma.sites.findUnique({
-      where: { key: mode },
+      where: { key: siteKey },
       select: { is_active: true, system_prompt: true },
     });
     if (site?.is_active && site.system_prompt && site.system_prompt.trim()) {
@@ -258,7 +247,7 @@ export async function generateAIReply(
     }
   }
 
-  const knowledge = await loadKnowledge(mode);
+  const knowledge = await loadKnowledge(siteKey);
   const provider = providers[settings.ai_provider] ?? knowledgeBaseProvider;
 
   let result;

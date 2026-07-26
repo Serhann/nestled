@@ -12,7 +12,7 @@ const triggerBody = z.object({
   is_active: z.boolean().default(true),
   priority: z.number().int().min(0).max(1000).default(0),
   // Which sites/modes this applies to; empty = all sites.
-  sites: z.array(z.enum(['food', 'saas'])).default([]),
+  sites: z.array(z.string().regex(/^[a-z0-9-]{1,60}$/)).max(50).default([]),
   actions: z.object({
     show_message: z.boolean().default(false),
     message_content: z.string().max(2000).nullable().default(null),

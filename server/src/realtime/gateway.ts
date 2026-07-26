@@ -12,7 +12,7 @@ import { ingestReplayEvents, clearReplay } from './replay.js';
 import { clientIp, lookupGeo } from '../services/geo.js';
 import { recordVisitorIp } from '../services/visitorTracking.js';
 import { resolveIdentity } from '../services/identity.js';
-import { verifyContextToken } from '../services/siteContext.js';
+import { verifyContextToken } from '../services/verifiedAttributes.js';
 
 /**
  * WebSocket endpoints. Both authenticate on connect via a `token` query param
@@ -71,23 +71,23 @@ export async function registerRealtime(app: FastifyInstance): Promise<void> {
     const geo = await lookupGeo(ip);
     // The site key from `hello`, kept so a later context refresh can be verified
     // against the same site's secret.
-    let siteMode: string | null = null;
+    let siteKey: string | null = null;
     let lastContext: string | null = null; // last context token applied on this socket
     let lastContextAt = 0;
 
     /**
      * Verify a signed host context and apply it to presence: the identified
-     * customer (so the board isn't "anonymous"), the trusted customer/order card
-     * for the Live Visitors drawer, and the cross-site people pool.
+     * customer (so the board isn't "anonymous"), the trusted attributes card for
+     * the Live Visitors drawer, and the cross-site people pool.
      */
     const applyContext = (token: string | null, fingerprint: string | null): void => {
-      void verifyContextToken(siteMode, token).then((ctx) => {
+      void verifyContextToken(siteKey, token).then((ctx) => {
         const cust = ctx?.customer;
         if (cust?.name || cust?.email) {
           setPresenceIdentity(visitorId, { name: cust.name ?? null, email: cust.email ?? null });
         }
         setPresenceContext(visitorId, ctx);
-        void resolveIdentity(visitorId, { fingerprint, email: cust?.email ?? null, mode: siteMode });
+        void resolveIdentity(visitorId, { fingerprint, email: cust?.email ?? null, mode: siteKey });
       });
     };
 
@@ -101,7 +101,7 @@ export async function registerRealtime(app: FastifyInstance): Promise<void> {
       if (msg.type === 'hello') {
         registerPresenceSocket(socket, visitorId, ip, geo, msg as Record<string, never>);
         void recordVisitorIp(visitorId, ip, geo); // track every IP this visitor uses
-        siteMode = typeof msg.mode === 'string' ? msg.mode : null;
+        siteKey = typeof msg.site === 'string' ? msg.site : null;
         // Verify any signed host context so the board shows the identified
         // customer (not "anonymous") the moment they land, and feed the trusted
         // email into the cross-site people pool.
@@ -110,8 +110,8 @@ export async function registerRealtime(app: FastifyInstance): Promise<void> {
           typeof msg.fingerprint === 'string' ? msg.fingerprint : null,
         );
       } else if (msg.type === 'context' && typeof msg.context_token === 'string') {
-        // Host re-signed the context at runtime (login, or a new order status) —
-        // JetChat('context', token) → embed → presence. Keeps the live card fresh.
+        // Host re-signed the context at runtime (a login, or any state change) —
+        // Nestled('context', token) → embed → presence. Keeps the live card fresh.
         // Each one costs a secret lookup + HMAC verify, so skip repeats of the
         // token we already applied and throttle the rest.
         const now = Date.now();

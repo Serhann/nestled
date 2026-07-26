@@ -88,7 +88,7 @@ export async function notifyNewChat(conversationId: string): Promise<void> {
     color: 3447003,
     fields,
     timestamp: conv.created_at,
-    footer: { text: 'JetChat' },
+    footer: { text: 'Nestled' },
   });
 }
 
@@ -112,6 +112,6 @@ export async function notifyNewMessage(
     description: preview,
     color: 15844367,
     fields: [{ name: 'From', value: visitorName, inline: true }],
-    footer: { text: 'JetChat' },
+    footer: { text: 'Nestled' },
   });
 }

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nestled sandbox — fake host page</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        line-height: 1.5;
+        color: #111827;
+        background: #f9fafb;
+      }
+      header {
+        padding: 1.25rem 1.5rem;
+        background: #fff;
+        border-bottom: 1px solid #e5e7eb;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      main { max-width: 52rem; margin: 0 auto; padding: 2rem 1.5rem 8rem; }
+      h1 { font-size: 1.75rem; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
+      p.lede { color: #4b5563; margin: 0 0 2rem; }
+      section {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.75rem;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+      }
+      h2 { font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; margin: 0 0 0.75rem; }
+      .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+      button {
+        font: inherit;
+        font-size: 0.875rem;
+        padding: 0.4rem 0.8rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.5rem;
+        background: #fff;
+        cursor: pointer;
+      }
+      button:hover { background: #f3f4f6; }
+      input {
+        font: inherit;
+        font-size: 0.875rem;
+        padding: 0.4rem 0.6rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.5rem;
+        min-width: 12rem;
+      }
+      code { background: #f3f4f6; padding: 0.1rem 0.35rem; border-radius: 0.25rem; font-size: 0.8125rem; }
+      .filler { color: #9ca3af; }
+    </style>
+  </head>
+  <body>
+    <header>Acme Inc.</header>
+    <main>
+      <h1>Nestled sandbox</h1>
+      <p class="lede">
+        A fake customer site for exercising the widget in development. Not built for
+        production — <code>vite.config.ts</code> excludes this entry from the prod build.
+      </p>
+
+      <section>
+        <h2>Visibility</h2>
+        <div class="row">
+          <button onclick="Nestled('open')">open</button>
+          <button onclick="Nestled('close')">close</button>
+          <button onclick="Nestled('toggle')">toggle</button>
+          <button onclick="Nestled('show')">show launcher</button>
+          <button onclick="Nestled('hide')">hide launcher</button>
+          <button onclick="Nestled('reset')">reset session</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Identify (unverified traits)</h2>
+        <div class="row">
+          <input id="sb-name" placeholder="Name" value="Jane Doe" />
+          <input id="sb-email" placeholder="Email" value="jane@acme.com" />
+          <button
+            onclick="Nestled('identify', {
+              name: document.getElementById('sb-name').value,
+              email: document.getElementById('sb-email').value,
+            })"
+          >
+            identify
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Session data (arbitrary attributes)</h2>
+        <div class="row">
+          <input id="sb-key" placeholder="key" value="plan" />
+          <input id="sb-value" placeholder="value" value="pro" />
+          <button
+            onclick="Nestled('data', {
+              [document.getElementById('sb-key').value]: document.getElementById('sb-value').value,
+            })"
+          >
+            data
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Signed context (HMAC-verified)</h2>
+        <div class="row">
+          <input id="sb-token" placeholder="signed JWT from your backend" style="flex: 1" />
+          <button onclick="Nestled('context', document.getElementById('sb-token').value)">
+            context
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Scroll filler (for leave-intent and delay triggers)</h2>
+        <p class="filler">
+          Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor
+          incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+          nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+          Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu
+          fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+          culpa qui officia deserunt mollit anim id est laborum.
+        </p>
+      </section>
+    </main>
+
+    <script>
+      // Set NESTLED_SANDBOX_ID in .env.local (VITE_ prefixed) or paste a website
+      // public key here after creating one in the app.
+      window.Nestled =
+        window.Nestled ||
+        function () {
+          (Nestled.q = Nestled.q || []).push(arguments);
+        };
+      window.NestledId = new URLSearchParams(location.search).get('key') || 'nst_sandbox';
+    </script>
+    <script async src="/embed.js"></script>
+  </body>
+</html>

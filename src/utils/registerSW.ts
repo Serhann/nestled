@@ -33,7 +33,7 @@ export async function requestNotificationPermission() {
   return Notification.permission === 'granted';
 }
 
-export function sendMessageToSW(message: any) {
+export function sendMessageToSW(message: unknown) {
   if (navigator.serviceWorker && navigator.serviceWorker.controller) {
     navigator.serviceWorker.controller.postMessage(message);
   }

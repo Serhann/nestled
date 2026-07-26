@@ -22,7 +22,6 @@ import { presenceRoutes } from './routes/presence.js';
 import { attachmentRoutes } from './routes/attachments.js';
 import { cannedRoutes } from './routes/canned.js';
 import { siteRoutes } from './routes/sites.js';
-import { quickActionRoutes } from './routes/quickActions.js';
 
 export async function buildServer() {
   const app = Fastify({
@@ -94,7 +93,6 @@ export async function buildServer() {
   await app.register(attachmentRoutes);
   await app.register(cannedRoutes);
   await app.register(siteRoutes);
-  await app.register(quickActionRoutes);
 
   return app;
 }
@@ -108,7 +106,7 @@ async function main() {
   const app = await buildServer();
   await app.listen({ host: env.HOST, port: env.PORT });
   // eslint-disable-next-line no-console
-  console.log(`[jetchat] listening on http://${env.HOST}:${env.PORT}`);
+  console.log(`[nestled] listening on http://${env.HOST}:${env.PORT}`);
 
   const shutdown = async () => {
     await app.close();
@@ -126,7 +124,7 @@ async function main() {
 if (env.NODE_ENV !== 'test') {
   main().catch((err) => {
     // eslint-disable-next-line no-console
-    console.error('[jetchat] fatal boot error', err);
+    console.error('[nestled] fatal boot error', err);
     process.exit(1);
   });
 }

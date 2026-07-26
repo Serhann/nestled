@@ -33,7 +33,7 @@ export function LoginPanel({ onLogin }: LoginPanelProps) {
     <div className="min-h-[100dvh] bg-gradient-to-br from-blue-500 via-blue-600 to-cyan-500 flex items-center justify-center p-4">
       <div className="bg-white rounded-3xl shadow-xl w-full max-w-sm p-8 animate-pop-in">
         <div className="flex items-center justify-center mb-5">
-          <img src="/icon-192.png" alt="JetChat" className="w-16 h-16 rounded-3xl shadow-md" />
+          <img src="/icon-192.png" alt="Nestled" className="w-16 h-16 rounded-3xl shadow-md" />
         </div>
         <h2 className="text-2xl font-bold text-center text-gray-800 mb-1">Welcome back 👋</h2>
         <p className="text-center text-gray-500 text-sm mb-7">Sign in to handle chats and visitors.</p>
@@ -43,7 +43,7 @@ export function LoginPanel({ onLogin }: LoginPanelProps) {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@jetfood.com"
+            placeholder="you@company.com"
             required
             className={inputClass}
           />

@@ -18,9 +18,11 @@ export interface WidgetConfig {
   auto_welcome_message: string | null;
   auto_welcome_delay: number;
   notification_sound_enabled: boolean;
-  // Per-site quick actions (Site + Quick-action managers). Empty → widget uses
-  // its built-in pack. `fields` = an intake form to collect before running.
-  quick_actions?: WidgetQuickAction[];
+  /** Conversation starters shown before the visitor types. Server-driven from
+   *  Phase 9; absent until then, which simply shows the plain welcome message. */
+  starters?: WidgetStarter[];
+  /** Chips offered on the post-chat rating screen. Per-website configuration. */
+  rating_tags?: string[];
   // Domain allowlist result for this load (Site manager). authorized=false means
   // the host domain isn't in the site's allowlist; enforce_domains hides the widget.
   authorized?: boolean;
@@ -32,9 +34,12 @@ export interface WidgetField {
   label: string;
   required: boolean;
 }
-export interface WidgetQuickAction {
-  intent: string;
-  label?: string;
+
+export interface WidgetStarter {
+  id: string;
+  label: string;
+  /** The message posted on the visitor's behalf. Defaults to `label`. */
+  message?: string;
   kind?: 'auto' | 'human';
   fields?: WidgetField[];
 }
@@ -87,8 +92,18 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * The website this widget instance belongs to. Comes from the embed as an
+ * unguessable public key — never a human-readable string, because a guessable
+ * tenant selector lets any visitor enumerate other customers' widget config,
+ * copy and domain lists.
+ */
+export function websiteKey(): string | null {
+  return param('site');
+}
+
 export function getWidgetConfig(): Promise<{ settings: WidgetConfig }> {
-  const site = param('mode') || 'food';
+  const site = websiteKey() ?? '';
   const href = param('href') || document.referrer || '';
   const q = `site=${encodeURIComponent(site)}${href ? `&href=${encodeURIComponent(href)}` : ''}`;
   return fetch(`${apiBase()}/api/widget-config?${q}`).then((r) => json<{ settings: WidgetConfig }>(r));
@@ -103,8 +118,8 @@ export function getGeo(): Promise<{ country_code: string | null }> {
 }
 
 export function getActiveTriggers(): Promise<{ triggers: unknown[] }> {
-  const mode = param('mode') || 'food';
-  return fetch(`${apiBase()}/api/triggers/active?mode=${encodeURIComponent(mode)}`).then((r) => json<{ triggers: unknown[] }>(r));
+  const site = websiteKey() ?? '';
+  return fetch(`${apiBase()}/api/triggers/active?site=${encodeURIComponent(site)}`).then((r) => json<{ triggers: unknown[] }>(r));
 }
 
 /** Fire-and-forget trigger analytics ping. */
@@ -127,8 +142,8 @@ export function createConversation(body: {
   }).then((r) => json<{ conversation_id: string; visitor_token: string }>(r));
 }
 
-/** Push a refreshed signed host-context token to a live conversation so the
- *  agent sees the new order status. Fire-and-forget; resolves to ok/false. */
+/** Push a refreshed signed host-context token to a live conversation so the agent
+ *  sees the visitor's current verified attributes. Resolves to ok/false. */
 export function updateConversationContext(
   convId: string,
   token: string,
@@ -174,25 +189,6 @@ export function sendMessage(
   }).then((r) => json<{ message: WidgetMessage }>(r));
 }
 
-// Quick-action keys are now data-driven (managed in the admin), so this is a
-// free string rather than a fixed union.
-export type QuickIntent = string;
-
-/** Post an order-aware quick action; returns the visitor request + bot reply. */
-export function quickAction(
-  convId: string,
-  token: string,
-  intent: QuickIntent,
-  order?: { id?: string; status?: string; eta?: string; restaurant?: string },
-  fields?: Record<string, string>,
-): Promise<{ messages: WidgetMessage[]; needs_human: boolean }> {
-  return fetch(`${apiBase()}/api/conversations/${convId}/quick-action`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ intent, order, fields }),
-  }).then((r) => json<{ messages: WidgetMessage[]; needs_human: boolean }>(r));
-}
-
 export function uploadAttachment(
   convId: string,
   token: string,
@@ -236,11 +232,11 @@ export interface PresenceProactive {
 }
 
 /**
- * Open a host-page presence connection from the widget itself. Used only when
- * the widget runs standalone (demo / opened directly) — in the real embed the
- * host page's presence.js is authoritative and reports the true host URL, so the
- * widget must NOT double-report there. Announces the visitor, heartbeats, and
- * forwards any proactive "open the chat" push. Returns a stop() handle.
+ * Open a host-page presence connection from the widget itself. Used only when the
+ * widget runs standalone (sandbox / opened directly) — in the real embed the host
+ * page's presence.js is authoritative and reports the true host URL, so the widget
+ * must NOT double-report there. Announces the visitor, heartbeats, and forwards
+ * any proactive "open the chat" push. Returns a stop() handle.
  */
 export function openPresenceWS(
   visitorId: string,
@@ -258,8 +254,8 @@ export function openPresenceWS(
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   const returning = (() => {
     try {
-      const was = localStorage.getItem('jetchat_returning') === '1';
-      localStorage.setItem('jetchat_returning', '1');
+      const was = localStorage.getItem('nestled_returning') === '1';
+      localStorage.setItem('nestled_returning', '1');
       return was;
     } catch {
       return false;
@@ -276,7 +272,7 @@ export function openPresenceWS(
       screen: { w: window.screen.width, h: window.screen.height },
       returning,
       sessionStart,
-      mode: param('mode') || 'food',
+      site: websiteKey() ?? '',
       fingerprint: handlers.fingerprint || param('fp') || '',
       context_token: handlers.contextToken || param('ctx') || '',
     });

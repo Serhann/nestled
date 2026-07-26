@@ -20,7 +20,7 @@ import {
   listConversations,
   listAgents,
   getAiUsage,
-  conversationSource,
+  conversationOrigin,
   type AdminConversation,
   type AgentRow,
   type LiveVisitor,
@@ -186,9 +186,9 @@ export function Dashboard({ agentName, role, presence, reloadNonce, onOpenConver
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-gray-800 truncate">{name}</span>
                           {(() => {
-                            const src = conversationSource(c.metadata);
-                            const tone = src.tone === 'saas' ? 'bg-violet-100 text-violet-700' : src.tone === 'food' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600';
-                            return <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0 ${tone}`}>{src.label}</span>;
+                            const src = conversationOrigin(c.metadata);
+                            if (!src) return null;
+                            return <span className="text-[10px] font-bold rounded-full px-1.5 py-0.5 shrink-0 bg-gray-100 text-gray-600">{src}</span>;
                           })()}
                           {c.needs_human && (
                             <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 rounded">needs human</span>
