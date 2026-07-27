@@ -1,24 +1,26 @@
 import { Check, Minus, ThumbsDown, X } from 'lucide-react';
 import { Band, PrimaryCta, SectionHeading } from './Shell';
-import { COMPETITORS, ROWS, type Cell } from './comparison';
+import { COMPETITORS, ROWS, SOURCES, TRADEOFFS, VERIFIED_ON, type Cell } from './comparison';
 
 /**
  * How Nestled compares.
  *
  * A buyer has already typed "Crisp alternative" into a search box, so pretending
- * the alternatives do not exist helps nobody. Two rules make this page worth
+ * the alternatives do not exist helps nobody. Three rules make this page worth
  * having rather than embarrassing:
  *
- *   - **Every claim about us is checkable in this repository.** No aspirational
- *     rows.
- *   - **No claim about anybody else is guessed.** Competitor cells are unverified
- *     until a human opens the competitor's own pricing page and fills them in —
- *     see the header of comparison.ts. The table shows the reader when each
- *     column was last checked, and says so plainly when it never was.
+ *   - **Every claim about us is checkable in this repository.** Most of the
+ *     numbers in our column come straight out of the `plans` seed. No
+ *     aspirational rows.
+ *   - **Every claim about anybody else came off their own page,** on the date
+ *     printed under the table. Cells nobody could confirm stay as a dash. See the
+ *     header of comparison.ts before editing.
+ *   - **Anything from a review site is worded as a report and linked** — "buyers
+ *     say X" with nowhere to check is just us saying X.
  *
- * The section on when NOT to choose us is not modesty. A comparison page that
- * claims to win every row is one nobody believes, and the fastest way to earn the
- * rest of the page is to be straight about the parts we are not.
+ * Each competitor also gets a paragraph naming what they are genuinely better at,
+ * which is not politeness. A page that grants nothing reads as a page that has
+ * not looked, and the section on when NOT to choose us is what earns the rest.
  */
 export function Compare() {
   return (
@@ -41,6 +43,7 @@ export function Compare() {
 
       <Choices />
       <Table />
+      <Tradeoffs />
       <NotForYou />
 
       <Band>
@@ -65,12 +68,12 @@ function Choices() {
   const choices: [string, string, string][] = [
     [
       'You pay for people, not popularity',
-      'A lot of chat tools price on contacts or monthly active users. That means a good month — a launch, a mention, a busy December — arrives as a bigger invoice.',
+      'Chat tools attach the price to all sorts of things: conversations you answered, contacts you stored, AI questions that got resolved. Each of those means a good month — a launch, a mention, a busy December — arrives as a bigger invoice.',
       'We charge for the seats of the people answering. However many visitors you get, the price does not move.',
     ],
     [
       'Going over a limit never takes your chat down',
-      'Hitting a cap usually means the feature stops. On a live website that is not a nudge to upgrade, it is a broken page and a lost customer, in your busiest week.',
+      'When a cap is the thing being sold, hitting it stops the feature. On a live website that is not a nudge to upgrade, it is a broken page and a lost customer, in your busiest week.',
       'Over your conversation allowance we tell you and keep serving. The only hard stop is on AI replies, where each one costs real money — and even then it falls back to your written answers and then to a person.',
     ],
     [
@@ -79,9 +82,9 @@ function Choices() {
       'Ours answers from your own written material and from details your own server signed. Orders, prices, dates, policies it was not given go to a person, and it says so.',
     ],
     [
-      'You can take it with you',
-      'A hosted-only product means your conversation history lives somewhere you cannot reach, on terms that can change.',
-      'The whole thing runs from one Docker Compose file against your own database. If you would rather run it yourself, you can, and nothing phones home.',
+      'Every word your visitors read is yours',
+      'Most chat tools let you change the greeting and hard-code the rest. The apology when nobody is around, the button on a form, the line asking for a rating — all of it is the vendor’s voice on your website.',
+      'Every visitor-facing string is a field in your settings, next to a live preview of the real widget. We store only what you changed, so improvements to the defaults still reach you. What you do not get is a stylesheet: colours, radius, font and copy, not arbitrary CSS.',
     ],
     [
       'Our own access to your account is on your record',
@@ -208,6 +211,82 @@ function Table() {
           </tbody>
         </table>
       </div>
+
+      {/*
+        Small print, and small on purpose — but present on purpose too. Everything
+        in the competitor columns was read off the vendor's own page on one day,
+        and those pages change. Printing the date and the links is what separates a
+        comparison a reader can check from one they have to take on faith.
+      */}
+      <p className="max-w-5xl mx-auto mt-6 px-4 text-[11px] leading-relaxed text-gray-400">
+        Competitor columns reflect each vendor’s own published pricing and documentation as read
+        on {VERIFIED_ON}; their plans and features change, so check the current page before you
+        decide. Prices exclude tax and are shown at each vendor’s advertised rate — some are
+        annual-billing rates that are higher month to month. Sources:{' '}
+        {SOURCES.map((source, i) => (
+          <span key={source.url}>
+            {i > 0 && ' · '}
+            <a href={source.url} className="underline hover:text-gray-600" rel="nofollow noreferrer">
+              {source.label}
+            </a>
+          </span>
+        ))}
+        . Spotted something out of date?{' '}
+        <a href="mailto:hello@nestled.chat" className="underline hover:text-gray-600">
+          Tell us
+        </a>{' '}
+        and we will correct it.
+      </p>
+    </Band>
+  );
+}
+
+function Tradeoffs() {
+  return (
+    <Band tone="cream">
+      <SectionHeading
+        eyebrow="The other three, fairly"
+        title="What each of them is better at, and what their pricing costs you"
+        lead="Read this part especially if you are already using one of them. Everything below is from their own pricing and help pages; where we quote review coverage instead, it says so and links out."
+      />
+      <div className="space-y-4 max-w-4xl mx-auto">
+        {TRADEOFFS.map((tradeoff) => (
+          <div
+            key={tradeoff.competitor}
+            className="bg-white rounded-3xl border border-gray-100 p-6 sm:p-7"
+          >
+            <h3 className="font-display text-2xl text-gray-900">{tradeoff.competitor}</h3>
+            <p className="mt-3 text-sm text-gray-700 leading-relaxed">{tradeoff.strength}</p>
+
+            <p className="mt-5 text-xs font-semibold uppercase tracking-widest text-gray-400">
+              What it costs you
+            </p>
+            <ul className="mt-2 space-y-2">
+              {tradeoff.costs.map((cost) => (
+                <li key={cost} className="flex gap-2 text-sm text-gray-600 leading-relaxed">
+                  <span className="text-gray-300 select-none" aria-hidden>
+                    —
+                  </span>
+                  <span>{cost}</span>
+                </li>
+              ))}
+            </ul>
+
+            {tradeoff.reported && (
+              <p className="mt-4 text-xs text-gray-500 leading-relaxed border-t border-gray-100 pt-4">
+                {tradeoff.reported.text}{' '}
+                <a
+                  href={tradeoff.reported.url}
+                  className="underline hover:text-gray-700"
+                  rel="nofollow noreferrer"
+                >
+                  {tradeoff.reported.source}
+                </a>
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
     </Band>
   );
 }
@@ -234,10 +313,16 @@ function CellValue({ value, highlight }: { value: Cell; highlight?: boolean }) {
     );
   }
   if (value === 'unknown') {
+    // A dash means we looked and could not confirm it either way — not that the
+    // answer is no. Saying so costs a column cell; implying a "no" we did not
+    // verify costs the reader's trust in every other cell.
     return (
-      <span className="inline-flex w-7 h-7 rounded-full items-center justify-center text-gray-300">
+      <span
+        className="inline-flex w-7 h-7 rounded-full items-center justify-center text-gray-300"
+        title="We could not confirm this from the vendor’s own documentation"
+      >
         <Minus className="w-4 h-4" aria-hidden />
-        <span className="sr-only">Not checked</span>
+        <span className="sr-only">Not confirmed</span>
       </span>
     );
   }
@@ -270,8 +355,8 @@ function NotForYou() {
       'Chat on your website, and email for what happens after. Nothing else.',
     ],
     [
-      'You need to run several servers',
-      'The realtime layer is deliberately single-process today. It comfortably handles thousands of simultaneous visitors, but if your traffic needs several application servers, wait for the next version or self-host and talk to us.',
+      'You want to run it on your own servers',
+      'Nestled is hosted by us. There is no self-hosted or on-premise edition, and there is not one planned. If running the software yourself is a requirement, an open-source chat platform is the honest answer.',
     ],
   ];
 

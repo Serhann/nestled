@@ -43,7 +43,7 @@ export const PAGES: PageMeta[] = [
     file: 'compare.html',
     title: 'Nestled vs Crisp, Intercom and Tidio',
     description:
-      'How Nestled compares: per-seat pricing rather than per contact, a chat that keeps serving when you go over your plan, an assistant that refuses rather than guesses, and the option to self-host. Including when one of the others is the better choice.',
+      'How Nestled compares on price, limits and AI billing, checked against each vendor’s own pricing page. Per-seat pricing rather than per conversation, a chat that keeps serving when you go over your plan, and an assistant that refuses rather than guesses. Including when one of the others is the better choice.',
   },
   {
     path: '/pricing',

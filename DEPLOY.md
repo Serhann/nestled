@@ -59,20 +59,33 @@ matters with more than one replica.
 
 ---
 
-## Before you launch: the comparison page
+## The comparison page has a shelf life
 
-`/compare` is live and its Nestled column is accurate, but **the competitor
-columns are deliberately blank.** They render as dashes with a visible "not
-checked yet" label and a banner telling the reader so.
+`/compare` is filled in. Every competitor cell was read off Crisp's, Intercom's
+and Tidio's own pricing and help pages on **27 July 2026**, and the page prints
+that date in small type under the table along with links to each source.
 
-Fill them in yourself, from each competitor's own current pricing page, and set
-`verifiedOn` in `src/site/comparison.ts` to the date you did it — the page shows
-that date, so it is a claim of diligence and needs to be true.
+**That date is a claim of diligence, so it has to stay true.** Their pricing
+changes; treat this as a recurring task rather than a finished one:
 
-They were left empty on purpose. A guess about somebody else's product is stale
-before it deploys, one wrong cell makes a reader doubt the other twenty, and a
-false statement of fact about a named competitor's product is a legal matter
-rather than a marketing quibble in most places you will sell.
+- Re-read the three pricing pages **every quarter**, or immediately if you hear
+  one of them has repriced.
+- Update the cells, then move `VERIFIED_ON` in `src/site/comparison.ts`. It is a
+  single constant and it feeds both the column headers and the small print.
+- Cells you cannot confirm stay `'unknown'`. A dash is honest; a guessed "no" is
+  not, and the table renders the dash with a tooltip saying we could not confirm
+  it — never that the answer is no.
+
+The rules in the header of `comparison.ts` are why: a guess about somebody
+else's product is stale before it deploys, one wrong cell makes a reader doubt
+the other twenty, and a false statement of fact about a named competitor's
+product is a legal matter rather than a marketing quibble in most places you
+will sell. Anything sourced from a review site rather than the vendor belongs in
+`TRADEOFFS`, worded as a report and linked.
+
+There is **no self-hosted edition** and the site no longer implies one. If that
+ever changes, `/compare` and the `/compare` meta description in
+`src/site/pages.tsx` are the two places that need to say so.
 
 ---
 
