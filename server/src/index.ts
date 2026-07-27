@@ -22,6 +22,7 @@ import { contentV1Routes } from './routes/v1/content.js';
 import { settingsV1Routes } from './routes/v1/settings.js';
 import { presenceV1Routes } from './routes/v1/presence.js';
 import { pushV1Routes } from './routes/v1/push.js';
+import { supportV1Routes } from './routes/v1/support.js';
 import { automationV1Routes } from './routes/v1/automation.js';
 import { billingV1Routes } from './routes/v1/billing.js';
 import { platformRoutes } from './routes/platform/index.js';
@@ -114,6 +115,7 @@ export async function buildServer() {
   await app.register(settingsV1Routes);
   await app.register(presenceV1Routes);
   await app.register(pushV1Routes);
+  await app.register(supportV1Routes);
   await app.register(automationV1Routes);
   await app.register(billingV1Routes);
 

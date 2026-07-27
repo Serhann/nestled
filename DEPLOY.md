@@ -1,6 +1,6 @@
 # Deploying Nestled
 
-All fourteen phases are merged. **213 server tests pass, both typechecks are
+All fourteen phases are merged. **220 server tests pass, both typechecks are
 clean, ESLint reports zero errors, and the production images have been built and
 exercised end to end** — signup, website creation, widget boot, a visitor
 message, an agent reply, the billing state, and both directions of the
@@ -111,6 +111,12 @@ Sign in at `https://ops.your-host`, enrol TOTP, then open **Settings**:
   billing portal are disabled, which is a perfectly good self-hosted setup.
 - **Web Push** — the VAPID keypair (`cd server && npm run vapid`).
 - **IP geolocation** — a local GeoLite2 file or MaxMind web-service credentials.
+- **Our own support chat** — the embed key of a website in one of your own
+  workspaces. Set it and Nestled appears on your marketing site and inside the
+  customer panel, where it carries a signed workspace, plan and role so an agent
+  is not spending three messages working out which account is asking. Its
+  `allowed_domains` must include your own app and marketing hosts. Leave it blank
+  to serve no support chat anywhere — the right setting for a self-hosted install.
 - **URLs and operations** — the app and marketing URLs used in email links, a
   Sentry DSN, a retention override, and the staff session length.
 
@@ -254,7 +260,7 @@ export DATABASE_URL='postgres://nestled:nestled@localhost:5546/nestled_test'
 export JWT_ACCESS_SECRET=test-secret-min-16-chars JWT_REFRESH_SECRET=test-secret-min-16-chars
 export NODE_ENV=test
 npx prisma migrate deploy
-npm test        # 213 tests, serial (they share one database)
+npm test        # 220 tests, serial (they share one database)
 ```
 
 From the repo root: `npm run typecheck && npx eslint . && npm run build`.

@@ -59,6 +59,8 @@ export interface PlatformSettings {
   };
   billing: { secretKey: string | null; webhookSecret: string | null; returnUrl: string | null };
   urls: { app: string; marketing: string };
+  /** Nestled's own support chat, served on our marketing site and in the panel. */
+  support: { websiteKey: string | null };
   ops: {
     discordWebhookUrl: string | null;
     sentryDsn: string | null;
@@ -230,6 +232,9 @@ function resolve(row: Row): PlatformSettings {
       app: appUrl,
       marketing: str(row, 'marketing_url', e.MARKETING_URL ?? null) ?? derivedUrl('marketing'),
     },
+    support: {
+      websiteKey: str(row, 'support_website_key', e.SUPPORT_WEBSITE_KEY ?? null),
+    },
     ops: {
       discordWebhookUrl: str(row, 'discord_webhook_url', e.DISCORD_WEBHOOK_URL ?? null),
       sentryDsn: str(row, 'sentry_dsn', e.SENTRY_DSN ?? null),
@@ -358,6 +363,8 @@ export function redactedSettings(): Record<string, unknown> {
       stripe_return_url: s.billing.returnUrl,
     },
     urls: { app_url: s.urls.app, marketing_url: s.urls.marketing },
+    // Not masked: an embed key is public by design — it is pasted into a page.
+    support: { support_website_key: s.support.websiteKey },
     ops: {
       discord_webhook_url: mask(s.ops.discordWebhookUrl),
       sentry_dsn: s.ops.sentryDsn,

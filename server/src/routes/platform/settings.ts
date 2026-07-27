@@ -65,6 +65,9 @@ const settingsBody = z.object({
   stripe_webhook_secret: text(200),
   stripe_return_url: text(400),
 
+  // Our own support chat
+  support_website_key: text(64),
+
   // URLs
   app_url: text(300),
   marketing_url: text(300),

@@ -1,4 +1,5 @@
 import '../index.css';
+import { mountSupportWidget } from '../lib/supportWidget';
 
 /**
  * Marketing islands.
@@ -21,3 +22,8 @@ if (target) {
     },
   );
 }
+
+// Someone reading the pricing page with a question is the single best moment to
+// be reachable, so the marketing site carries the widget too. No identity here —
+// they are anonymous by definition.
+mountSupportWidget();

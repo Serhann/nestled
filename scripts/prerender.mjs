@@ -51,15 +51,28 @@ async function main() {
       )
       .replace('<div id="site-root"></div>', `<div id="site-root">${html}</div>`);
 
-    if (!document.includes('id="site-root"')) {
+    // A page with no island will never load React, so the modulepreload hints
+    // Vite emits for the island's dependency graph are pure waste there — the
+    // browser fetches them and nothing ever executes them. On the landing page
+    // that was 3.4 KB of framework runtime nobody asked for, which is most of the
+    // reason to prerender in the first place.
+    const finished = html.includes('data-island')
+      ? document
+      : document.replace(/\s*<link rel="modulepreload"[^>]*>/g, '');
+
+    if (!finished.includes('id="site-root"')) {
       throw new Error(
         'index.html has no <div id="site-root"></div> to render into — prerender would silently ship an empty page.',
       );
     }
 
-    await writeFile(resolve(root, 'dist', page.file), document, 'utf8');
+    await writeFile(resolve(root, 'dist', page.file), finished, 'utf8');
     // eslint-disable-next-line no-console
-    console.log(`[prerender] dist/${page.file}  (${(document.length / 1024).toFixed(1)} KB)`);
+    console.log(
+      `[prerender] dist/${page.file}  (${(finished.length / 1024).toFixed(1)} KB${
+        html.includes('data-island') ? ', hydrates' : ', static'
+      })`,
+    );
   }
 
   await rm(ssrOut, { recursive: true, force: true });

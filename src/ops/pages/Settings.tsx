@@ -57,6 +57,7 @@ interface SettingsResponse {
       stripe_return_url: string | null;
     };
     urls: { app_url: string; marketing_url: string };
+    support: { support_website_key: string | null };
     ops: {
       discord_webhook_url: Masked;
       sentry_dsn: string | null;
@@ -295,6 +296,27 @@ export function Settings() {
           <Field label="MaxMind account id">{text('maxmind_account_id', s.geo.maxmind_account_id)}</Field>
           <Field label="MaxMind licence key">{secret('maxmind_license_key', s.geo.maxmind_license_key)}</Field>
           <Field label="Endpoint">{text('maxmind_endpoint', s.geo.maxmind_endpoint)}</Field>
+        </div>
+      </Card>
+
+      <Card title="Our own support chat">
+        <p className="text-xs text-gray-500 mb-3">
+          Nestled runs Nestled. Paste the embed key of a website in one of your own
+          workspaces and it appears on the marketing site and inside the customer panel —
+          in the panel it carries a signed workspace, plan and role, so an agent is not
+          spending three messages working out which account is asking.
+        </p>
+        <p className="text-xs text-gray-500 mb-3">
+          Leave it blank to serve no support chat anywhere. That is the right setting for a
+          self-hosted install: those operators are not your customers.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label="Support website key"
+            hint="Its allowed_domains must include your own app, ops and marketing hosts, or the widget stays hidden on them."
+          >
+            {text('support_website_key', s.support.support_website_key, 'nst_…')}
+          </Field>
         </div>
       </Card>
 

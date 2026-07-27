@@ -1164,6 +1164,12 @@ model platform_settings {
   app_url       String?
   marketing_url String?
 
+  /// The public key of a website in one of THIS install's own workspaces, used to
+  /// serve our own support chat on the marketing site and inside the customer
+  /// panel. Empty means no support chat anywhere — which is the right default for
+  /// a self-hoster, who is not our customer and should not get our widget.
+  support_website_key        String?
+
   // ── Operations ──
   discord_webhook_url        String?
   sentry_dsn                 String?

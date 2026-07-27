@@ -1,4 +1,4 @@
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
 import {
   Bot,
@@ -22,6 +22,8 @@ import { logout } from '../lib/api/auth';
 import { resendVerification } from '../lib/api/auth';
 import { Spinner } from '../ui/Page';
 import { useAppStore } from './store';
+import { mountSupportWidget } from '../lib/supportWidget';
+import { get } from '../lib/http';
 import type { Capability } from '../lib/api/types';
 
 /**
@@ -43,6 +45,20 @@ export function AppShell() {
   const { connected } = useRealtime();
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const base = `/w/${workspace.slug}`;
+
+  // Our own support chat, if this install has one configured.
+  //
+  // It carries a SIGNED description of who is asking — workspace, plan, role —
+  // so an agent sees a verified account instead of spending three messages
+  // establishing which one it is. Same HMAC mechanism any customer uses to vouch
+  // for their own visitors, turned on ourselves.
+  useEffect(() => {
+    mountSupportWidget(() =>
+      get<{ context_token: string | null }>(
+        `/api/v1/me/support-context?workspace=${encodeURIComponent(workspace.slug)}`,
+      ),
+    );
+  }, [workspace.slug]);
 
   const items: NavItem[] = [
     { to: `${base}/inbox`, label: 'Inbox', icon: Inbox, capability: 'conversation:read', badge: workspace.counts.open_conversations },
