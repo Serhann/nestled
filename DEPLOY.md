@@ -189,12 +189,28 @@ nothing.
 Be aware of these before a launch. None is a known defect; each is something
 nobody has watched happen.
 
-**The panel and the ops console have not been clicked through in a browser.**
-Both typecheck, lint, build, and their API contracts are covered by integration
-tests. The React rendering itself is not — no human and no headless browser has
-used them. The widget and the marketing site, by contrast, *were* driven in a
-real browser: the marketing pages render, the pricing table hydrates with live
-prices, and our own support bubble appears.
+**The panel and the ops console have largely not been clicked through in a
+browser.** Both typecheck, lint, build, and their API contracts are covered by
+integration tests. The React rendering itself mostly is not. Three exceptions
+*were* driven in a real browser: the marketing pages render and the pricing table
+hydrates with live prices, our own support bubble appears, and the inbox was
+driven end to end for live translation (sign in → open a Turkish conversation →
+toggle translation → translate a draft).
+
+**Live translation has never run against a real AI provider.** Everything around
+it is verified — the control appears only when the visitor's browser reports a
+language other than English, both failure paths report themselves instead of
+passing the original off as a translation, and the endpoint is metered. But with
+no provider key configured, every translation in testing took the
+`reason: 'unavailable'` branch. Set an AI key in the ops panel and translate one
+real message before telling a customer the feature exists.
+
+**Translation spends the AI allowance.** Each translated message and each
+translated draft counts one against the workspace's `ai_replies` allowance,
+because it is the same LLM call at the same cost. Switching translation on in a
+long conversation translates up to the 30 most recent visitor messages. If you
+ever advertise the AI allowance as "AI replies" and nothing else, that wording
+will be wrong.
 
 **Stripe has only been tested against a fake client.** The webhook route's branch
 logic, all three idempotency mechanisms, out-of-order delivery and both checkout

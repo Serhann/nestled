@@ -94,6 +94,12 @@ export async function checkUsageLimit(
   metric: UsageMetric,
   limit: number,
 ): Promise<PlanLimitFailure | null> {
+  // `limit <= 0` means UNLIMITED. That is the convention the plan editor and
+  // lib/limits.ts both document, and without this line the arithmetic below reads
+  // it as "zero allowed": a ceiling of 0, `used < 0` false, every call refused.
+  // An operator setting a plan's AI allowance to 0 to mean "no cap" would have
+  // silently switched the assistant off for everyone on that plan.
+  if (limit <= 0) return null;
   const used = await readUsage(workspaceId, metric);
   const soft = metric === 'conversations';
   const ceiling = soft ? Math.ceil(limit * 1.2) : limit;

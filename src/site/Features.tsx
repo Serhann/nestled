@@ -5,6 +5,7 @@ import {
   Eye,
   Globe,
   Inbox,
+  Languages,
   Lock,
   MessagesSquare,
   Route,
@@ -113,6 +114,11 @@ export function Features() {
             Route,
             'Send it to the right person',
             'Rules decide who picks up: take turns, give it to whoever has the fewest open chats, or always one person. Anyone offline is skipped and keeps their turn.',
+          ],
+          [
+            Languages,
+            'Answer someone in a language you do not speak',
+            'Read their messages in English and have your reply turned back into theirs before you send it. You always see what you are about to send, and the original is one click away — nothing is translated behind your back.',
           ],
         ]}
       />

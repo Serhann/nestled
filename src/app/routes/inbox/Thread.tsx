@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
-import { Bot, Sparkles, User } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Bot, Languages, Sparkles, User } from 'lucide-react';
 import { Markdown } from '../../../lib/markdown';
 import { relative } from './ConversationList';
+import type { TranslationState } from './useTranslate';
 import type { Message } from '../../../lib/api/types';
 
 /**
@@ -11,7 +12,15 @@ import type { Message } from '../../../lib/api/types';
  * rather than silently appearing — for an agent using a screen reader, a chat
  * transcript without it is unusable.
  */
-export function Thread({ messages, visitorTyping }: { messages: Message[]; visitorTyping: boolean }) {
+export function Thread({
+  messages,
+  visitorTyping,
+  translation,
+}: {
+  messages: Message[];
+  visitorTyping: boolean;
+  translation?: TranslationState;
+}) {
   const bottom = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
@@ -35,8 +44,19 @@ export function Thread({ messages, visitorTyping }: { messages: Message[]; visit
       aria-live="polite"
       aria-label="Conversation"
     >
+      {translation?.on && translation.skipped > 0 && (
+        <p className="text-center text-[11px] text-gray-400 py-1">
+          The {translation.skipped} older message{translation.skipped === 1 ? '' : 's'} above{' '}
+          {translation.skipped === 1 ? 'was' : 'were'} left untranslated.
+        </p>
+      )}
       {messages.map((message) => (
-        <MessageBubble key={message.id} message={message} />
+        <MessageBubble
+          key={message.id}
+          message={message}
+          translation={translation?.results[message.id]}
+          translating={translation?.pending.has(message.id) ?? false}
+        />
       ))}
       {visitorTyping && (
         <div className="flex gap-2 items-end">
@@ -59,9 +79,25 @@ export function Thread({ messages, visitorTyping }: { messages: Message[]; visit
   );
 }
 
-export function MessageBubble({ message }: { message: Message }) {
+export function MessageBubble({
+  message,
+  translation,
+  translating,
+}: {
+  message: Message;
+  /** Present only when this message has been through the translator. */
+  translation?: { text: string; translated: boolean };
+  translating?: boolean;
+}) {
   const fromUs = message.sender_type !== 'visitor';
   const system = message.sender_type === 'system';
+  // Default to the translation when there is one, because that is what the agent
+  // switched it on to read. The original stays one click away — an agent chasing a
+  // reference number or a name needs the words the customer actually typed, and a
+  // translation that hides them is worse than none.
+  const [showOriginal, setShowOriginal] = useState(false);
+  const translated = translation?.translated ? translation : null;
+  const body = translated && !showOriginal ? translated.text : message.content;
 
   if (system) {
     return (
@@ -80,10 +116,27 @@ export function MessageBubble({ message }: { message: Message }) {
               : 'bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-bl-md'
           }`}
         >
-          <Markdown text={message.content} />
+          <Markdown text={body} />
         </div>
-        <span className="text-[10px] text-gray-400 px-1">
-          {message.sender_name ?? label(message.sender_type)} · {relative(message.created_at)}
+        <span className="text-[10px] text-gray-400 px-1 flex items-center gap-1.5 flex-wrap">
+          <span>
+            {message.sender_name ?? label(message.sender_type)} · {relative(message.created_at)}
+          </span>
+          {translating && (
+            <span className="inline-flex items-center gap-1 text-gray-400">
+              <Languages className="w-3 h-3 animate-pulse" aria-hidden />
+              translating…
+            </span>
+          )}
+          {translated && (
+            <button
+              onClick={() => setShowOriginal((v) => !v)}
+              className="inline-flex items-center gap-1 text-blue-700 hover:underline"
+            >
+              <Languages className="w-3 h-3" aria-hidden />
+              {showOriginal ? 'show translation' : 'translated · show original'}
+            </button>
+          )}
         </span>
       </div>
     </div>

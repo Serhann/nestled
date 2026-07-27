@@ -173,18 +173,23 @@ export async function summarizeConversation(
 }
 
 /**
- * Translate text into `to` (a language name or code). Returns the original text
- * when no LLM is configured or on error, so the chat never breaks.
+ * Translate text into `to` (a language name or code).
+ *
+ * Returns `null` when there is nothing to do, no LLM is configured, or the call
+ * failed — deliberately NOT the original text. The caller is an agent staring at
+ * a message they cannot read, and handing back the input silently would look
+ * exactly like a translation of something already in their language. The route
+ * turns `null` into a reason the agent can see, and never into an error that
+ * blocks their reply.
  */
-export async function translateText(text: string, to: string): Promise<string> {
+export async function translateText(text: string, to: string): Promise<string | null> {
   const t = text.trim();
-  if (!t || !to.trim()) return text;
+  if (!t || !to.trim()) return null;
   const system =
     `You are a translation engine. Translate the user's message into ${to}. ` +
     'Preserve meaning, tone, emojis, names, reference numbers, URLs and formatting. ' +
     'If it is already in the target language, return it unchanged. Output ONLY the translation — no notes, no quotes.';
-  const out = await complete(system, t, 800);
-  return out ?? text;
+  return complete(system, t, 800);
 }
 
 const MAX_CONTEXT_LINES = 40;

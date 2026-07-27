@@ -195,6 +195,33 @@ export const ROWS: Row[] = [
     },
   },
   {
+    label: 'Live translation in the shared inbox',
+    detail:
+      'Ours translates the visitor’s messages for the agent and the agent’s draft back into the visitor’s language, on a click and never automatically. It draws on the same monthly AI allowance as replies.',
+    nestled: 'Yes, in the inbox',
+    others: {
+      // Their own page: "translate customer messages in real-time and reply in the
+      // customer's language", across every channel connected to the workspace. No
+      // plan tier is named there, so none is claimed here.
+      Crisp: 'Yes — LiveTranslate, all channels',
+      Intercom: 'Yes — AI Inbox Translations',
+      // Tidio's help centre is not readable from here, and third-party write-ups
+      // saying it only localises the widget's own buttons are not the vendor.
+      Tidio: 'unknown',
+    },
+  },
+  {
+    label: 'Chat on channels other than your website',
+    detail:
+      'WhatsApp, Instagram, Messenger, SMS. This is a row we lose, and it is worth knowing before you buy.',
+    nestled: false,
+    others: {
+      Crisp: 'Yes, omnichannel from $95/mo',
+      Intercom: 'Yes, usage-billed',
+      Tidio: 'Yes',
+    },
+  },
+  {
     label: 'Bot flows that run on the server',
     detail:
       'Server-side execution means a flow behaves identically for every visitor and can consult your knowledge base and your assignment rules.',
@@ -245,7 +272,7 @@ export const TRADEOFFS: Tradeoff[] = [
   {
     competitor: 'Crisp',
     strength:
-      'The closest of the three to how we price, and the only one of them that does not cap conversations at all. If you answer a very high volume of chats and never need more than a few inboxes, Crisp is a strong buy and we will not pretend otherwise.',
+      'The closest of the three to how we price, and the only one of them that does not cap conversations at all. It also beats us outright on reach: one inbox covering WhatsApp, Instagram, Messenger, SMS and email, with translation running across all of them. If you answer a very high volume of chats on more channels than a website, Crisp is a strong buy and we will not pretend otherwise.',
     costs: [
       'The cap moved rather than disappeared: each plan limits stored customer profiles — 5,000 on Mini, 50,000 on Essentials, 200,000 on Plus — so you can be pushed up a tier by how many people you have talked to, not by how much support you are doing.',
       'AI arrives as prepaid credits ($5 / $25 / $75 a month by plan, which Crisp puts at roughly 90 / 450 / 1,350 automated conversations). A busy month spends them.',
@@ -300,7 +327,15 @@ export const SOURCES: { label: string; url: string }[] = [
     label: 'Crisp — removing branding',
     url: 'https://help.crisp.chat/en/article/how-to-remove-the-we-run-on-crisp-branding-links-dkrg1d/',
   },
+  {
+    label: 'Crisp — LiveTranslate',
+    url: 'https://crisp.chat/en/livechat/realtime-chat-translation/',
+  },
   { label: 'Intercom pricing', url: 'https://www.intercom.com/pricing' },
+  {
+    label: 'Intercom — AI Inbox Translations',
+    url: 'https://www.intercom.com/help/en/articles/10545610-ai-inbox-translations',
+  },
   { label: 'Tidio pricing', url: 'https://www.tidio.com/pricing/' },
   {
     label: 'Tidio — the monthly conversations limit',

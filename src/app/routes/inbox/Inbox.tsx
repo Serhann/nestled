@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Inbox as InboxIcon, Search } from 'lucide-react';
+import { CheckCircle2, Inbox as InboxIcon, Languages, Search } from 'lucide-react';
 import { useWorkspace } from '../../providers/WorkspaceProvider';
 import { useRealtime } from '../../providers/RealtimeProvider';
 import {
@@ -19,11 +19,16 @@ import { Badge, statusTone } from '../../../ui/Badge';
 import { Select } from '../../../ui/Form';
 import { EmptyState, ErrorState, Spinner } from '../../../ui/Page';
 import { NoAccess } from '../../../ui/Locked';
+import { AGENT_LANGUAGE, visitorLanguage } from '../../../lib/language';
 import { ConversationList } from './ConversationList';
 import { Thread } from './Thread';
 import { Composer } from './Composer';
 import { ConversationDetails } from './ConversationDetails';
-import type { ConversationStatus } from '../../../lib/api/types';
+import { useTranslate } from './useTranslate';
+import type { ConversationStatus, Message } from '../../../lib/api/types';
+
+/** Stable identity, so the translation hook's effect does not see a new array each render. */
+const EMPTY_MESSAGES: Message[] = [];
 
 /**
  * The inbox.
@@ -227,11 +232,23 @@ function ConversationPane({
       queryClient.invalidateQueries({ queryKey: qk.conversation(workspace.id, conversationId) }),
   });
 
+  // Above the early returns, because hooks cannot live below a conditional return.
+  // An empty message list while the query is in flight is harmless: the hook does
+  // nothing at all until the agent switches translation on.
+  const translation = useTranslate(
+    workspace.id,
+    conversationId,
+    detail.data?.conversation.messages ?? EMPTY_MESSAGES,
+  );
+
   if (detail.isLoading) return <div className="flex-1"><Spinner /></div>;
   if (detail.error) return <div className="flex-1 p-6"><ErrorState error={detail.error} /></div>;
   if (!detail.data) return null;
 
   const conversation = detail.data.conversation;
+  // An unverified hint from the visitor's browser, which is all it needs to be: it
+  // only picks the default for a control the agent can ignore.
+  const theirLanguage = visitorLanguage(conversation.metadata);
 
   return (
     <div className="flex-1 flex min-w-0">
@@ -246,6 +263,22 @@ function ConversationPane({
             </p>
             <Badge tone={statusTone(conversation.status)}>{conversation.status}</Badge>
           </div>
+          {/*
+            Only offered when the visitor's browser says they are not reading
+            English. Putting a "translate to English" button on an English
+            conversation invites a metered call that can only return the same words.
+          */}
+          {can('conversation:reply') && theirLanguage && theirLanguage !== AGENT_LANGUAGE && (
+            <Button
+              size="sm"
+              variant={translation.on ? 'subtle' : 'ghost'}
+              onClick={translation.toggle}
+              title={`This visitor's browser is set to ${theirLanguage}`}
+            >
+              <Languages className="w-4 h-4" aria-hidden />
+              {translation.on ? 'Showing English' : `Translate from ${theirLanguage}`}
+            </Button>
+          )}
           {can('conversation:resolve') && conversation.status !== 'resolved' && (
             <Button
               size="sm"
@@ -259,7 +292,19 @@ function ConversationPane({
           )}
         </header>
 
-        <Thread messages={conversation.messages} visitorTyping={isTyping} />
+        {translation.problem && (
+          <p className="shrink-0 px-4 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-100">
+            {translation.problem === 'plan_limit'
+              ? 'Your AI allowance for this month is used up, so messages are shown as the visitor wrote them. Translation counts against the same allowance as AI replies.'
+              : 'Translation is unavailable right now. Messages are shown as the visitor wrote them.'}
+          </p>
+        )}
+
+        <Thread
+          messages={conversation.messages}
+          visitorTyping={isTyping}
+          translation={translation}
+        />
 
         <Composer
           workspaceId={workspace.id}
@@ -267,6 +312,7 @@ function ConversationPane({
           sending={reply.isPending}
           disabled={!can('conversation:reply')}
           onSend={(content) => reply.mutate(content)}
+          translateTo={theirLanguage !== AGENT_LANGUAGE ? theirLanguage : null}
         />
       </div>
 

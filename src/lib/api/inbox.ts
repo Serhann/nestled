@@ -102,7 +102,19 @@ export const addNote = (
   content: string,
 ): Promise<{ note: Note }> => post(w(id, `/conversations/${conversationId}/notes`), { content });
 
-export const translate = (id: string, text: string, to: string): Promise<{ text: string }> =>
+/**
+ * Translate one piece of text.
+ *
+ * Always resolves — the server answers 200 even when it could not translate,
+ * because this is called while an agent is mid-reply. `translated: false` with a
+ * reason means `text` is the ORIGINAL coming back unchanged, and the caller must
+ * say so rather than presenting it as a translation.
+ */
+export const translate = (
+  id: string,
+  text: string,
+  to: string,
+): Promise<{ text: string; translated: boolean; reason?: 'plan_limit' | 'unavailable' }> =>
   post(w(id, '/translate'), { text, to });
 
 // ── Visitors ────────────────────────────────────────────────────────────────

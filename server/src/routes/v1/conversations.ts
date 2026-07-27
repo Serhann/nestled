@@ -7,6 +7,8 @@ import { publishToWorkspace, sendToConversationVisitors } from '../../realtime/h
 import { publishAssignment } from '../../services/routing.js';
 import { getPersonProfile } from '../../services/identity.js';
 import { translateText } from '../../services/ai/index.js';
+import { planById } from '../../services/billing/plans.js';
+import { bumpUsage, checkUsageLimit } from '../../lib/usage.js';
 import { notifyNewMessage } from '../../services/discord.js';
 import { audit } from '../../lib/audit.js';
 
@@ -370,6 +372,19 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
   );
 
   // ── Live translation ──────────────────────────────────────────────────────
+  //
+  // Two rules shape this endpoint.
+  //
+  // It is METERED against `ai_replies`. A translation is an LLM call that costs us
+  // what a reply costs, and this route is reachable by anyone who can answer a
+  // chat. Left uncounted it would be a way to spend our AI budget with no counter
+  // anywhere and no plan ceiling — the one hole big enough to matter.
+  //
+  // It NEVER fails the request. An agent is mid-reply to a customer; a 402 or a
+  // 500 here would put a plan problem of ours in front of their customer's
+  // problem. Every outcome is a 200 carrying `translated` and, when false, a
+  // reason the UI can show — so the agent knows they are reading the original
+  // rather than quietly believing a translation happened.
   app.post(
     '/api/v1/w/:workspaceId/translate',
     { preHandler: [requireWorkspace, can('conversation:reply')] },
@@ -380,9 +395,24 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
         reply,
       );
       if (!body) return;
-      // Returns the original text on failure rather than an error: a translation
-      // outage must not stop an agent replying.
-      return reply.send({ text: await translateText(body.text, body.to) });
+
+      const workspaceId = req.auth!.workspace!.id;
+      const plan = await planById(req.auth!.workspace!.planId);
+      if (plan) {
+        const over = await checkUsageLimit(workspaceId, 'ai_replies', plan.max_ai_replies_month);
+        if (over) {
+          return reply.send({ text: body.text, translated: false, reason: 'plan_limit' });
+        }
+      }
+
+      const out = await translateText(body.text, body.to);
+      if (out === null) {
+        return reply.send({ text: body.text, translated: false, reason: 'unavailable' });
+      }
+      // Counted after the call succeeded, not before: charging a customer's
+      // allowance for our provider timing out is the wrong way round.
+      await bumpUsage(workspaceId, 'ai_replies', 1);
+      return reply.send({ text: out, translated: true });
     },
   );
 }
