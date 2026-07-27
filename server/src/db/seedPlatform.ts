@@ -22,7 +22,21 @@ export async function ensureSeedPlatformUser(): Promise<void> {
   if (!email || !password) return;
 
   const count = await prisma.platform_users.count();
-  if (count > 0) return;
+  if (count > 0) {
+    const existing = await prisma.platform_users.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (!existing) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[seed] SEED_PLATFORM_EMAIL is set to ${email} but staff accounts already exist, ` +
+          'so the bootstrap was skipped. Create the account from inside the ops panel, ' +
+          'where it is audited.',
+      );
+    }
+    return;
+  }
 
   await prisma.platform_users.create({
     data: {
