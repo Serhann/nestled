@@ -127,11 +127,37 @@ export function Widget({
   // Minted eagerly rather than on first message: the host page's presence socket
   // needs it, and it is the same session the conversation will use — one visitor
   // identity across both, which is what makes a proactive claim redeemable here.
+  //
+  // NOT in preview. The appearance editor frames this widget, so `embedded` is true
+  // there too — and without this guard the editor minted a widget session against the
+  // customer's live website on every mount, purely because somebody was choosing a
+  // colour. Caught by counting the preview iframe's own network requests rather than
+  // by reading this file, which is why the check is worth keeping in the test above.
   const ensureSession = chat.ensureSession;
   useEffect(() => {
-    if (!params.embedded) return;
+    if (!params.embedded || params.preview) return;
     void ensureSession().then(bridge.session).catch(() => undefined);
-  }, [bridge, ensureSession, params.embedded]);
+  }, [bridge, ensureSession, params.embedded, params.preview]);
+
+  /**
+   * Tell embed.js where the customer wants the launcher.
+   *
+   * The snippet is pasted once and never touched again, so it cannot know a placement
+   * changed in the dashboard afterwards — it only has whatever `data-position` said on
+   * the day it was copied. Until this existed, the side and the two distance fields on
+   * the appearance screen were dead controls: a customer moved them, saved, and their
+   * bubble did not move.
+   */
+  const placement = bridge.placement;
+  const savedPlacement = boot.theme;
+  useEffect(() => {
+    if (!params.embedded || params.preview || !savedPlacement) return;
+    placement(
+      savedPlacement.position ?? 'right',
+      savedPlacement.offset_x ?? 16,
+      savedPlacement.offset_y ?? 16,
+    );
+  }, [placement, params.embedded, params.preview, savedPlacement]);
 
   async function runStarter(starter: Starter, values?: Record<string, string>): Promise<void> {
     setIntake(null);
@@ -152,7 +178,13 @@ export function Widget({
 
   if (!open) {
     return (
-      <div className="n-root" data-embedded={params.embedded} data-position={boot.theme?.position ?? params.position}>
+      <div
+        className="n-root"
+        data-embedded={params.embedded}
+        data-preview={params.preview}
+        data-position={boot.theme?.position ?? params.position}
+        style={previewOffsets(params, boot)}
+      >
         <Launcher theme={boot.theme} label={copy.launcherLabel} unread={unread} onOpen={show} />
       </div>
     );
@@ -207,7 +239,13 @@ export function Widget({
   );
 
   return (
-    <div className="n-root" data-embedded={params.embedded} data-position={boot.theme?.position ?? params.position}>
+    <div
+      className="n-root"
+      data-embedded={params.embedded}
+      data-preview={params.preview}
+      data-position={boot.theme?.position ?? params.position}
+      style={previewOffsets(params, boot)}
+    >
       <Panel
         copy={copy}
         online={availability.online}
@@ -246,4 +284,22 @@ export function Widget({
       </Panel>
     </div>
   );
+}
+
+/**
+ * The launcher offsets, as inline custom properties, in preview only.
+ *
+ * On a real page these are applied by embed.js to the iframe it owns; the widget
+ * document never needs them. In the editor there is no embed.js, so the preview reads
+ * them here to stand in for it — see the `[data-preview]` rules in widget.css.
+ */
+function previewOffsets(
+  params: { preview: boolean },
+  boot: BootPayload,
+): React.CSSProperties | undefined {
+  if (!params.preview) return undefined;
+  return {
+    '--n-preview-offset-x': `${boot.theme?.offset_x ?? 20}px`,
+    '--n-preview-offset-y': `${boot.theme?.offset_y ?? 20}px`,
+  } as React.CSSProperties;
 }

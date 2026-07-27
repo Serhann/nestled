@@ -52,7 +52,23 @@
   var LAUNCHER = 96;
   var MOBILE_MAX = 480;
   var position = attr('data-position') === 'left' ? 'left' : 'right';
-  var offset = 16;
+  /*
+   * Placement, and where it comes from.
+   *
+   * These are DEFAULTS. The real values live in the customer's website settings and
+   * arrive from the widget as `nestled:placement` once /boot has answered — because
+   * the snippet is pasted once and never edited again, while the dashboard is edited
+   * whenever somebody wants the bubble somewhere else.
+   *
+   * Before that message this was hardcoded at 16 with no way in, which meant the
+   * "side" and "distance" controls on the appearance screen did nothing at all: a
+   * customer moved the sliders, saved, and their bubble stayed exactly where it was.
+   *
+   * `data-position` on the script tag still wins as the pre-boot guess, so the
+   * launcher does not visibly jump corners on a slow connection.
+   */
+  var offsetX = 16;
+  var offsetY = 16;
 
   /*
    * ONE storage key, not one per website.
@@ -208,12 +224,12 @@
     container.id = 'nestled-root';
     var s = container.style;
     s.position = 'fixed';
-    s.bottom = offset + 'px';
-    s[position] = offset + 'px';
+    s.bottom = offsetY + 'px';
+    s[position] = offsetX + 'px';
     s.width = LAUNCHER + 'px';
     s.height = LAUNCHER + 'px';
-    s.maxWidth = 'calc(100vw - ' + offset * 2 + 'px)';
-    s.maxHeight = 'calc(100vh - ' + offset * 2 + 'px)';
+    s.maxWidth = 'calc(100vw - ' + offsetX * 2 + 'px)';
+    s.maxHeight = 'calc(100vh - ' + offsetY * 2 + 'px)';
     s.zIndex = '2147483647';
     s.border = 'none';
     s.background = 'transparent';
@@ -294,12 +310,12 @@
     s.top = 'auto';
     s.left = 'auto';
     s.right = 'auto';
-    s.bottom = offset + 'px';
-    s[position] = offset + 'px';
+    s.bottom = offsetY + 'px';
+    s[position] = offsetX + 'px';
     s.width = (msg.width || LAUNCHER) + 'px';
     s.height = (msg.height || LAUNCHER) + 'px';
-    s.maxWidth = 'calc(100vw - ' + offset * 2 + 'px)';
-    s.maxHeight = 'calc(100vh - ' + offset * 2 + 'px)';
+    s.maxWidth = 'calc(100vw - ' + offsetX * 2 + 'px)';
+    s.maxHeight = 'calc(100vh - ' + offsetY * 2 + 'px)';
 
     // The panel is a rounded floating card: border-radius on the iframe clips its
     // square content, and the shadow sits on the transparent container so it hugs
@@ -368,7 +384,13 @@
         // put the customer's dashboard and their own snippet in disagreement.
         if (payload && typeof payload === 'object') {
           if (payload.position === 'left' || payload.position === 'right') position = payload.position;
-          if (typeof payload.offset === 'number') offset = Math.max(0, payload.offset);
+          // `offset` sets both axes, and is kept because it is the shape older cached
+          // copies of this file and any customer already calling Nestled('config') use.
+          if (typeof payload.offset === 'number') {
+            offsetX = offsetY = Math.max(0, payload.offset);
+          }
+          if (typeof payload.offsetX === 'number') offsetX = Math.max(0, payload.offsetX);
+          if (typeof payload.offsetY === 'number') offsetY = Math.max(0, payload.offsetY);
           resize({ state: 'closed' });
         }
         break;
@@ -468,6 +490,26 @@
         ready = true;
         flush();
         emit('ready');
+      } else if (data.type === 'nestled:placement') {
+        /*
+         * The saved placement, arriving from the widget after /boot.
+         *
+         * Applied without an animation on the first message: the launcher is already
+         * painted in the pre-boot corner, and sliding it across the screen on every
+         * page load looks like a bug rather than a setting.
+         */
+        if (data.position === 'left' || data.position === 'right') position = data.position;
+        if (typeof data.offsetX === 'number') offsetX = Math.max(0, data.offsetX);
+        if (typeof data.offsetY === 'number') offsetY = Math.max(0, data.offsetY);
+        if (container) {
+          var previous = container.style.transition;
+          container.style.transition = 'none';
+          resize({ state: 'closed' });
+          // Read back to flush the style change before restoring the transition,
+          // otherwise the browser coalesces both and animates anyway.
+          void container.offsetWidth;
+          container.style.transition = previous;
+        }
       } else if (data.type === 'nestled:session') loadPresence(data.token);
       else if (data.type === 'nestled:event') emit(data.name, data.payload);
     });

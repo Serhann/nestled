@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Monitor, Smartphone } from 'lucide-react';
 import { useWebsiteSettings } from './WebsiteLayout';
-import { ORIGINS } from '../../../lib/origins';
+import { widgetDocumentUrl } from '../../../lib/origins';
 import { Section } from '../../../ui/Card';
 import { Field, Select, TextInput } from '../../../ui/Form';
 import { Toggle } from '../../../ui/Toggle';
@@ -38,14 +38,33 @@ export default function Appearance() {
   const [mode, setMode] = useState<'light' | 'dark'>('light');
   const frame = useRef<HTMLIFrameElement>(null);
 
-  // Push the draft into the preview whenever anything changes. The widget applies
-  // it without a reload, so dragging the colour picker is immediately visible.
-  useEffect(() => {
+  /**
+   * Feed the draft to the preview.
+   *
+   * A handshake, not a broadcast. Posting on change alone looked right and was blank:
+   * on first render the iframe has not loaded, so that message goes nowhere and the
+   * preview stays empty until somebody touches a control — which, on a screen whose
+   * whole purpose is "see it before you save it", means it appeared broken. The widget
+   * announces itself when it is ready and we answer with whatever we have.
+   */
+  const push = useCallback(() => {
     frame.current?.contentWindow?.postMessage(
-      { source: 'nestled-preview', theme: settings, color_mode: mode },
+      { source: 'nestled-preview', theme: settings, copy: settings.copy, color_mode: mode },
       '*',
     );
   }, [settings, mode]);
+
+  useEffect(() => {
+    push();
+  }, [push]);
+
+  useEffect(() => {
+    const onReady = (event: MessageEvent): void => {
+      if ((event.data as { source?: string } | null)?.source === 'nestled-preview-ready') push();
+    };
+    window.addEventListener('message', onReady);
+    return () => window.removeEventListener('message', onReady);
+  }, [push]);
 
   const contrast = contrastRatio(settings.primary_color, '#ffffff');
 
@@ -242,7 +261,11 @@ export default function Appearance() {
           <iframe
             ref={frame}
             title="Widget preview"
-            src={`${ORIGINS.widget.replace(/\/$/, '')}?preview=1`}
+            // The document, by the one function that knows where it lives in either
+            // layout. `ORIGINS.widget + '?preview=1'` did resolve — but only because an
+            // exact nginx location and a Vite fallback happen to agree, which is the
+            // same assumption `/widget/embed.js` made before it broke.
+            src={widgetDocumentUrl('?preview=1')}
             className="w-full h-[520px] border-0"
           />
         </div>

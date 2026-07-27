@@ -54,6 +54,35 @@ textarea {
   line-height: 1.45;
 }
 
+/*
+ * Preview (the appearance editor's iframe).
+ *
+ * On a real page embed.js sizes its iframe to the launcher and positions THAT in the
+ * corner, so the widget document only ever has to centre itself in a 96px box —
+ * which is why `.n-launcher` uses `margin: auto`. In the editor's 520px iframe that
+ * same rule parks the bubble in the middle of an empty white square, and the side and
+ * distance controls on that very screen appear to do nothing.
+ *
+ * So the preview plays the part of embed.js: anchor to the chosen corner, using the
+ * offsets as the inline custom properties the widget sets in preview mode.
+ */
+.n-root[data-preview='true'] {
+  inset: 0;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: var(--n-preview-offset-y, 20px) var(--n-preview-offset-x, 20px);
+}
+.n-root[data-preview='true'][data-position='left'] {
+  justify-content: flex-start;
+}
+.n-root[data-preview='true'] .n-launcher {
+  margin: 0;
+}
+/* The panel fills the frame rather than hanging off the bottom of it. */
+.n-root[data-preview='true'] .n-panel {
+  max-height: 100%;
+}
+
 /* Standalone (/widget opened directly): a floating card, not a full takeover. */
 .n-root[data-embedded='false'] {
   inset: auto 0 0 0;

@@ -24,6 +24,15 @@ export interface EmbedParams {
   /** False when /widget is opened directly (sandbox, previews). */
   embedded: boolean;
   /**
+   * Rendering for the appearance editor rather than for a visitor.
+   *
+   * In preview the widget makes NO network calls at all: there is no website key to
+   * boot with, and more importantly a preview must not mint sessions or conversations
+   * against the customer's live website every time somebody drags a colour picker.
+   * The theme and copy arrive over postMessage instead.
+   */
+  preview: boolean;
+  /**
    * `Nestled('reset')` reloads the iframe with this set. It is a marker rather
    * than an action because the stored conversation lives in the WIDGET origin's
    * localStorage, which the host page cannot reach cross-origin.
@@ -51,6 +60,7 @@ export function readParams(): EmbedParams {
     href: q.get('href') || document.referrer || window.location.href,
     position: q.get('pos') === 'left' ? 'left' : 'right',
     embedded: isEmbedded(),
+    preview: q.has('preview'),
     reset: q.has('reset'),
   };
 }

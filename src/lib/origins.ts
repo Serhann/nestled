@@ -101,6 +101,27 @@ export function embedScriptUrl(): string {
     : `${window.location.origin}/embed.js`;
 }
 
+/**
+ * The widget DOCUMENT's URL — the thing an iframe loads.
+ *
+ * `ORIGINS.widget` is a route prefix, not a document. In the path layout it is the
+ * string `/widget`, which happens to resolve today because nginx carries an exact
+ * `location = /widget` and Vite falls back to `widget.html` in dev — so this is
+ * hardening rather than a fix for a live break. It is worth having anyway: that
+ * resolution is a coincidence of two configs agreeing, `/widget/embed.js` was the same
+ * shape of assumption and DID break, and a caller should not have to know which of
+ * `/widget`, `/widget/` and `/widget.html` a given deployment answers.
+ */
+export function widgetDocumentUrl(query = ''): string {
+  const suffix = query ? (query.startsWith('?') ? query : `?${query}`) : '';
+  if (typeof window === 'undefined') return `https://widget.nestled.chat/${suffix}`;
+  // Subdomain: the widget origin's root IS the document.
+  if (current.subdomain) return `${ORIGINS.widget}/${suffix}`;
+  // Path layout and dev: the built file, by name. `/widget.html` is what Vite serves
+  // and what nginx has on disk; `/widget` is neither.
+  return `${window.location.origin}/widget.html${suffix}`;
+}
+
 /** The WebSocket origin. Same host as the API, ws:// or wss:// to match the page. */
 export function wsOrigin(): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

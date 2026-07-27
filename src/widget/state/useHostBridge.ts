@@ -57,6 +57,15 @@ export interface HostBridge {
    * credential, not an event.
    */
   session(token: string): void;
+  /**
+   * Where the launcher should sit, from the customer's saved settings.
+   *
+   * Sent once /boot has answered, because embed.js is pasted into a page once and
+   * never edited again — so the snippet cannot know a placement the customer changed
+   * in their dashboard last week. Without this the "side" and "distance" controls on
+   * the appearance screen did nothing whatsoever.
+   */
+  placement(position: 'left' | 'right', offsetX: number, offsetY: number): void;
 }
 
 export function useHostBridge(
@@ -146,6 +155,8 @@ export function useHostBridge(
       emit: (name, payload) => post({ type: 'nestled:event', name, payload: payload ?? {} }),
       resize: (state, width, height) => post({ type: 'nestled:resize', state, width, height }),
       session: (token) => post({ type: 'nestled:session', token }),
+      placement: (position, offsetX, offsetY) =>
+        post({ type: 'nestled:placement', position, offsetX, offsetY }),
     }),
     [post],
   );
