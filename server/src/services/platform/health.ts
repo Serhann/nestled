@@ -6,6 +6,7 @@ import { env } from '../../env.js';
 import { socketStats, type SocketStats } from '../../realtime/hub.js';
 import { isPushEnabled } from '../push.js';
 import { counter, lastJobRun, processStartedAt, type JobRun } from './metrics.js';
+import { settings } from './settings.js';
 
 /**
  * The health page.
@@ -80,7 +81,7 @@ async function geoipCheck(): Promise<HealthReport['geoip']> {
   // The web service is checked first because when it is configured the local file
   // is never read — reporting a stale .mmdb that nothing consults would send
   // somebody to fix a non-problem.
-  if (env.MAXMIND_ACCOUNT_ID && env.MAXMIND_LICENSE_KEY) {
+  if (settings().geo.maxmindAccountId && settings().geo.maxmindLicenseKey) {
     return {
       source: 'maxmind_web',
       path: null,
@@ -89,7 +90,7 @@ async function geoipCheck(): Promise<HealthReport['geoip']> {
       detail: 'Using the MaxMind web service; no local database to age out',
     };
   }
-  if (!env.GEOLITE2_DB_PATH) {
+  if (!settings().geo.dbPath) {
     return {
       source: 'disabled',
       path: null,
@@ -100,12 +101,13 @@ async function geoipCheck(): Promise<HealthReport['geoip']> {
       detail: 'No GeoIP source configured — visitor location is unavailable',
     };
   }
+  const dbPath = settings().geo.dbPath!;
   try {
-    const info = await stat(env.GEOLITE2_DB_PATH);
+    const info = await stat(dbPath);
     const ageDays = Math.floor((Date.now() - info.mtimeMs) / 86_400_000);
     return {
       source: 'local_mmdb',
-      path: env.GEOLITE2_DB_PATH,
+      path: dbPath,
       age_days: ageDays,
       status: ageDays > GEOIP_FAIL_DAYS ? 'fail' : ageDays > GEOIP_WARN_DAYS ? 'warn' : 'ok',
       detail: `Local database is ${ageDays} day(s) old (MaxMind publishes weekly)`,
@@ -113,10 +115,10 @@ async function geoipCheck(): Promise<HealthReport['geoip']> {
   } catch {
     return {
       source: 'local_mmdb',
-      path: env.GEOLITE2_DB_PATH,
+      path: settings().geo.dbPath,
       age_days: null,
       status: 'fail',
-      detail: `GEOLITE2_DB_PATH is set but ${env.GEOLITE2_DB_PATH} cannot be read`,
+      detail: `GEOLITE2_DB_PATH is set but ${settings().geo.dbPath} cannot be read`,
     };
   }
 }
@@ -129,7 +131,7 @@ function retentionCheck(): HealthReport['retention'] {
   if (!enabled) {
     return {
       enabled,
-      env_override_days: env.RETENTION_DAYS,
+      env_override_days: settings().ops.retentionDays,
       last_run: last,
       status: 'ok',
       detail: 'Background sweeps are not started under NODE_ENV=test',
@@ -138,7 +140,7 @@ function retentionCheck(): HealthReport['retention'] {
   if (!last) {
     return {
       enabled,
-      env_override_days: env.RETENTION_DAYS,
+      env_override_days: settings().ops.retentionDays,
       last_run: null,
       status: 'warn',
       detail: 'No sweep has completed since this process started',
@@ -147,7 +149,7 @@ function retentionCheck(): HealthReport['retention'] {
   const ageHours = (Date.now() - last.at.getTime()) / 3600_000;
   return {
     enabled,
-    env_override_days: env.RETENTION_DAYS,
+    env_override_days: settings().ops.retentionDays,
     last_run: last,
     status: !last.ok ? 'fail' : ageHours > RETENTION_FAIL_HOURS ? 'fail' : 'ok',
     detail: last.ok
@@ -203,15 +205,15 @@ export async function healthReport(): Promise<HealthReport> {
     email: {
       queued: queuedEmails,
       failed: failedEmails,
-      smtp_configured: Boolean(env.SMTP_HOST),
+      smtp_configured: Boolean(settings().mail.host),
       status: failedEmails > 0 ? 'warn' : queuedEmails > 200 ? 'warn' : 'ok',
-      detail: env.SMTP_HOST
+      detail: settings().mail.host
         ? `${queuedEmails} queued, ${failedEmails} failed`
         : `No SMTP host — ${queuedEmails} message(s) queued to the database instead of sent`,
     },
     billing: {
       unprocessed_stripe_events: unprocessedEvents,
-      stripe_configured: Boolean(env.STRIPE_SECRET_KEY),
+      stripe_configured: Boolean(settings().billing.secretKey),
       // A backlog here means webhooks are arriving but not being applied, which
       // shows up to customers as a plan that did not change after they paid.
       status: unprocessedEvents > 20 ? 'fail' : unprocessedEvents > 0 ? 'warn' : 'ok',

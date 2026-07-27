@@ -1,10 +1,10 @@
 import nodemailer, { type Transporter } from 'nodemailer';
-import { env } from '../env.js';
 // outbound_emails has a NULLABLE workspace_id (platform-level mail: a password
 // reset belongs to a user, not a workspace), and mail is queued from pre-tenant
 // flows like signup.
 // eslint-disable-next-line no-restricted-imports -- outbound_emails is intentionally unscoped
 import { unscopedPrisma } from '../db/unscoped.js';
+import { settings } from './platform/settings.js';
 
 /**
  * Transactional email.
@@ -37,13 +37,24 @@ interface SendArgs {
 }
 
 let transporter: Transporter | null = null;
+/** The host the cached transporter was built for, so an ops-panel change lands. */
+let transporterHost: string | null = null;
+
 function getTransporter(): Transporter | null {
-  if (!env.SMTP_HOST) return null;
+  const mail = settings().mail;
+  if (!mail.host) return null;
+  // Rebuilt when the host changes. Caching it unconditionally would mean an
+  // operator fixing a wrong SMTP host has to restart the process to be believed.
+  if (transporter && transporterHost !== mail.host) {
+    transporter.close();
+    transporter = null;
+  }
+  transporterHost = mail.host;
   transporter ??= nodemailer.createTransport({
-    host: env.SMTP_HOST,
-    port: env.SMTP_PORT,
-    secure: env.SMTP_SECURE === 'true',
-    ...(env.SMTP_USER ? { auth: { user: env.SMTP_USER, pass: env.SMTP_PASSWORD } } : {}),
+    host: mail.host,
+    port: mail.port,
+    secure: mail.secure,
+    ...(mail.user ? { auth: { user: mail.user, pass: mail.password ?? undefined } } : {}),
   });
   return transporter;
 }
@@ -112,7 +123,7 @@ function render(template: EmailTemplate, v: Record<string, string>): Rendered {
           'Your password was changed',
           `<p>The password for your Nestled account was just changed, and every other signed-in session was signed out.</p>
            <p><b>If this wasn't you</b>, reset your password immediately and contact us.</p>`,
-          { label: 'Go to Nestled', url: env.APP_URL },
+          { label: 'Go to Nestled', url: settings().urls.app },
         ),
         text: `Your Nestled password was changed and all other sessions were signed out. If this wasn't you, reset your password immediately.`,
       };
@@ -133,9 +144,9 @@ function render(template: EmailTemplate, v: Record<string, string>): Rendered {
         html: layout(
           "You're live",
           `<p>We just saw the Nestled widget load on <b>${esc(v.host ?? '')}</b>. Visitors can start chatting with you now.</p>`,
-          { label: 'Open your inbox', url: v.url ?? env.APP_URL },
+          { label: 'Open your inbox', url: v.url ?? settings().urls.app },
         ),
-        text: `The Nestled widget is live on ${v.host}. Open your inbox: ${v.url ?? env.APP_URL}`,
+        text: `The Nestled widget is live on ${v.host}. Open your inbox: ${v.url ?? settings().urls.app}`,
       };
   }
 }
@@ -172,7 +183,7 @@ export async function sendEmail(args: SendArgs): Promise<void> {
   }
 
   try {
-    const info = await tx.sendMail({ from: env.MAIL_FROM, to: args.to, subject, text, html });
+    const info = await tx.sendMail({ from: settings().mail.from, to: args.to, subject, text, html });
     await unscopedPrisma.outbound_emails.update({
       where: { id: row.id },
       data: {

@@ -16,9 +16,9 @@ import { hashPassword } from '../../auth/password.js';
 import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
 import { sendEmail } from '../../services/email.js';
-import { env } from '../../env.js';
 import { WORKSPACE_ROLES } from '../../permissions.js';
 import { seatsInUse, syncSeats } from '../../services/billing/index.js';
+import { settings } from '../../services/platform/settings.js';
 
 /**
  * Team members and invitations.
@@ -287,7 +287,7 @@ export async function teamV1Routes(app: FastifyInstance): Promise<void> {
           inviterName: inviter.name,
           workspaceName: req.auth!.workspace!.slug,
           role: body.role,
-          url: `${env.APP_URL}/invite/${token}`,
+          url: `${settings().urls.app}/invite/${token}`,
         },
         workspaceId,
         relatedType: 'invite',
@@ -299,7 +299,7 @@ export async function teamV1Routes(app: FastifyInstance): Promise<void> {
       await audit(req, { action: 'invite.created', targetType: 'invite', targetId: invite.id, details: { email } });
       // The raw token is returned so the UI can offer a copyable link for Slack —
       // the common case where email is slower than the conversation already happening.
-      return reply.code(201).send({ invite, invite_url: `${env.APP_URL}/invite/${token}` });
+      return reply.code(201).send({ invite, invite_url: `${settings().urls.app}/invite/${token}` });
     },
   );
 

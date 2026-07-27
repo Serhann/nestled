@@ -46,46 +46,26 @@ services:
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
-      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
-      AI_MODEL: ${AI_MODEL:-claude-opus-4-8}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OLLAMA_URL: ${OLLAMA_URL:-}
-      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
-      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:support@nestled.chat}
-      # Point at the mounted GeoLite2 DB (see the volume below); blank = disabled.
-      GEOLITE2_DB_PATH: ${GEOLITE2_DB_PATH:-}
       UPLOAD_DIR: /data/uploads
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
-      SENTRY_DSN: ${SENTRY_DSN:-}
-      RETENTION_DAYS: ${RETENTION_DAYS:-0}
-      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
-      # Seeds the first admin on boot (no-op once any agent exists).
+      # Encrypts the secrets stored in platform_settings. Optional and worth
+      # setting: without it a leaked database backup hands over the live Stripe
+      # key, which is a different category of problem from leaked chat history.
+      #   openssl rand -base64 48
+      SETTINGS_KEY: ${SETTINGS_KEY:-}
+
+      # Everything else — AI keys, SMTP, Stripe, GeoIP, VAPID, the public URLs,
+      # retention — is configured from the ops panel and stored in the database.
+      # Those are settings, not deployment topology, and in the environment each
+      # change costs a container restart. The variables still work as a fallback
+      # for anyone who prefers config-as-code; they are simply not required.
+
+      # ── One-time bootstrap. Both no-op once their table has a row. ──
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
       SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin}
-      # Where the app and the marketing site live, for links in outbound email.
-      APP_URL: ${APP_URL:-http://localhost:5173/app}
-      MARKETING_URL: ${MARKETING_URL:-http://localhost:5173}
-      # Leave SMTP unset locally: mail is queued to outbound_emails and the body
-      # is logged, so a verification link is one `docker compose logs app` away
-      # and development never needs a mail server.
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      MAIL_FROM: ${MAIL_FROM:-Nestled <noreply@nestled.chat>}
-      # Unset, plans and limits still work — they are database facts. Only
-      # checkout and the billing portal are disabled.
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
-      STRIPE_RETURN_URL: ${STRIPE_RETURN_URL:-}
-      # First staff account for the ops panel. Read-only until TOTP is enrolled.
       SEED_PLATFORM_EMAIL: ${SEED_PLATFORM_EMAIL:-}
       SEED_PLATFORM_PASSWORD: ${SEED_PLATFORM_PASSWORD:-}
-      PLATFORM_SESSION_TTL_HOURS: ${PLATFORM_SESSION_TTL_HOURS:-12}
     volumes:
       # GeoLite2 DB (read-only): place at ./server/geoip/GeoLite2-City.mmdb and
       # set GEOLITE2_DB_PATH=/data/geoip/GeoLite2-City.mmdb.

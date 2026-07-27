@@ -5,6 +5,7 @@ import { platformWorkspaceRoutes } from './workspaces.js';
 import { platformPlanRoutes } from './plans.js';
 import { platformDunningRoutes } from './dunning.js';
 import { platformHealthRoutes } from './health.js';
+import { platformSettingsRoutes } from './settings.js';
 import { platformImpersonationRoutes } from './impersonation.js';
 
 /**
@@ -29,5 +30,6 @@ export async function platformRoutes(app: FastifyInstance): Promise<void> {
   await app.register(platformPlanRoutes);
   await app.register(platformDunningRoutes);
   await app.register(platformHealthRoutes);
+  await app.register(platformSettingsRoutes);
   await app.register(platformImpersonationRoutes);
 }

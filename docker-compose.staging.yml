@@ -85,49 +85,26 @@ services:
       # The widget origin belongs here too — leaving it out makes every widget
       # call fail in the browser with a CORS error that looks like an outage.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://app.staging.nestled.chat,https://ops.staging.nestled.chat,https://widget.staging.nestled.chat,https://staging.nestled.chat}
-      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
-      AI_MODEL: ${AI_MODEL:-claude-opus-4-8}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OLLAMA_URL: ${OLLAMA_URL:-}
-      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
-      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:support@nestled.chat}
-      GEOLITE2_DB_PATH: ${GEOLITE2_DB_PATH:-}
-      # MaxMind GeoIP web service (per-IP location lookup). When set, used instead
-      # of the local DB. Endpoint defaults to GeoIP2 Precision City (geoip.maxmind.com).
-      MAXMIND_ACCOUNT_ID: ${MAXMIND_ACCOUNT_ID:-}
-      MAXMIND_LICENSE_KEY: ${MAXMIND_LICENSE_KEY:-}
-      MAXMIND_ENDPOINT: ${MAXMIND_ENDPOINT:-https://geoip.maxmind.com/geoip/v2.1/city}
       UPLOAD_DIR: /data/uploads
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
-      SENTRY_DSN: ${SENTRY_DSN:-}
-      RETENTION_DAYS: ${RETENTION_DAYS:-30}
-      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
-      # First-admin bootstrap (no-op once any agent exists).
+      # Encrypts the secrets stored in platform_settings. Optional and worth
+      # setting: without it a leaked database backup hands over the live Stripe
+      # key, which is a different category of problem from leaked chat history.
+      #   openssl rand -base64 48
+      SETTINGS_KEY: ${SETTINGS_KEY:-}
+
+      # Everything else — AI keys, SMTP, Stripe, GeoIP, VAPID, the public URLs,
+      # retention — is configured from the ops panel and stored in the database.
+      # Those are settings, not deployment topology, and in the environment each
+      # change costs a container restart. The variables still work as a fallback
+      # for anyone who prefers config-as-code; they are simply not required.
+
+      # ── One-time bootstrap. Both no-op once their table has a row. ──
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
       SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-Admin}
-      # Public URLs. Wrong values send verification links to the wrong host.
-      APP_URL: ${APP_URL:-https://app.staging.nestled.chat}
-      MARKETING_URL: ${MARKETING_URL:-https://staging.nestled.chat}
-      # Transactional email. Without SMTP_HOST, mail is queued to outbound_emails
-      # and logged rather than sent — signup verification then needs the log.
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      MAIL_FROM: ${MAIL_FROM:-Nestled <noreply@nestled.chat>}
-      # Billing. Unset, plans and limits still apply; only checkout is disabled.
-      # Use Stripe TEST keys here, never live ones.
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
-      STRIPE_RETURN_URL: ${STRIPE_RETURN_URL:-}
-      # First platform (staff) user. Read-only until a TOTP factor is enrolled.
       SEED_PLATFORM_EMAIL: ${SEED_PLATFORM_EMAIL:-}
       SEED_PLATFORM_PASSWORD: ${SEED_PLATFORM_PASSWORD:-}
-      PLATFORM_SESSION_TTL_HOURS: ${PLATFORM_SESSION_TTL_HOURS:-12}
     volumes:
       - nestled_uploads_staging:/data/uploads
       # Optional GeoLite2 DB (read-only); set GEOLITE2_DB_PATH to enable.

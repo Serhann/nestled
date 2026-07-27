@@ -19,6 +19,7 @@ const NAV = [
   { to: '/ops/plans', label: 'Plans' },
   { to: '/ops/impersonations', label: 'Impersonations' },
   { to: '/ops/health', label: 'Health' },
+  { to: '/ops/settings', label: 'Settings' },
   { to: '/ops/account', label: 'Account' },
 ];
 

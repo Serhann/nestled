@@ -41,9 +41,9 @@ datasource db {
 
 /// A customer company. The root of every tenant-scoped row.
 model workspaces {
-  id   String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name String
-  slug String @unique // app.nestled.chat/w/<slug>
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name     String
+  slug     String @unique // app.nestled.chat/w/<slug>
   timezone String @default("UTC") // IANA; default for new websites
 
   /// Billing mirrors. Denormalized here so a plan-limit check touches a row the
@@ -54,45 +54,45 @@ model workspaces {
   trial_ends_at       DateTime? @db.Timestamptz(6)
   stripe_customer_id  String?   @unique
   /// During grace the widget keeps serving — never break a prospect's live site.
-  grace_until  DateTime? @db.Timestamptz(6)
+  grace_until         DateTime? @db.Timestamptz(6)
   /// Set on cancel; the purge job reads it. Webhooks never delete data.
-  purge_after  DateTime? @db.Timestamptz(6)
-  deleted_at   DateTime? @db.Timestamptz(6)
-  created_at   DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at   DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  purge_after         DateTime? @db.Timestamptz(6)
+  deleted_at          DateTime? @db.Timestamptz(6)
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 
   plan plans @relation(fields: [plan_id], references: [id])
 
-  websites                   websites[]
-  members                    workspace_members[]
-  invites                    invites[]
-  private_settings           workspace_private_settings?
-  website_settings           website_settings[]
-  website_business_hours     website_business_hours[]
-  website_domains            website_domains[]
-  conversations              conversations[]
-  messages                   messages[]
-  attachments                attachments[]
-  conversation_notes         conversation_notes[]
-  stored_files               stored_files[]
-  knowledge_base             knowledge_base[]
-  canned_responses           canned_responses[]
-  starters                   starters[]
-  triggers                   triggers[]
-  bot_flows                  bot_flows[]
-  bot_flow_runs              bot_flow_runs[]
-  routing_rules              routing_rules[]
-  persons                    persons[]
-  visitor_links              visitor_links[]
-  person_signals             person_signals[]
-  visitor_ips                visitor_ips[]
-  ai_usage                   ai_usage[]
-  usage_counters             usage_counters[]
-  audit_log                  audit_log[]
-  outbound_emails            outbound_emails[]
-  subscription               subscriptions?
-  invoices                   invoices[]
-  impersonation_sessions     impersonation_sessions[]
+  websites               websites[]
+  members                workspace_members[]
+  invites                invites[]
+  private_settings       workspace_private_settings?
+  website_settings       website_settings[]
+  website_business_hours website_business_hours[]
+  website_domains        website_domains[]
+  conversations          conversations[]
+  messages               messages[]
+  attachments            attachments[]
+  conversation_notes     conversation_notes[]
+  stored_files           stored_files[]
+  knowledge_base         knowledge_base[]
+  canned_responses       canned_responses[]
+  starters               starters[]
+  triggers               triggers[]
+  bot_flows              bot_flows[]
+  bot_flow_runs          bot_flow_runs[]
+  routing_rules          routing_rules[]
+  persons                persons[]
+  visitor_links          visitor_links[]
+  person_signals         person_signals[]
+  visitor_ips            visitor_ips[]
+  ai_usage               ai_usage[]
+  usage_counters         usage_counters[]
+  audit_log              audit_log[]
+  outbound_emails        outbound_emails[]
+  subscription           subscriptions?
+  invoices               invoices[]
+  impersonation_sessions impersonation_sessions[]
 
   @@index([subscription_status])
   @@index([deleted_at])
@@ -119,9 +119,9 @@ model users {
   refresh_tokens refresh_tokens[]
   tokens         user_tokens[]
   push           push_subscriptions[]
-  sent_invites   invites[]           @relation("invite_author")
+  sent_invites   invites[]            @relation("invite_author")
   notes          conversation_notes[]
-  avatar_file    stored_files?       @relation("user_avatar", fields: [avatar_file_id], references: [id], onDelete: SetNull)
+  avatar_file    stored_files?        @relation("user_avatar", fields: [avatar_file_id], references: [id], onDelete: SetNull)
 
   @@index([deleted_at])
 }
@@ -253,8 +253,8 @@ model push_subscriptions {
 /// One place a customer embeds the widget. The second level of tenancy: a real
 /// FK'd owner of rows, unlike the old `sites` table which owned nothing.
 model websites {
-  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspace_id String @db.Uuid
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String    @db.Uuid
   /// "nst_" + 24 base62, SERVER-generated. Unguessable on purpose: a readable
   /// tenant selector would let any visitor enumerate other customers' widget
   /// config, copy, starters and domain lists.
@@ -275,19 +275,19 @@ model websites {
 
   workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
 
-  settings      website_settings?
-  hours         website_business_hours?
-  domains       website_domains[]
-  conversations conversations[]
-  member_access member_website_access[]
-  knowledge_base knowledge_base[]
+  settings         website_settings?
+  hours            website_business_hours?
+  domains          website_domains[]
+  conversations    conversations[]
+  member_access    member_website_access[]
+  knowledge_base   knowledge_base[]
   canned_responses canned_responses[]
-  starters      starters[]
-  triggers      triggers[]
-  bot_flows     bot_flows[]
-  routing_rules routing_rules[]
-  visitor_links visitor_links[]
-  ai_usage      ai_usage[]
+  starters         starters[]
+  triggers         triggers[]
+  bot_flows        bot_flows[]
+  routing_rules    routing_rules[]
+  visitor_links    visitor_links[]
+  ai_usage         ai_usage[]
 
   /// The keystone: every website-scoped child FKs on (workspace_id, id), so
   /// Postgres rejects a child pointing at another tenant's website.
@@ -339,7 +339,7 @@ model website_settings {
 
   /// Conversation starters and rating chips: ordered, customer-authored, and
   /// validated by a zod schema that rejects unknown keys.
-  starters_enabled Boolean @default(true)
+  starters_enabled Boolean  @default(true)
   rating_tags      String[] @default([])
 
   /// Visitor-facing copy OVERRIDES only, merged over DEFAULT_COPY in code. Storing
@@ -356,18 +356,18 @@ model website_settings {
 }
 
 model website_business_hours {
-  website_id   String  @id @db.Uuid
-  workspace_id String  @db.Uuid
-  enabled      Boolean @default(false)
-  timezone     String  @default("UTC") // IANA
+  website_id          String   @id @db.Uuid
+  workspace_id        String   @db.Uuid
+  enabled             Boolean  @default(false)
+  timezone            String   @default("UTC") // IANA
   /// [{ dow: 1, intervals: [["09:00","17:00"]] }, …]
-  rules        Json    @default(dbgenerated("'[]'::jsonb"))
+  rules               Json     @default(dbgenerated("'[]'::jsonb"))
   /// [{ date: "2026-01-01", label: "New Year" }, …]
-  holidays     Json    @default(dbgenerated("'[]'::jsonb"))
+  holidays            Json     @default(dbgenerated("'[]'::jsonb"))
   /// CHECK (collect_email|message_only|hide_widget|bot_flow)
-  offline_behavior String  @default("collect_email")
-  offline_bot_flow_id String? @db.Uuid
-  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  offline_behavior    String   @default("collect_email")
+  offline_bot_flow_id String?  @db.Uuid
+  updated_at          DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   website   websites   @relation(fields: [website_id], references: [id], onDelete: Cascade)
   workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
@@ -423,24 +423,24 @@ model conversations {
   workspace_id String @db.Uuid
   website_id   String @db.Uuid
 
-  visitor_id    String
-  person_id     String? @db.Uuid
-  visitor_name  String?
-  visitor_email String?
+  visitor_id         String
+  person_id          String?   @db.Uuid
+  visitor_name       String?
+  visitor_email      String?
   /// The visitor's bearer token for this conversation, hashed. Unique because it
   /// is also the WS handshake lookup key.
-  visitor_token_hash String  @unique
+  visitor_token_hash String    @unique
   /// Single-use, 60s token for proactive handover. The proactive frame carries
   /// THIS, never the visitor token — so a leaked frame is worthless on its own.
   claim_token_hash   String?
   claim_expires_at   DateTime? @db.Timestamptz(6)
 
-  status             String  @default("open") // CHECK (open|pending|resolved)
-  source             String  @default("widget") // CHECK (widget|proactive|bot)
-  assigned_member_id String? @db.Uuid
-  needs_human        Boolean @default(false)
-  message_count      Int     @default(0)
-  ai_greeted         Boolean @default(false)
+  status             String   @default("open") // CHECK (open|pending|resolved)
+  source             String   @default("widget") // CHECK (widget|proactive|bot)
+  assigned_member_id String?  @db.Uuid
+  needs_human        Boolean  @default(false)
+  message_count      Int      @default(0)
+  ai_greeted         Boolean  @default(false)
   tags               String[] @default([])
 
   first_response_at DateTime? @db.Timestamptz(6)
@@ -468,11 +468,11 @@ model conversations {
   assignee  workspace_members? @relation(fields: [assigned_member_id], references: [id], onDelete: SetNull)
   person    persons?           @relation(fields: [person_id], references: [id], onDelete: SetNull)
 
-  messages      messages[]
-  attachments   attachments[]
-  notes         conversation_notes[]
-  bot_runs      bot_flow_runs[]
-  ai_usage      ai_usage[]
+  messages    messages[]
+  attachments attachments[]
+  notes       conversation_notes[]
+  bot_runs    bot_flow_runs[]
+  ai_usage    ai_usage[]
 
   /// FK target for messages/attachments/notes/bot_runs.
   @@unique([workspace_id, id])
@@ -484,14 +484,14 @@ model conversations {
 }
 
 model messages {
-  id              String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspace_id    String @db.Uuid
-  conversation_id String @db.Uuid
-  content         String
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id     String   @db.Uuid
+  conversation_id  String   @db.Uuid
+  content          String
   /// CHECK (visitor|agent|ai|bot|system)
   sender_type      String
-  sender_member_id String? @db.Uuid
-  metadata         Json    @default(dbgenerated("'{}'::jsonb"))
+  sender_member_id String?  @db.Uuid
+  metadata         Json     @default(dbgenerated("'{}'::jsonb"))
   created_at       DateTime @default(now()) @db.Timestamptz(6)
 
   workspace    workspaces         @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
@@ -506,11 +506,11 @@ model messages {
 }
 
 model attachments {
-  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspace_id    String  @db.Uuid
-  conversation_id String  @db.Uuid
-  message_id      String? @db.Uuid
-  file_id         String  @db.Uuid
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id    String   @db.Uuid
+  conversation_id String   @db.Uuid
+  message_id      String?  @db.Uuid
+  file_id         String   @db.Uuid
   filename        String
   mime            String
   size_bytes      Int
@@ -676,19 +676,19 @@ model triggers {
 /// and server execution is also what makes them work unchanged if an email or
 /// Slack channel is added later.
 model bot_flows {
-  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspace_id String  @db.Uuid
-  website_id   String? @db.Uuid
-  name         String
-  is_active    Boolean @default(false)
-  priority     Int     @default(0)
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id      String   @db.Uuid
+  website_id        String?  @db.Uuid
+  name              String
+  is_active         Boolean  @default(false)
+  priority          Int      @default(0)
   /// When this flow starts (page match, starter id, out-of-hours, …).
-  entry        Json    @default(dbgenerated("'{}'::jsonb"))
+  entry             Json     @default(dbgenerated("'{}'::jsonb"))
   /// The builder's working copy; publishing snapshots it into a version row.
-  draft_graph  Json    @default(dbgenerated("'{}'::jsonb"))
+  draft_graph       Json     @default(dbgenerated("'{}'::jsonb"))
   published_version Int?
-  created_at   DateTime @default(now()) @db.Timestamptz(6)
-  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
   website   websites?  @relation(fields: [website_id], references: [id], onDelete: Cascade)
@@ -743,20 +743,20 @@ model bot_flow_runs {
 /// here would be strictly worse than a list of when/then rows. No `teams` table in
 /// v1: `member_pool` covers the actual requirement without a second grouping idea.
 model routing_rules {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspace_id String   @db.Uuid
-  website_id   String?  @db.Uuid
-  name         String
-  priority     Int      @default(0)
-  is_active    Boolean  @default(true)
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id     String   @db.Uuid
+  website_id       String?  @db.Uuid
+  name             String
+  priority         Int      @default(0)
+  is_active        Boolean  @default(true)
   /// page / country / attributes / hours
-  conditions   Json     @default(dbgenerated("'{}'::jsonb"))
+  conditions       Json     @default(dbgenerated("'{}'::jsonb"))
   /// CHECK (round_robin|least_active|specific)
-  strategy     String   @default("round_robin")
-  member_pool  String[] @default([]) @db.Uuid
-  cursor_member_id String? @db.Uuid
-  created_at   DateTime @default(now()) @db.Timestamptz(6)
-  updated_at   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  strategy         String   @default("round_robin")
+  member_pool      String[] @default([]) @db.Uuid
+  cursor_member_id String?  @db.Uuid
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
   website   websites?  @relation(fields: [website_id], references: [id], onDelete: Cascade)
@@ -850,11 +850,11 @@ model visitor_ips {
 /// a `features` JSONB escape hatch, so sales can grant one customer an exception
 /// from the ops panel without a deploy.
 model plans {
-  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code      String  @unique // free|starter|pro|business
-  name      String
-  is_public Boolean @default(true)
-  sort_order Int    @default(0)
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code             String  @unique // free|starter|pro|business
+  name             String
+  is_public        Boolean @default(true)
+  sort_order       Int     @default(0)
   /// The plan a new workspace TRIALS on. Exactly one row should have this set.
   /// Trials deliberately start on a capable tier, not on `free`: a 14-day trial
   /// that cannot invite a teammate or add a second website isn't an evaluation of
@@ -865,9 +865,9 @@ model plans {
   stripe_product_id       String?
   stripe_price_monthly_id String?
   stripe_price_yearly_id  String?
-  price_monthly_cents     Int @default(0)
-  price_yearly_cents      Int @default(0)
-  included_seats          Int @default(1)
+  price_monthly_cents     Int     @default(0)
+  price_yearly_cents      Int     @default(0)
+  included_seats          Int     @default(1)
 
   max_seats               Int @default(1)
   max_websites            Int @default(1)
@@ -1016,6 +1016,7 @@ model platform_users {
 
   sessions       platform_sessions[]
   impersonations impersonation_sessions[]
+  settings_edits platform_settings[]
 }
 
 model platform_sessions {
@@ -1064,20 +1065,20 @@ model impersonation_sessions {
 /// workspace lands in THAT workspace's log, visible to the customer — which is
 /// the other half of what makes impersonation defensible.
 model audit_log {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspace_id String?  @db.Uuid
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id             String?  @db.Uuid
   /// CHECK (user|platform_user|system|visitor)
-  actor_type   String
-  actor_id     String?  @db.Uuid
-  actor_email  String?
-  action       String
-  target_type  String?
-  target_id    String?
-  details      Json     @default(dbgenerated("'{}'::jsonb"))
-  ip_address   String?
-  request_id   String?
-  impersonation_session_id String? @db.Uuid
-  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  actor_type               String
+  actor_id                 String?  @db.Uuid
+  actor_email              String?
+  action                   String
+  target_type              String?
+  target_id                String?
+  details                  Json     @default(dbgenerated("'{}'::jsonb"))
+  ip_address               String?
+  request_id               String?
+  impersonation_session_id String?  @db.Uuid
+  created_at               DateTime @default(now()) @db.Timestamptz(6)
 
   workspace     workspaces?             @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
   impersonation impersonation_sessions? @relation(fields: [impersonation_session_id], references: [id], onDelete: SetNull)
@@ -1108,4 +1109,69 @@ model outbound_emails {
 
   @@index([status, created_at])
   @@index([workspace_id, created_at(sort: Desc)])
+}
+
+/// Install-wide configuration, editable from the ops panel.
+///
+/// This exists so that running Nestled does not mean maintaining thirty
+/// environment variables. An API key, an SMTP host or a MaxMind licence is a
+/// SETTING — something an operator changes on a Tuesday afternoon — not part of
+/// the deployment topology, and putting it in the environment means a container
+/// restart (and usually a redeploy) to change it.
+///
+/// A singleton, enforced by a CHECK rather than by convention. Values here take
+/// precedence over the matching environment variable, which remains supported as
+/// a fallback so an existing deployment keeps working and config-as-code stays
+/// possible.
+///
+/// Secrets are encrypted at rest when SETTINGS_KEY is set (AES-256-GCM), and are
+/// never returned by the API — only whether they are present, and a masked hint.
+model platform_settings {
+  id Int @id @default(1)
+
+  // ── AI. Ours, not the customer's: usage is metered per workspace. ──
+  ai_provider       String? // knowledge_base|anthropic|openai|ollama
+  ai_model          String?
+  anthropic_api_key String?
+  openai_api_key    String?
+  ollama_url        String?
+
+  // ── Transactional email ──
+  smtp_host     String?
+  smtp_port     Int?
+  smtp_secure   Boolean?
+  smtp_user     String?
+  smtp_password String?
+  mail_from     String?
+
+  // ── Web Push (VAPID) ──
+  vapid_public_key  String?
+  vapid_private_key String?
+  vapid_subject     String?
+
+  // ── IP geolocation ──
+  geolite2_db_path    String?
+  maxmind_account_id  String?
+  maxmind_license_key String?
+  maxmind_endpoint    String?
+
+  // ── Billing ──
+  stripe_secret_key     String?
+  stripe_webhook_secret String?
+  stripe_return_url     String?
+
+  // ── Public URLs, used to build links in outbound email ──
+  app_url       String?
+  marketing_url String?
+
+  // ── Operations ──
+  discord_webhook_url        String?
+  sentry_dsn                 String?
+  retention_days             Int?
+  platform_session_ttl_hours Int?
+
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  updated_by String?  @db.Uuid
+
+  editor platform_users? @relation(fields: [updated_by], references: [id], onDelete: SetNull)
 }

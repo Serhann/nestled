@@ -25,8 +25,15 @@ import { pushV1Routes } from './routes/v1/push.js';
 import { automationV1Routes } from './routes/v1/automation.js';
 import { billingV1Routes } from './routes/v1/billing.js';
 import { platformRoutes } from './routes/platform/index.js';
+import { loadSettings, settings, startSettingsRefresh } from './services/platform/settings.js';
 
 export async function buildServer() {
+  // Install-wide settings (AI keys, SMTP, Stripe, GeoIP) live in the database and
+  // are edited from the ops panel. They are loaded into a synchronous snapshot
+  // BEFORE any route or plugin reads one, because half the consumers are sync
+  // functions and making them async would ripple through the whole codebase.
+  await loadSettings();
+
   const app = Fastify({
     // Trust the reverse proxy so req.ip / X-Forwarded-For are correct behind nginx.
     trustProxy: true,
@@ -80,7 +87,7 @@ export async function buildServer() {
   // leak internals to the client. SENTRY_DSN is a forwarding hook point.
   app.setErrorHandler((err, req, reply) => {
     req.log.error({ err, url: req.url, method: req.method }, 'request error');
-    if (env.SENTRY_DSN) {
+    if (settings().ops.sentryDsn) {
       // Placeholder: forward to a Sentry-compatible sink when configured.
     }
     const status = (err as { statusCode?: number }).statusCode ?? 500;
@@ -153,6 +160,9 @@ async function main() {
 
   // Recurring sweeps: retention, and (Phase 12) trial/dunning/purge. See lib/jobs.ts.
   startBackgroundJobs();
+  // A safety net, not the mechanism: a write from the ops panel refreshes the
+  // snapshot immediately. This catches a value changed straight in the database.
+  startSettingsRefresh();
 }
 
 // Boot everywhere except the test runner (tests import buildServer directly).

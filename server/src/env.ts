@@ -2,9 +2,26 @@ import 'dotenv/config';
 import { z } from 'zod';
 
 /**
- * Central, validated environment. The process refuses to boot if a required
- * secret is missing — this is deliberate: no silent fallback to insecure
- * defaults for anything security-relevant (JWT secrets, DB URL).
+ * The environment.
+ *
+ * Deliberately short. Everything here is either a secret the process needs before
+ * it can read a database, or a fact about WHERE this container runs — the kind of
+ * thing that changes when you move hosts, not on a Tuesday afternoon.
+ *
+ * Everything else — AI keys, SMTP, Stripe, GeoIP, VAPID, the public URLs,
+ * retention — lives in the `platform_settings` table and is edited from the ops
+ * panel. Those are settings, and a setting in the environment means a container
+ * restart to change, usually a redeploy, and a config file that grows until
+ * nobody knows which half of it is still wired to anything.
+ *
+ * The old variables still WORK: services/platform/settings.ts takes a value from
+ * the database first and falls back to the matching environment variable. An
+ * existing deployment keeps running untouched and config-as-code stays possible
+ * for anyone who prefers it. They are simply no longer required, and no longer
+ * listed in the compose files.
+ *
+ * The process refuses to boot if a required secret is missing. That is
+ * deliberate: no silent fallback to an insecure default.
  */
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -13,111 +30,67 @@ const schema = z.object({
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
-  // Auth secrets — must be long random strings in production.
+  // Auth secrets. These cannot live in the database: they are what proves a
+  // request is allowed to reach the database in the first place.
   JWT_ACCESS_SECRET: z.string().min(16, 'JWT_ACCESS_SECRET must be >=16 chars'),
   JWT_REFRESH_SECRET: z.string().min(16, 'JWT_REFRESH_SECRET must be >=16 chars'),
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
-  // Comma-separated list of allowed browser origins for CORS. This governs the
-  // PRIVATE app surface only (app/ops). The public widget surface is embedded on
-  // arbitrary customer domains, so where the widget may run is enforced by a
-  // per-website domain allowlist, never by this list.
+  /**
+   * Encrypts the secrets stored in `platform_settings` (AES-256-GCM).
+   *
+   * Optional, and worth setting. Without it those values sit in the database in
+   * plain text — and while the database already holds conversation history, a
+   * leaked backup containing a live Stripe secret key is a different category of
+   * problem, because that key moves money. Any string; it is hashed to 32 bytes.
+   *
+   * Changing it makes existing stored secrets unreadable. They are reported as
+   * absent — loudly, in the log — rather than as garbage, and can be re-entered.
+   */
+  SETTINGS_KEY: z.string().optional(),
+
+  /**
+   * Which browser origins may call the API.
+   *
+   * Deployment topology rather than a setting: it is handed to the CORS plugin at
+   * boot and describes where THIS install is served from.
+   *
+   * The private surfaces only — app, ops, widget, marketing. Customer domains do
+   * NOT belong here; where a widget may run is per-website, in
+   * `websites.allowed_domains`. Omitting the widget origin makes every widget
+   * call fail in the browser with a CORS error that looks like an outage.
+   */
   ALLOWED_ORIGINS: z
     .string()
     .default(
-      // The widget origin belongs here too. The widget document is served from
-      // widget.nestled.chat and calls /api from there, so leaving it out makes
-      // every boot and message fail in the browser with a CORS error that looks
-      // like the API is down. Customer domains do NOT belong here — where a
-      // widget may run is per-website, in websites.allowed_domains.
       'https://app.nestled.chat,https://ops.nestled.chat,https://widget.nestled.chat,https://nestled.chat,http://localhost:5173',
     ),
 
-  // AI (Phase 7 expands this; adapters read these at call time).
-  AI_PROVIDER: z.enum(['knowledge_base', 'anthropic', 'openai', 'ollama']).default('anthropic'),
-  AI_MODEL: z.string().default('claude-opus-4-8'),
-  ANTHROPIC_API_KEY: z.string().optional(),
-  OPENAI_API_KEY: z.string().optional(),
-  OLLAMA_URL: z.string().optional(),
-
-  // Public URLs, used to build links in outbound email. Getting these wrong sends
-  // customers verification links to the wrong host, so they are explicit.
-  APP_URL: z.string().default('http://localhost:5173/app'),
-  MARKETING_URL: z.string().default('http://localhost:5173'),
-
-  // ── Transactional email (SMTP) ───────────────────────────────────────────────
-  // When SMTP_HOST is unset, mail is queued to outbound_emails and logged instead
-  // of sent, so local development never needs a mail server and never silently
-  // drops a message.
-  SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.coerce.number().int().positive().default(587),
-  SMTP_SECURE: z.enum(['true', 'false']).default('false'),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASSWORD: z.string().optional(),
-  MAIL_FROM: z.string().default('Nestled <noreply@nestled.chat>'),
-
-  // Optional secondary notification channel.
-  DISCORD_WEBHOOK_URL: z.string().optional(),
-
-  // Web Push (VAPID). Generate with `npm run vapid`. When unset, push is
-  // disabled gracefully (subscriptions still store; no sends attempted).
-  VAPID_PUBLIC_KEY: z.string().optional(),
-  VAPID_PRIVATE_KEY: z.string().optional(),
-  // Contact URI required by the push spec; a mailto: or https: URL.
-  VAPID_SUBJECT: z.string().default('mailto:support@nestled.chat'),
-
-  // Path to a local MaxMind GeoLite2 .mmdb (Country or City). When unset or
-  // missing, geo lookups fall back to the MaxMind web service (below) or, if
-  // that's also unset, return null gracefully (no external API is ever hit).
-  GEOLITE2_DB_PATH: z.string().optional(),
-
-  // MaxMind GeoIP web service (per-IP REST lookup). When the account id + key
-  // are set, IP geo is fetched from MaxMind instead of the local DB. This is the
-  // BASE endpoint (the IP is appended by the app). Default is GeoIP2 Precision
-  // City; for the free GeoLite2 service use https://geolite.info/geoip/v2.1/city.
-  MAXMIND_ACCOUNT_ID: z.string().optional(),
-  MAXMIND_LICENSE_KEY: z.string().optional(),
-  MAXMIND_ENDPOINT: z.string().default('https://geoip.maxmind.com/geoip/v2.1/city'),
-
-  // Where uploaded attachments are stored on disk, and the per-file size cap.
+  // Where uploads land on this machine, and the per-file cap the multipart plugin
+  // is configured with at boot.
   UPLOAD_DIR: z.string().default('./uploads'),
   MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
 
-  // ── Stripe billing ───────────────────────────────────────────────────────────
-  // When STRIPE_SECRET_KEY is unset, billing runs in "unconfigured" mode: plans
-  // and limits still apply (they are database facts), but checkout returns 503
-  // rather than pretending. Self-hosters therefore get a working product without
-  // a Stripe account.
-  STRIPE_SECRET_KEY: z.string().optional(),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  // Where Checkout returns the customer. Falls back to APP_URL.
-  STRIPE_RETURN_URL: z.string().optional(),
-
-  // Run `prisma migrate deploy` during boot.
-  //
-  // Convenient for a single container, and a footgun the moment there are two:
-  // both replicas race the same migration, and a slow one delays every restart
-  // behind it. The compose stack therefore turns this OFF and runs migrations as
-  // a one-shot release step the app waits on. It defaults to true so a bare
-  // `docker run` of the image still comes up with a usable database.
+  /**
+   * Run `prisma migrate deploy` during boot.
+   *
+   * Convenient for a single container, and a footgun the moment there are two:
+   * both replicas race the same migration, and a slow one delays every restart
+   * behind it. The compose stack turns this off and runs migrations as a one-shot
+   * release step the app waits on. Defaults to true so a bare `docker run` of the
+   * image still comes up with a usable database.
+   */
   MIGRATE_ON_BOOT: z.enum(['true', 'false']).default('true'),
 
-  // ── Platform (ops) surface ───────────────────────────────────────────────────
-  // Staff sessions are opaque tokens verified against platform_sessions on every
-  // request, so there is no platform JWT secret by design.
-  PLATFORM_SESSION_TTL_HOURS: z.coerce.number().int().positive().default(12),
-  // Bootstraps the first platform user on an empty platform_users table.
+  // ── One-time bootstrap ──────────────────────────────────────────────────────
+  // Both no-op once their table has a row. Everyone else signs up or is invited.
+  SEED_ADMIN_EMAIL: z.string().optional(),
+  SEED_ADMIN_PASSWORD: z.string().optional(),
+  SEED_ADMIN_NAME: z.string().default('Admin'),
+  /** The first STAFF account, for the ops panel. Read-only until TOTP is enrolled. */
   SEED_PLATFORM_EMAIL: z.string().optional(),
   SEED_PLATFORM_PASSWORD: z.string().optional(),
-
-  // Optional error sink (Sentry-compatible DSN). When set, the error handler
-  // has a forwarding hook point.
-  SENTRY_DSN: z.string().optional(),
-
-  // Data retention: delete resolved conversations (and their attachments)
-  // older than this many days. 0 disables retention entirely.
-  RETENTION_DAYS: z.coerce.number().int().min(0).default(0),
 });
 
 const parsed = schema.safeParse(process.env);

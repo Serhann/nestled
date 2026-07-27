@@ -1,11 +1,11 @@
 import webpush from 'web-push';
-import { env } from '../env.js';
 // Push routing resolves the members of a workspace and their devices, which belong
 // to users rather than to any one workspace.
 // eslint-disable-next-line no-restricted-imports -- routes across members and their devices
 import { unscopedPrisma } from '../db/unscoped.js';
 import { membersViewing } from '../realtime/hub.js';
 import { recordPushFailure } from './platform/metrics.js';
+import { settings } from './platform/settings.js';
 
 /**
  * Web Push to a workspace's agents.
@@ -17,18 +17,26 @@ import { recordPushFailure } from './platform/metrics.js';
  *    replaced phone stops costing a failed send on every message forever.
  */
 
-let configured = false;
+/**
+ * The keys can now be changed from the ops panel, so the configured pair is
+ * remembered rather than a boolean: rotating VAPID keys must take effect without
+ * a restart, and `configured = true` would have pinned the old pair forever.
+ */
+let configuredWith: string | null = null;
 
 function ensureConfigured(): boolean {
-  if (configured) return true;
-  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return false;
-  webpush.setVapidDetails(env.VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
-  configured = true;
+  const { publicKey, privateKey, subject } = settings().push;
+  if (!publicKey || !privateKey) return false;
+  if (configuredWith !== publicKey) {
+    webpush.setVapidDetails(subject, publicKey, privateKey);
+    configuredWith = publicKey;
+  }
   return true;
 }
 
 export function isPushEnabled(): boolean {
-  return Boolean(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY);
+  const { publicKey, privateKey } = settings().push;
+  return Boolean(publicKey && privateKey);
 }
 
 export interface PushPayload {

@@ -18,8 +18,8 @@ import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
 import { uniqueSlug, slugIsAvailable } from '../../lib/slug.js';
 import { sendEmail } from '../../services/email.js';
-import { env } from '../../env.js';
 import { randomUUID } from 'node:crypto';
+import { settings } from '../../services/platform/settings.js';
 
 /**
  * Authentication and account lifecycle.
@@ -90,7 +90,7 @@ async function queueVerificationEmail(userId: string, name: string, email: strin
   await sendEmail({
     to: email,
     template: 'verify_email',
-    vars: { name, url: `${env.APP_URL}/verify?token=${token}` },
+    vars: { name, url: `${settings().urls.app}/verify?token=${token}` },
     relatedType: 'user',
     relatedId: userId,
   });
@@ -352,7 +352,7 @@ export async function authV1Routes(app: FastifyInstance): Promise<void> {
         void sendEmail({
           to: user.email,
           template: 'password_reset',
-          vars: { name: user.name, url: `${env.APP_URL}/reset?token=${token}` },
+          vars: { name: user.name, url: `${settings().urls.app}/reset?token=${token}` },
           relatedType: 'user',
           relatedId: user.id,
         });
