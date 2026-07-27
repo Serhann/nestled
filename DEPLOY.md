@@ -59,6 +59,23 @@ matters with more than one replica.
 
 ---
 
+## Before you launch: the comparison page
+
+`/compare` is live and its Nestled column is accurate, but **the competitor
+columns are deliberately blank.** They render as dashes with a visible "not
+checked yet" label and a banner telling the reader so.
+
+Fill them in yourself, from each competitor's own current pricing page, and set
+`verifiedOn` in `src/site/comparison.ts` to the date you did it — the page shows
+that date, so it is a claim of diligence and needs to be true.
+
+They were left empty on purpose. A guess about somebody else's product is stale
+before it deploys, one wrong cell makes a reader doubt the other twenty, and a
+false statement of fact about a named competitor's product is a legal matter
+rather than a marketing quibble in most places you will sell.
+
+---
+
 ## 1. Environment
 
 Fourteen variables, and only three you must think about. Everything else — the

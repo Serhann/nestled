@@ -16,6 +16,7 @@ const APP = ORIGINS.app;
 export function Shell({ current, children }: { current: string; children: ReactNode }) {
   const links = [
     { href: '/features', label: 'What it does' },
+    { href: '/compare', label: 'Compare' },
     { href: '/pricing', label: 'Pricing' },
   ];
 
@@ -76,6 +77,7 @@ export function Shell({ current, children }: { current: string; children: ReactN
             title="Product"
             links={[
               ['What it does', '/features'],
+              ['Compare', '/compare'],
               ['Pricing', '/pricing'],
               ['Sign in', `${APP}/login`],
             ]}

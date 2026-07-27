@@ -3,6 +3,7 @@ import { Shell } from './Shell';
 import { Home } from './Home';
 import { Features } from './Features';
 import { Pricing } from './Pricing';
+import { Compare } from './Compare';
 
 /**
  * The marketing site's page registry.
@@ -38,6 +39,13 @@ export const PAGES: PageMeta[] = [
       'A shared inbox, a live list of who is on your site, an assistant that answers from your own words and hands over rather than guessing, and a chat that matches your brand.',
   },
   {
+    path: '/compare',
+    file: 'compare.html',
+    title: 'Nestled vs Crisp, Intercom and Tidio',
+    description:
+      'How Nestled compares: per-seat pricing rather than per contact, a chat that keeps serving when you go over your plan, an assistant that refuses rather than guesses, and the option to self-host. Including when one of the others is the better choice.',
+  },
+  {
     path: '/pricing',
     file: 'pricing.html',
     title: 'Pricing — Nestled',
@@ -64,6 +72,12 @@ export function renderPage(path: string): ReactNode {
       return (
         <Shell current="/pricing">
           <Pricing />
+        </Shell>
+      );
+    case '/compare':
+      return (
+        <Shell current="/compare">
+          <Compare />
         </Shell>
       );
     case '/features':
