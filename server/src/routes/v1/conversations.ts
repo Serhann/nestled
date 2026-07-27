@@ -6,7 +6,7 @@ import { insertMessage } from '../../lib/messages.js';
 import { publishToWorkspace, sendToConversationVisitors } from '../../realtime/hub.js';
 import { publishAssignment } from '../../services/routing.js';
 import { getPersonProfile } from '../../services/identity.js';
-import { translateText } from '../../services/ai/index.js';
+import { translateText } from '../../services/translate/index.js';
 import { planById } from '../../services/billing/plans.js';
 import { bumpUsage, checkUsageLimit } from '../../lib/usage.js';
 import { notifyNewMessage } from '../../services/discord.js';
@@ -390,7 +390,15 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
     { preHandler: [requireWorkspace, can('conversation:reply')] },
     async (req, reply) => {
       const body = parseBody(
-        z.object({ text: z.string().min(1).max(4000), to: z.string().min(2).max(40) }),
+        z.object({
+          text: z.string().min(1).max(4000),
+          // A language CODE, not a display name. Both engines need a code and only
+          // one of them would have tolerated "Brazilian Portuguese"; pinning the
+          // wire format here is what stops that difference reaching either adapter.
+          to: z
+            .string()
+            .regex(/^[a-z]{2,3}$/, 'Expected a language code such as "tr" or "en"'),
+        }),
         req.body,
         reply,
       );

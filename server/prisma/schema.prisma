@@ -1136,6 +1136,11 @@ model platform_settings {
   openai_api_key    String?
   ollama_url        String?
 
+  /// NULL means "translate with the configured LLM". See migration 0004 for why a
+  /// dedicated engine is the better default.
+  translate_provider String? // llm|deepl
+  deepl_api_key      String?
+
   // ── Transactional email ──
   smtp_host     String?
   smtp_port     Int?

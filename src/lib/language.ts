@@ -11,6 +11,25 @@
 
 /** The language an agent reads. English-only product, so this is the constant. */
 export const AGENT_LANGUAGE = 'English';
+/** The same thing on the wire. The API takes codes, never display names. */
+export const AGENT_LANGUAGE_CODE = 'en';
+
+/**
+ * The bare language subtag of a tag: `tr-TR` → `tr`, `en-US` → `en`.
+ *
+ * This is what goes to the server. Display names are for buttons only — they are
+ * localisation output, they differ between engines and ICU versions, and a
+ * translation API asked for "Brazilian Portuguese" answers with a 400.
+ */
+export function languageCode(tag: unknown): string | null {
+  if (typeof tag !== 'string' || !tag.trim()) return null;
+  try {
+    const base = new Intl.Locale(tag.trim()).language;
+    return base && base !== 'und' && /^[a-z]{2,3}$/.test(base) ? base : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * A human name for a language tag, or null when there is nothing usable.
@@ -51,12 +70,23 @@ export function languageName(tag: unknown): string | null {
 }
 
 /**
- * The visitor's language, read off the metadata the widget sent.
+ * The visitor's language, read off the metadata the widget sent — as both the code
+ * to send and the name to show.
  *
  * Unverified by design: it is `navigator.language` from the visitor's browser, so
  * it is a good guess and not a fact. It only ever picks a default for a control
  * the agent can override, which is the right amount of trust to place in it.
+ *
+ * Null when the tag is missing or unusable, or when it resolves to the language the
+ * agent already reads — the caller uses that to hide the control entirely, because
+ * offering a metered translation of English into English is worse than offering
+ * nothing.
  */
-export function visitorLanguage(metadata: Record<string, unknown> | null): string | null {
-  return languageName(metadata?.language);
+export function visitorLanguage(
+  metadata: Record<string, unknown> | null,
+): { code: string; name: string } | null {
+  const code = languageCode(metadata?.language);
+  if (!code || code === AGENT_LANGUAGE_CODE) return null;
+  const name = languageName(code);
+  return name ? { code, name } : null;
 }

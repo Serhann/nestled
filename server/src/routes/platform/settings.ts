@@ -41,6 +41,11 @@ const settingsBody = z.object({
   openai_api_key: text(200),
   ollama_url: text(300),
 
+  // Translation. Empty string on the provider clears it back to NULL, which the
+  // settings layer reads as "use the configured LLM".
+  translate_provider: z.enum(['llm', 'deepl', '']).optional(),
+  deepl_api_key: text(200),
+
   // Email
   smtp_host: text(200),
   smtp_port: z.coerce.number().int().min(1).max(65535).optional(),

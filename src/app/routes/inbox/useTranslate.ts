@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { translate } from '../../../lib/api/inbox';
-import { AGENT_LANGUAGE } from '../../../lib/language';
+import { AGENT_LANGUAGE_CODE } from '../../../lib/language';
 import type { Message } from '../../../lib/api/types';
 
 /**
@@ -100,7 +100,7 @@ export function useTranslate(
         inFlight.current.add(message.id);
         setPending(new Set(inFlight.current));
         try {
-          const res = await translate(workspaceId, message.content, AGENT_LANGUAGE);
+          const res = await translate(workspaceId, message.content, AGENT_LANGUAGE_CODE);
           settled.current.add(message.id);
           setResults((prev) => ({
             ...prev,

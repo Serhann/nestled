@@ -113,6 +113,7 @@ export const addNote = (
 export const translate = (
   id: string,
   text: string,
+  /** A language CODE (`tr`, `en`). The server rejects display names. */
   to: string,
 ): Promise<{ text: string; translated: boolean; reason?: 'plan_limit' | 'unavailable' }> =>
   post(w(id, '/translate'), { text, to });

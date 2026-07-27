@@ -19,7 +19,7 @@ import { Badge, statusTone } from '../../../ui/Badge';
 import { Select } from '../../../ui/Form';
 import { EmptyState, ErrorState, Spinner } from '../../../ui/Page';
 import { NoAccess } from '../../../ui/Locked';
-import { AGENT_LANGUAGE, visitorLanguage } from '../../../lib/language';
+import { visitorLanguage } from '../../../lib/language';
 import { ConversationList } from './ConversationList';
 import { Thread } from './Thread';
 import { Composer } from './Composer';
@@ -247,7 +247,8 @@ function ConversationPane({
 
   const conversation = detail.data.conversation;
   // An unverified hint from the visitor's browser, which is all it needs to be: it
-  // only picks the default for a control the agent can ignore.
+  // only picks the default for a control the agent can ignore. Null when the hint is
+  // missing, unusable, or already English — the control then does not appear at all.
   const theirLanguage = visitorLanguage(conversation.metadata);
 
   return (
@@ -265,18 +266,19 @@ function ConversationPane({
           </div>
           {/*
             Only offered when the visitor's browser says they are not reading
-            English. Putting a "translate to English" button on an English
-            conversation invites a metered call that can only return the same words.
+            English — `visitorLanguage` returns null otherwise. Putting a "translate
+            to English" button on an English conversation invites a metered call that
+            can only return the same words.
           */}
-          {can('conversation:reply') && theirLanguage && theirLanguage !== AGENT_LANGUAGE && (
+          {can('conversation:reply') && theirLanguage && (
             <Button
               size="sm"
               variant={translation.on ? 'subtle' : 'ghost'}
               onClick={translation.toggle}
-              title={`This visitor's browser is set to ${theirLanguage}`}
+              title={`This visitor's browser is set to ${theirLanguage.name}`}
             >
               <Languages className="w-4 h-4" aria-hidden />
-              {translation.on ? 'Showing English' : `Translate from ${theirLanguage}`}
+              {translation.on ? 'Showing English' : `Translate from ${theirLanguage.name}`}
             </Button>
           )}
           {can('conversation:resolve') && conversation.status !== 'resolved' && (
@@ -312,7 +314,7 @@ function ConversationPane({
           sending={reply.isPending}
           disabled={!can('conversation:reply')}
           onSend={(content) => reply.mutate(content)}
-          translateTo={theirLanguage !== AGENT_LANGUAGE ? theirLanguage : null}
+          translateTo={theirLanguage}
         />
       </div>
 

@@ -5,6 +5,13 @@ import { buildServer } from '../index.js';
 import { unscopedPrisma } from '../db/unscoped.js';
 import { invalidateWorkspaceCache } from '../plugins/auth.js';
 import { checkUsageLimit, readUsage } from '../lib/usage.js';
+import { redactedSettings, updateSettings, type SettingsPatch } from '../services/platform/settings.js';
+import { translationEngine } from '../services/translate/index.js';
+import { deeplBaseUrl, deeplTarget } from '../services/translate/deepl.js';
+
+/** Write settings and reload the snapshot, the way the ops PATCH route does. */
+const applySettings = (patch: SettingsPatch): Promise<void> => updateSettings(patch);
+const serializeSettings = redactedSettings;
 
 /**
  * Live translation.
@@ -132,7 +139,7 @@ test('with no provider configured it reports failure rather than passing the ori
   await setAiAllowance(adaWs, 500);
   await setUsage(adaWs, 0);
 
-  const res = await post(adaToken, adaWs, { text: 'Merhaba, siparişim nerede?', to: 'English' });
+  const res = await post(adaToken, adaWs, { text: 'Merhaba, siparişim nerede?', to: 'en' });
   assert.equal(res.statusCode, 200, res.body);
   const body = res.json();
   // The original comes back — but flagged, which is the whole point.
@@ -145,7 +152,7 @@ test('a failed translation is not billed', async () => {
   await setAiAllowance(adaWs, 500);
   await setUsage(adaWs, 0);
 
-  await post(adaToken, adaWs, { text: 'Bonjour', to: 'English' });
+  await post(adaToken, adaWs, { text: 'Bonjour', to: 'en' });
 
   // Charging a customer's AI allowance because our provider is not configured
   // would be the wrong way round.
@@ -156,7 +163,7 @@ test('over the AI allowance it refuses without erroring, so an agent is never bl
   await setAiAllowance(adaWs, 10);
   await setUsage(adaWs, 10);
 
-  const res = await post(adaToken, adaWs, { text: 'Hola', to: 'English' });
+  const res = await post(adaToken, adaWs, { text: 'Hola', to: 'en' });
   // 200, not 402: a plan problem of ours must not surface as a broken control while
   // the agent is answering somebody's customer.
   assert.equal(res.statusCode, 200, res.body);
@@ -175,7 +182,7 @@ test('an unlimited plan (allowance 0) does not read as "nothing allowed"', async
 });
 
 test('a workspace id the caller does not belong to is refused', async () => {
-  const res = await post(bobToken, adaWs, { text: 'hello', to: 'French' });
+  const res = await post(bobToken, adaWs, { text: 'hello', to: 'fr' });
   assert.ok(res.statusCode === 403 || res.statusCode === 404, `got ${res.statusCode}`);
 });
 
@@ -183,7 +190,7 @@ test('an anonymous caller cannot spend a workspace’s AI allowance', async () =
   const res = await app.inject({
     method: 'POST',
     url: `/api/v1/w/${adaWs}/translate`,
-    payload: { text: 'hello', to: 'French' },
+    payload: { text: 'hello', to: 'fr' },
   });
   assert.equal(res.statusCode, 401, res.body);
 });
@@ -192,12 +199,95 @@ test('the body is validated', async () => {
   await setAiAllowance(adaWs, 500);
   await setUsage(adaWs, 0);
 
-  assert.equal((await post(adaToken, adaWs, { text: '', to: 'English' })).statusCode, 400);
+  assert.equal((await post(adaToken, adaWs, { text: '', to: 'en' })).statusCode, 400);
   assert.equal((await post(adaToken, adaWs, { text: 'hi', to: '' })).statusCode, 400);
   assert.equal((await post(adaToken, adaWs, { text: 'hi' })).statusCode, 400);
   // 4000 characters is the ceiling; a whole transcript pasted in is not a message.
   assert.equal(
-    (await post(adaToken, adaWs, { text: 'x'.repeat(4001), to: 'English' })).statusCode,
-    400,
+    (await post(adaToken, adaWs, { text: 'x'.repeat(4001), to: 'en' })).statusCode, 400,
   );
+});
+
+test('the target must be a language code, not a display name', async () => {
+  await setAiAllowance(adaWs, 500);
+  await setUsage(adaWs, 0);
+
+  // DeepL answers 400 to "Brazilian Portuguese" and an LLM would happily accept it,
+  // so the two engines only behave the same if the wire format is pinned here.
+  for (const bad of ['English', 'Brazilian Portuguese', 'EN-GB', 'tr-TR', 'zh-Hans', 'e']) {
+    assert.equal(
+      (await post(adaToken, adaWs, { text: 'hi', to: bad })).statusCode,
+      400,
+      `expected 400 for ${bad}`,
+    );
+  }
+  for (const good of ['en', 'tr', 'pt', 'fil']) {
+    assert.equal(
+      (await post(adaToken, adaWs, { text: 'hi', to: good })).statusCode,
+      200,
+      `expected 200 for ${good}`,
+    );
+  }
+});
+
+test('DeepL target codes: the ones that are not just an uppercase language code', () => {
+  // DeepL rejects a bare EN as a target and has its own spelling for Portuguese and
+  // Chinese. Getting these wrong is a 400 on every single message, so they are
+  // pinned rather than trusted to a comment.
+  assert.equal(deeplTarget('en'), 'EN-GB');
+  assert.equal(deeplTarget('pt'), 'PT-PT');
+  assert.equal(deeplTarget('zh'), 'ZH-HANS');
+  assert.equal(deeplTarget('tr'), 'TR');
+  assert.equal(deeplTarget('de'), 'DE');
+  // A region-qualified tag should never reach here, but if one does it narrows
+  // rather than producing the invalid target "TR-TR".
+  assert.equal(deeplTarget('tr-TR'), 'TR');
+  assert.equal(deeplTarget(''), '');
+});
+
+test('a free DeepL key selects the free host, a paid key the paid one', () => {
+  // Derived from the key rather than configured, because an operator who pastes a
+  // free key against the paid host gets a 403 on every message with nothing on the
+  // settings page to suggest why.
+  assert.equal(deeplBaseUrl('abc-123:fx'), 'https://api-free.deepl.com');
+  assert.equal(deeplBaseUrl('  abc-123:fx  '), 'https://api-free.deepl.com');
+  assert.equal(deeplBaseUrl('abc-123'), 'https://api.deepl.com');
+});
+
+test('choosing DeepL without saving a key falls back to the LLM instead of translating nothing', async () => {
+  await applySettings({ translate_provider: 'deepl' });
+  assert.equal(translationEngine(), 'llm');
+
+  await applySettings({ translate_provider: 'deepl', deepl_api_key: 'test-key-not-real:fx' });
+  assert.equal(translationEngine(), 'deepl');
+
+  await applySettings({ translate_provider: '', deepl_api_key: '' });
+  assert.equal(translationEngine(), 'llm');
+});
+
+test('with DeepL selected, a failing DeepL call does NOT quietly fall through to the LLM', async () => {
+  // The key is fake, so the request fails. An operator chose DeepL for a reason —
+  // cost, data processing, injection surface — and sending the text to an LLM
+  // instead would undo that choice exactly when they would not notice.
+  await applySettings({ translate_provider: 'deepl', deepl_api_key: 'not-a-real-key:fx' });
+  await setAiAllowance(adaWs, 500);
+  await setUsage(adaWs, 0);
+
+  const res = await post(adaToken, adaWs, { text: 'Merhaba', to: 'en' });
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(res.json().translated, false);
+  assert.equal(res.json().reason, 'unavailable');
+  assert.equal(await readUsage(adaWs, 'ai_replies'), 0);
+
+  await applySettings({ translate_provider: '', deepl_api_key: '' });
+});
+
+test('the DeepL key is never returned by the settings API', async () => {
+  await applySettings({ translate_provider: 'deepl', deepl_api_key: 'super-secret-value:fx' });
+  const row = await unscopedPrisma.platform_settings.findUnique({ where: { id: 1 } });
+  // Encrypted at rest, and the serializer only ever emits a mask.
+  assert.notEqual(row?.deepl_api_key, 'super-secret-value:fx');
+  const shown = JSON.stringify(serializeSettings());
+  assert.ok(!shown.includes('super-secret-value'), shown);
+  await applySettings({ translate_provider: '', deepl_api_key: '' });
 });

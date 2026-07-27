@@ -42,6 +42,19 @@ export interface PlatformSettings {
     openaiApiKey: string | null;
     ollamaUrl: string | null;
   };
+  /**
+   * How a message gets translated.
+   *
+   * `llm` reuses whatever the `ai` block is pointed at. `deepl` uses a dedicated
+   * machine-translation endpoint, which is both faster and — the reason that
+   * actually matters — has no instruction channel a visitor's message could
+   * hijack. Falls back to `llm` when a DeepL key is not set, so choosing the
+   * provider and forgetting the credential degrades instead of breaking.
+   */
+  translate: {
+    provider: 'llm' | 'deepl';
+    deeplApiKey: string | null;
+  };
   mail: {
     host: string | null;
     port: number;
@@ -79,6 +92,7 @@ export interface PlatformSettings {
 export const SECRET_FIELDS = [
   'anthropic_api_key',
   'openai_api_key',
+  'deepl_api_key',
   'smtp_password',
   'vapid_private_key',
   'maxmind_license_key',
@@ -199,6 +213,15 @@ function resolve(row: Row): PlatformSettings {
       anthropicApiKey: str(row, 'anthropic_api_key', e.ANTHROPIC_API_KEY ?? null),
       openaiApiKey: str(row, 'openai_api_key', e.OPENAI_API_KEY ?? null),
       ollamaUrl: str(row, 'ollama_url', e.OLLAMA_URL ?? null),
+    },
+    translate: {
+      // A provider set to deepl with no key would silently translate nothing, so it
+      // is resolved back to the LLM here rather than failing at call time.
+      provider:
+        str(row, 'translate_provider', null) === 'deepl' && str(row, 'deepl_api_key', null)
+          ? 'deepl'
+          : 'llm',
+      deeplApiKey: str(row, 'deepl_api_key', null),
     },
     mail: {
       host: str(row, 'smtp_host', e.SMTP_HOST ?? null),
@@ -335,6 +358,10 @@ export function redactedSettings(): Record<string, unknown> {
       anthropic_api_key: mask(s.ai.anthropicApiKey),
       openai_api_key: mask(s.ai.openaiApiKey),
       ollama_url: s.ai.ollamaUrl,
+    },
+    translate: {
+      provider: s.translate.provider,
+      deepl_api_key: mask(s.translate.deeplApiKey),
     },
     mail: {
       smtp_host: s.mail.host,

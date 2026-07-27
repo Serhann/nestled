@@ -37,8 +37,11 @@ export function Composer({
   onSend: (content: string) => void;
   sending: boolean;
   disabled?: boolean;
-  /** The visitor's language, already turned into a name. Null hides the control. */
-  translateTo?: string | null;
+  /**
+   * The visitor's language: the code goes on the wire, the name goes on the button.
+   * Null hides the control — see `visitorLanguage`.
+   */
+  translateTo?: { code: string; name: string } | null;
 }) {
   const draft = useAppStore((s) => s.drafts[conversationId] ?? '');
   const setDraft = useAppStore((s) => s.setDraft);
@@ -70,7 +73,7 @@ export function Composer({
     setTranslating(true);
     setTranslateNote(null);
     try {
-      const res = await translate(workspaceId, value, translateTo);
+      const res = await translate(workspaceId, value, translateTo.code);
       if (res.translated) {
         setPreTranslation(value);
         setDraft(conversationId, res.text);
@@ -134,7 +137,7 @@ export function Composer({
               className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-white"
             >
               <Languages className={`w-3.5 h-3.5 ${translating ? 'animate-pulse' : ''}`} aria-hidden />
-              {translating ? 'Translating…' : `Translate to ${translateTo}`}
+              {translating ? 'Translating…' : `Translate to ${translateTo.name}`}
             </button>
           )}
           {preTranslation !== null && (

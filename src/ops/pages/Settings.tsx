@@ -36,6 +36,10 @@ interface SettingsResponse {
       openai_api_key: Masked;
       ollama_url: string | null;
     };
+    translate: {
+      provider: string;
+      deepl_api_key: Masked;
+    };
     mail: {
       smtp_host: string | null;
       smtp_port: number;
@@ -205,6 +209,38 @@ export function Settings() {
           <Field label="Anthropic API key">{secret('anthropic_api_key', s.ai.anthropic_api_key)}</Field>
           <Field label="OpenAI API key">{secret('openai_api_key', s.ai.openai_api_key)}</Field>
           <Field label="Ollama URL">{text('ollama_url', s.ai.ollama_url, 'http://ollama:11434')}</Field>
+        </div>
+      </Card>
+
+      <Card title="Translation">
+        <p className="text-sm text-gray-500 mb-4 leading-relaxed">
+          What translates a message in the agent inbox. A dedicated engine is the better
+          default, and the reason is not price: an LLM handed a stranger&rsquo;s message and
+          asked to translate it has an instruction channel to hijack, and a translation
+          service does not. It is also considerably faster, which matters because an agent
+          clicks and waits. Either way it counts against the workspace&rsquo;s AI allowance.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label="Engine"
+            hint="DeepL falls back to the LLM until a key is saved, rather than silently translating nothing."
+          >
+            <select
+              className={inputClass}
+              disabled={!canWrite}
+              value={String(draft.translate_provider ?? s.translate.provider)}
+              onChange={(e) => set('translate_provider', e.target.value)}
+            >
+              <option value="llm">The configured AI provider</option>
+              <option value="deepl">DeepL</option>
+            </select>
+          </Field>
+          <Field
+            label="DeepL API key"
+            hint="A free key ends in :fx — the host is derived from that, so there is nothing else to set."
+          >
+            {secret('deepl_api_key', s.translate.deepl_api_key)}
+          </Field>
         </div>
       </Card>
 
