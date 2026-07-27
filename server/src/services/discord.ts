@@ -1,8 +1,8 @@
-import { env } from '../env.js';
 // Notification settings and the conversation are read for a workspace the caller
 // resolved from a signed token or an authenticated membership.
 // eslint-disable-next-line no-restricted-imports -- reads for a caller-supplied workspace
 import { unscopedPrisma } from '../db/unscoped.js';
+import { settings as platformSettings } from './platform/settings.js';
 
 /**
  * Discord webhook notifications — an optional second channel per workspace, kept
@@ -40,7 +40,7 @@ async function loadSettings(workspaceId: string): Promise<DiscordSettings | null
  */
 function resolveWebhook(settings: DiscordSettings): string | null {
   if (!settings.discord_webhook_enabled) return null;
-  return settings.discord_webhook_url || env.DISCORD_WEBHOOK_URL || null;
+  return settings.discord_webhook_url || platformSettings().ops.discordWebhookUrl || null;
 }
 
 async function post(url: string, body: unknown): Promise<void> {

@@ -9,6 +9,7 @@ import { SearchResults } from './pages/SearchResults';
 import { Plans } from './pages/Plans';
 import { Dunning } from './pages/Dunning';
 import { Health } from './pages/Health';
+import { Settings } from './pages/Settings';
 import { Impersonations } from './pages/Impersonations';
 import { Account } from './pages/Account';
 
@@ -53,6 +54,7 @@ const router = createBrowserRouter([
       { path: 'dunning', element: <Dunning /> },
       { path: 'impersonations', element: <Impersonations /> },
       { path: 'health', element: <Health /> },
+      { path: 'settings', element: <Settings /> },
       { path: 'account', element: <Account /> },
       // A mistyped deep link lands on the list rather than a blank screen; there is
       // nothing useful a 404 page could tell a staff member here.

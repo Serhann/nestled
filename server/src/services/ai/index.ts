@@ -3,7 +3,6 @@ import Anthropic from '@anthropic-ai/sdk';
 // caller resolved from a signed session or an authenticated membership.
 // eslint-disable-next-line no-restricted-imports -- reads for a caller-supplied workspace
 import { unscopedPrisma as prisma } from '../../db/unscoped.js';
-import { env } from '../../env.js';
 import { bumpUsage } from '../../lib/usage.js';
 import type { AIProvider, AISettings, KnowledgeItem } from './types.js';
 import type { VerifiedContext } from '../verifiedAttributes.js';
@@ -13,6 +12,7 @@ import {
   ollamaProvider,
   openaiProvider,
 } from './providers.js';
+import { settings as platformSettings } from '../platform/settings.js';
 
 const providers: Record<AISettings['ai_provider'], AIProvider> = {
   knowledge_base: knowledgeBaseProvider,
@@ -37,14 +37,18 @@ export interface AIReplyResult {
  * gain to them. The only per-website AI settings are the prompt and reply mode.
  */
 function platformAISettings(systemPrompt: string): AISettings {
+  // AI is OUR infrastructure: the keys are the install's, not the customer's, and
+  // usage is metered per workspace. They come from the ops panel now, so a key
+  // rotation is a form submission rather than a redeploy.
+  const ai = platformSettings().ai;
   return {
-    ai_provider: env.AI_PROVIDER,
-    ai_model: env.AI_MODEL,
+    ai_provider: ai.provider,
+    ai_model: ai.model,
     system_prompt: systemPrompt,
-    anthropic_api_key: env.ANTHROPIC_API_KEY ?? null,
-    openai_api_key: env.OPENAI_API_KEY ?? null,
+    anthropic_api_key: ai.anthropicApiKey,
+    openai_api_key: ai.openaiApiKey,
     openai_model: 'gpt-4o-mini',
-    ollama_url: env.OLLAMA_URL ?? null,
+    ollama_url: ai.ollamaUrl,
     ollama_model: 'llama3',
   };
 }
@@ -76,7 +80,7 @@ async function complete(system: string, user: string, maxTokens = 500): Promise<
   const TIMEOUT = 20_000;
   try {
     if (settings.ai_provider === 'anthropic') {
-      const apiKey = settings.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
+      const apiKey = settings.anthropic_api_key;
       if (!apiKey) return null;
       const client = new Anthropic({ apiKey, timeout: TIMEOUT });
       const res = await client.messages.create({
@@ -94,7 +98,7 @@ async function complete(system: string, user: string, maxTokens = 500): Promise<
       );
     }
     if (settings.ai_provider === 'openai') {
-      const apiKey = settings.openai_api_key || process.env.OPENAI_API_KEY;
+      const apiKey = settings.openai_api_key;
       if (!apiKey) return null;
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), TIMEOUT);
@@ -116,7 +120,7 @@ async function complete(system: string, user: string, maxTokens = 500): Promise<
       return data.choices?.[0]?.message?.content?.trim() || null;
     }
     if (settings.ai_provider === 'ollama') {
-      const url = settings.ollama_url || process.env.OLLAMA_URL;
+      const url = settings.ollama_url;
       if (!url) return null;
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), TIMEOUT);

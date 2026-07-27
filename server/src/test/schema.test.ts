@@ -43,6 +43,7 @@ const UNSCOPED_MODELS: Record<string, string> = {
   // Platform (vendor) plane. Deliberately disjoint from customer tenancy.
   platform_users: 'vendor staff',
   platform_sessions: 'vendor staff sessions',
+  platform_settings: 'a singleton holding install-wide config; belongs to no tenant',
 
   // Nullable workspace_id by design (a NULL means "platform-level").
   audit_log: 'workspace_id is nullable: NULL = a platform-level action',

@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { env } from '../../env.js';
 // Push subscriptions belong to a USER, not a workspace — one device serves every
 // workspace they are a member of.
 // eslint-disable-next-line no-restricted-imports -- push devices are user-scoped
@@ -8,6 +7,7 @@ import { unscopedPrisma } from '../../db/unscoped.js';
 import { requireAuth } from '../../plugins/auth.js';
 import { parseBody } from '../../lib/validate.js';
 import { isPushEnabled } from '../../services/push.js';
+import { settings } from '../../services/platform/settings.js';
 
 /**
  * Web Push subscription management.
@@ -18,7 +18,7 @@ import { isPushEnabled } from '../../services/push.js';
  */
 export async function pushV1Routes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/push/public-key', async (_req, reply) =>
-    reply.send({ enabled: isPushEnabled(), public_key: env.VAPID_PUBLIC_KEY ?? null }),
+    reply.send({ enabled: isPushEnabled(), public_key: settings().push.publicKey ?? null }),
   );
 
   app.post('/api/v1/push/subscribe', { preHandler: requireAuth }, async (req, reply) => {

@@ -4,7 +4,7 @@
 // eslint-disable-next-line no-restricted-imports -- vendor plane, no tenant scope exists
 import { unscopedPrisma } from '../../db/unscoped.js';
 import { generateOpaqueToken, hashToken } from '../../auth/tokens.js';
-import { env } from '../../env.js';
+import { settings } from './settings.js';
 
 /**
  * Staff sessions.
@@ -30,7 +30,7 @@ export interface IssuedSession {
 }
 
 export function sessionExpiry(from: Date = new Date()): Date {
-  return new Date(from.getTime() + env.PLATFORM_SESSION_TTL_HOURS * 3600_000);
+  return new Date(from.getTime() + settings().ops.platformSessionTtlHours * 3600_000);
 }
 
 export async function createSession(

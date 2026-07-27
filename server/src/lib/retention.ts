@@ -6,6 +6,7 @@ import { env } from '../env.js';
 // eslint-disable-next-line no-restricted-imports -- background sweep spans workspaces
 import { unscopedPrisma } from '../db/unscoped.js';
 import { recordJobRun } from '../services/platform/metrics.js';
+import { settings } from '../services/platform/settings.js';
 
 /**
  * Data-retention sweep.
@@ -27,7 +28,7 @@ async function sweep(): Promise<void> {
   for (const ws of workspaces) {
     // The env value, when set, is an override for self-hosting; otherwise the plan
     // decides. 0 on either means "keep forever".
-    const days = env.RETENTION_DAYS > 0 ? env.RETENTION_DAYS : ws.plan.retention_days;
+    const days = settings().ops.retentionDays > 0 ? settings().ops.retentionDays : ws.plan.retention_days;
     if (days <= 0) continue;
 
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);

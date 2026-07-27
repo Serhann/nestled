@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { env } from '../../env.js';
+import { settings } from '../platform/settings.js';
 
 /**
  * The Stripe client, and the narrow surface billing is allowed to use.
@@ -80,7 +80,8 @@ let overrideSecret: string | undefined;
 export function stripeClient(): StripeLike | null {
   if (override !== undefined) return override;
   if (cached === undefined) {
-    cached = env.STRIPE_SECRET_KEY ? new Stripe(env.STRIPE_SECRET_KEY) : null;
+    const key = settings().billing.secretKey;
+    cached = key ? new Stripe(key) : null;
   }
   return cached;
 }
@@ -97,7 +98,7 @@ export function stripeConfigured(): boolean {
  * a 503 is better than verifying against an empty string.
  */
 export function webhookSecret(): string | null {
-  return overrideSecret ?? env.STRIPE_WEBHOOK_SECRET ?? null;
+  return overrideSecret ?? settings().billing.webhookSecret;
 }
 
 /**
@@ -128,6 +129,7 @@ export const STRIPE_UNCONFIGURED = {
 
 /** Where Checkout and the portal send the customer back to. */
 export function returnUrl(path: string): string {
-  const base = (env.STRIPE_RETURN_URL ?? env.APP_URL).replace(/\/+$/, '');
+  const s = settings();
+  const base = (s.billing.returnUrl ?? s.urls.app).replace(/\/+$/, '');
   return `${base}${path}`;
 }

@@ -30,7 +30,7 @@ export const knowledgeBaseProvider: AIProvider = {
  */
 export const anthropicProvider: AIProvider = {
   async generateReply(input) {
-    const apiKey = input.settings.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
+    const apiKey = input.settings.anthropic_api_key;
     if (!apiKey) return { text: keywordAnswer(input.message, input.knowledge) };
 
     const client = new Anthropic({ apiKey, timeout: TIMEOUT_MS });
@@ -55,7 +55,7 @@ export const anthropicProvider: AIProvider = {
 /** OpenAI adapter, kept behind the same interface. */
 export const openaiProvider: AIProvider = {
   async generateReply(input) {
-    const apiKey = input.settings.openai_api_key || process.env.OPENAI_API_KEY;
+    const apiKey = input.settings.openai_api_key;
     if (!apiKey) return { text: keywordAnswer(input.message, input.knowledge) };
 
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -86,7 +86,7 @@ export const openaiProvider: AIProvider = {
 /** Self-hosted Ollama adapter. */
 export const ollamaProvider: AIProvider = {
   async generateReply(input) {
-    const url = input.settings.ollama_url || process.env.OLLAMA_URL;
+    const url = input.settings.ollama_url;
     if (!url) return { text: keywordAnswer(input.message, input.knowledge) };
 
     const res = await fetch(`${url.replace(/\/$/, '')}/api/generate`, {

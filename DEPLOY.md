@@ -1,6 +1,6 @@
 # Deploying Nestled
 
-All fourteen phases are merged. **200 server tests pass, both typechecks are
+All fourteen phases are merged. **213 server tests pass, both typechecks are
 clean, ESLint reports zero errors, and the production images have been built and
 exercised end to end** — signup, website creation, widget boot, a visitor
 message, an agent reply, the billing state, and both directions of the
@@ -10,56 +10,112 @@ Read "What is not verified" before you point real customers at it.
 
 ---
 
-## The four surfaces
+## The four surfaces, and the two ways to serve them
 
-| Origin | What it is |
+| Surface | What it is |
 |---|---|
-| `nestled.chat` | Marketing. Prerendered HTML — real documents, not an SPA shell. |
-| `app.nestled.chat` | The customer panel. Inbox, visitors, websites, automation, settings. |
-| `ops.nestled.chat` | Your own staff console. Separate auth mechanism; never indexed, never framed. |
-| `widget.nestled.chat` | The visitor widget and `embed.js`. |
+| Marketing | Prerendered HTML — real documents, not an SPA shell. |
+| App | The customer panel: inbox, visitors, websites, automation, settings. |
+| Ops | Your own staff console. Separate auth mechanism; never indexed, never framed. |
+| Widget | The visitor widget and `embed.js`. |
 
-One container serves all four. In production each is a subdomain; the same nginx
-config also serves them under `/app`, `/ops`, `/widget` path prefixes, and no
-application code hardcodes either — every cross-surface URL comes from
-`src/lib/origins.ts`.
+One container serves all four, in either layout, with no extra configuration:
 
-Putting the widget on its own origin is a security decision, not a deployment
-preference: the panel's tokens live in the app origin's storage, so a widget
-running inside a customer's page physically cannot read them.
+```
+ONE DOMAIN        chat.example.com/        marketing
+                  chat.example.com/app     the panel
+                  chat.example.com/ops     the staff console
+                  chat.example.com/widget  the widget
+
+FOUR SUBDOMAINS   example.com  app.example.com  ops.example.com  widget.example.com
+```
+
+nginx dispatches on the leading DNS label and the frontend works out which
+layout it is in from its own URL, so nothing anywhere names a domain — any
+domain works, and the same image serves both.
+
+**Prefer four subdomains if you can.** The widget document is embedded in your
+customers' pages, and a separate origin is what makes it physically unable to
+read an agent's token out of the app's localStorage. On a single domain they
+share an origin and that protection is gone. Everything else works identically.
+
+### In Coolify
+
+Set a domain on the **`web` service only** — one for the path layout, or all
+four (comma-separated) for the subdomain layout. Include the `https://` scheme
+or no certificate is provisioned. Put the same list in `ALLOWED_ORIGINS`.
+
+Leave `app`, `db` and `migrate` with no domain. They are reached over the
+compose network, and a backend routable alongside the proxy is a way to reach
+the API with the proxy's rules skipped. (`app` no longer declares `EXPOSE`, so
+Coolify should not offer it a domain at all.)
+
+After a successful deploy Coolify shows **`migrate` as exited**. That is
+correct — it is a one-shot release step, and `app` is configured not to start
+until it has finished. If your Coolify version refuses to call the stack healthy
+with an exited container, delete the `migrate` service and set
+`MIGRATE_ON_BOOT=true` on `app`; you lose the ordering guarantee, which only
+matters with more than one replica.
 
 ---
 
 ## 1. Environment
 
-Copy `.env.staging.example` and fill it in. **Every secret in that file is a
-placeholder.** Generate your own:
+Fourteen variables, and only three you must think about. Everything else — the
+AI key, SMTP, Stripe, GeoIP, VAPID, the public URLs, retention — is configured
+in the **ops panel** at `https://ops.your-host/settings` and stored in the
+database. Those are settings; you change them on a Tuesday afternoon, and in the
+environment each change costs a container restart.
+
+(The old variables still work as a fallback if you prefer config-as-code. They
+are simply not required, and no longer listed in the compose files.)
+
+Copy `.env.staging.example` and fill it in. **Every secret in it is a
+placeholder:**
 
 ```bash
-openssl rand -base64 48        # JWT_ACCESS_SECRET, JWT_REFRESH_SECRET, POSTGRES_PASSWORD
-cd server && npm run vapid     # VAPID_PUBLIC_KEY + VAPID_PRIVATE_KEY (Web Push)
+openssl rand -base64 48   # JWT secrets, POSTGRES_PASSWORD, SETTINGS_KEY
 ```
-
-Required:
 
 | Variable | Notes |
 |---|---|
-| `DATABASE_URL` | Postgres 16. The schema uses `ON DELETE SET NULL (col)`, which needs **PG 15+**. |
-| `JWT_ACCESS_SECRET` | ≥16 chars. Rotating it signs out every agent AND invalidates every live widget session. |
+| `DATABASE_URL` | Postgres 16. The schema uses `ON DELETE SET NULL (col)`, which needs **PG 15+**. Compose builds it from `POSTGRES_*`. |
+| `JWT_ACCESS_SECRET` | ≥16 chars. Cannot move into the database — it is what proves a request may reach the database. Rotating it signs out every agent AND invalidates every live widget session. |
 | `JWT_REFRESH_SECRET` | ≥16 chars. |
-| `ALLOWED_ORIGINS` | The **private** origins: app, ops, widget, marketing. Customer domains do NOT belong here — where a widget may run is per-website, in `websites.allowed_domains`. **Leaving out the widget origin makes every widget call fail in the browser with a CORS error that looks like the API is down.** |
-| `APP_URL` | Used to build links in outbound email. Wrong, and verification links point at the wrong host. |
+| `ALLOWED_ORIGINS` | The **private** origins: app, ops, widget, marketing. Deployment topology, not a setting. Customer domains do NOT belong here — where a widget may run is per-website, in `websites.allowed_domains`. **Leaving out the widget origin makes every widget call fail in the browser with a CORS error that looks like the API is down.** The public URLs used in outbound email are derived from this list unless you set them in the ops panel. |
 
-Strongly recommended:
+Optional but recommended:
 
 | Variable | Why |
 |---|---|
-| `SMTP_*`, `MAIL_FROM` | Without SMTP nothing is sent: mail is queued to `outbound_emails` and logged. Signup verification and invitations then require reading the log. |
-| `ANTHROPIC_API_KEY` | AI replies are our infrastructure — we hold the key and meter usage per workspace. Without it the AI degrades to knowledge-base answers. |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Without them, plans and limits still work — they are database facts — but checkout and the billing portal return 503. Self-hosting is fine without a Stripe account. |
-| `VAPID_*` | Web Push. Absent, push is disabled gracefully. |
-| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Creates the first customer user **and their workspace** on an empty database, then no-ops forever. |
-| `SEED_PLATFORM_EMAIL` / `SEED_PLATFORM_PASSWORD` | Creates the first **staff** account for `ops.`. It starts read-only until a TOTP factor is enrolled — an env-provisioned identity can look but not change. |
+| `SETTINGS_KEY` | Encrypts the secrets you enter in the ops panel (AES-256-GCM). Without it they sit in the database in plain text — and while it already holds conversation history, a leaked backup containing a live Stripe key is a different category of problem, because that key moves money. Changing it makes existing stored secrets unreadable; they are reported as absent, loudly, and can be re-entered. |
+| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Creates the first **customer** user and their workspace on an empty database, then no-ops forever. |
+| `SEED_PLATFORM_EMAIL` / `SEED_PLATFORM_PASSWORD` | Creates the first **staff** account for the ops panel. It can read everything and change nothing until a TOTP factor is enrolled — an identity provisioned from an env var should not be able to touch customer data on its own. |
+
+The rest (`NODE_ENV`, `PORT`, `HOST`, `UPLOAD_DIR`, `MAX_UPLOAD_BYTES`,
+`MIGRATE_ON_BOOT`, `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL_DAYS`) have working
+defaults and are set by the compose files.
+
+### What you configure in the ops panel
+
+Sign in at `https://ops.your-host`, enrol TOTP, then open **Settings**:
+
+- **AI** — provider, model, and the API key. This is *our* infrastructure, not
+  the customer's: usage is metered per workspace. Without a key the AI degrades
+  to knowledge-base answers.
+- **Email** — SMTP host, credentials, from-address, and a **Send test** button.
+  Without an SMTP host, mail is queued to `outbound_emails` and logged rather
+  than sent; nothing is lost, but nobody receives a verification link.
+- **Billing** — the Stripe secret and webhook signing secret. Without them plans
+  and limits still apply (they are database facts); only checkout and the
+  billing portal are disabled, which is a perfectly good self-hosted setup.
+- **Web Push** — the VAPID keypair (`cd server && npm run vapid`).
+- **IP geolocation** — a local GeoLite2 file or MaxMind web-service credentials.
+- **URLs and operations** — the app and marketing URLs used in email links, a
+  Sentry DSN, a retention override, and the staff session length.
+
+Changes take effect immediately; nothing restarts. Secrets are write-only: the
+panel reports whether one is set and its last four characters, never the value.
 
 ## 2. Deploy
 
@@ -109,8 +165,8 @@ real network calls are not. Run `stripe listen --forward-to
 https://your-host/api/v1/stripe/webhook` and a test-mode subscribe → upgrade →
 cancel before taking live payments.
 
-**Email delivery has not been exercised against a real SMTP server.** Send
-yourself a verification mail before opening signup.
+**Email delivery has not been exercised against a real SMTP server.** The ops
+panel's Settings page has a Send test button — use it before opening signup.
 
 **Four widget features are stubbed pending server work**, listed in the widget
 agent's notes and reproduced here so they are not discovered by a customer:
@@ -198,7 +254,7 @@ export DATABASE_URL='postgres://nestled:nestled@localhost:5546/nestled_test'
 export JWT_ACCESS_SECRET=test-secret-min-16-chars JWT_REFRESH_SECRET=test-secret-min-16-chars
 export NODE_ENV=test
 npx prisma migrate deploy
-npm test        # 200 tests, serial (they share one database)
+npm test        # 213 tests, serial (they share one database)
 ```
 
 From the repo root: `npm run typecheck && npx eslint . && npm run build`.
