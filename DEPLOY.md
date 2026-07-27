@@ -279,11 +279,17 @@ nobody has watched happen.
 
 **The panel and the ops console have largely not been clicked through in a
 browser.** Both typecheck, lint, build, and their API contracts are covered by
-integration tests. The React rendering itself mostly is not. Three exceptions
-*were* driven in a real browser: the marketing pages render and the pricing table
+integration tests. The React rendering itself mostly is not — and that gap has now
+produced real defects twice: the appearance preview never rendered at all, and the
+launcher placement settings did nothing. Both compiled, passed every test, and were
+plainly broken on screen. Treat any panel screen nobody has looked at as unverified.
+Four exceptions *were* driven in a real browser: the marketing pages render and the pricing table
 hydrates with live prices, our own support bubble appears, and the inbox was
 driven end to end for live translation (sign in → open a Turkish conversation →
-toggle translation → translate a draft).
+toggle translation → translate a draft), and the appearance editor's preview was
+verified to render, follow edits live, make zero API calls, and place the launcher
+where the settings say — with the same placement then confirmed on a real host page
+loading embed.js.
 
 **Live translation has never produced a real translation.** Everything around it
 is verified — the control appears only when the visitor's browser reports a
