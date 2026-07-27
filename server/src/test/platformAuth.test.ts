@@ -401,3 +401,20 @@ test('the bootstrap seeds once on an empty table, then no-ops forever', async ()
     delete process.env.SEED_PLATFORM_PASSWORD;
   }
 });
+
+test('an install with no staff accounts says so instead of "invalid credentials"', async () => {
+  // Not a disclosure: an install whose staff table is empty has no panel to
+  // protect. The alternative is an operator staring at "Invalid credentials" for
+  // the exact password they put in the environment, with nothing anywhere to say
+  // that the bootstrap never ran because the table was not empty at first boot.
+  await unscopedPrisma.$executeRawUnsafe('TRUNCATE platform_users CASCADE');
+
+  const res = await app.inject({
+    method: 'POST',
+    url: '/platform/auth/login',
+    payload: { email: 'nobody@nestled.chat', password: 'correct horse battery' },
+  });
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.json().code, 'no_staff_accounts');
+  assert.match(res.json().error, /SEED_PLATFORM_EMAIL/);
+});

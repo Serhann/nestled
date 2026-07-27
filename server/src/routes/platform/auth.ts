@@ -71,6 +71,22 @@ export async function platformAuthRoutes(app: FastifyInstance): Promise<void> {
         // Still hash something, so a disabled or unknown account does not answer
         // measurably faster than a real one.
         await verifyPassword(body.password, '$2a$12$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidi');
+
+        // One exception to the deliberately blank failure above: when there is NO
+        // staff account at all, say so. Nothing is disclosed — an install with an
+        // empty staff table has no panel to protect — and the alternative is an
+        // operator staring at "Invalid credentials" for a password that is exactly
+        // what they put in the environment, with nothing anywhere to explain that
+        // the bootstrap never ran.
+        if ((await unscopedPrisma.platform_users.count()) === 0) {
+          return reply.code(401).send({
+            error:
+              'This install has no staff accounts yet. Set SEED_PLATFORM_EMAIL and ' +
+              'SEED_PLATFORM_PASSWORD and restart the app — the bootstrap runs only ' +
+              'while the table is empty.',
+            code: 'no_staff_accounts',
+          });
+        }
         return invalid();
       }
       if (!(await verifyPassword(body.password, user.password_hash))) return invalid();
