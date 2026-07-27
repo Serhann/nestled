@@ -1,21 +1,51 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Nestled — PRODUCTION stack for Coolify
+# Nestled — PRODUCTION stack
 #
-# Three services on one private network:
-#   web  – nginx serving the built frontend + proxying /api and /ws  (PUBLIC)
-#   app  – Fastify backend                                            (internal)
-#   migrate – one-shot `prisma migrate deploy`, must succeed before app starts
-#   db   – Postgres 16                                                (internal)
+# Four services on one private network. Only ONE of them is public:
 #
-# Coolify setup:
-#   1. New Resource → Docker Compose → point at this file (separate project from
-#      staging so its volumes/domain are isolated).
-#   2. Set the domain on the `web` service (or SERVICE_FQDN_WEB below) e.g.
-#      https://app.nestled.chat
-#   3. Add the environment variables listed under `app` in Coolify's env UI.
-#      Use STRONG, unique secrets (do NOT reuse staging's).
-#   4. Deploy. Seed the first admin via SEED_ADMIN_* (runs once) or:
-#        coolify exec app npm run seed
+#   web      nginx: the built frontend, and the proxy for /api, /ws, /platform
+#   app      the Fastify backend                                     (internal)
+#   migrate  one-shot `prisma migrate deploy`; app waits for it      (internal)
+#   db       Postgres 16                                             (internal)
+#
+# ── Coolify ──────────────────────────────────────────────────────────────────
+#
+# Set a domain on the `web` service ONLY. Leave `app`, `db` and `migrate` with
+# no domain — they are reached over the compose network, and a backend that is
+# publicly routable alongside the proxy is a way to reach the API with the
+# proxy's rules skipped. (`app` no longer declares EXPOSE, so Coolify should not
+# offer it a domain at all; if an older version still does, leave it blank.)
+#
+# Two layouts, both served by the same image with no extra configuration:
+#
+#   ONE DOMAIN      chat.example.com
+#                   → the app at /app, the ops panel at /ops, the widget at
+#                     /widget, marketing at /. Simplest, and what most people
+#                     have on day one.
+#
+#   FOUR SUBDOMAINS example.com, app.example.com, ops.example.com,
+#                   widget.example.com — all four on the SAME `web` service
+#                   (Coolify accepts a comma-separated list in the Domains
+#                   field). nginx dispatches on the leading DNS label; nothing
+#                   names a domain, so any domain works.
+#
+# Prefer four subdomains if you can. The widget document is embedded in your
+# customers' pages, and a separate origin is what makes it physically unable to
+# read an agent's token out of the app's localStorage. On one domain they share
+# an origin and that protection is gone.
+#
+# Include the scheme in Coolify's domain field (https://…) or it provisions no
+# certificate. Whatever you choose, put the same list in ALLOWED_ORIGINS.
+#
+# After a successful deploy Coolify shows `migrate` as EXITED. That is correct —
+# it is a one-shot release step, and the app is configured not to start until it
+# has finished. If your Coolify version refuses to consider the stack healthy
+# with an exited container, delete the `migrate` service and set
+# MIGRATE_ON_BOOT=true on `app` instead; you lose the ordering guarantee, which
+# only matters with more than one replica.
+#
+# Then add the environment variables listed under `app` (there are few — the
+# rest of the configuration is in the ops panel at ops.<your-domain>/settings).
 #
 # Back up the `nestled_pgdata_prod` volume (Coolify → Storages) on a schedule.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -30,15 +60,16 @@ services:
     expose:
       - '80'
     environment:
-      # Coolify routes the domain to this service on port 80. IMPORTANT: include
-      # the https:// scheme so Coolify provisions a Let's Encrypt certificate —
-      # a bare domain is treated as HTTP-only (no SSL). Set it in Coolify's env:
-      #   SERVICE_FQDN_WEB_80=https://app.nestled.chat
+      # Coolify routes your domain(s) to this service on port 80. Set them in the
+      # resource's Domains field — one for the path layout, or all four for the
+      # subdomain layout. This magic variable is how Coolify injects the value;
+      # include the https:// scheme or no certificate is provisioned.
       - SERVICE_FQDN_WEB_80
     healthcheck:
       # 127.0.0.1 (not localhost) — localhost can resolve to ::1 while nginx
       # listens on IPv4, which makes the check fail and the proxy drop the site.
-      # Hit /up (nginx returns 200) — the bare `/` is a 404 (no landing page).
+      # /up is answered by nginx itself, so this stays green while the backend is
+      # still starting and the proxy is not pulled out from under it.
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:80/up']
       interval: 15s
       timeout: 5s

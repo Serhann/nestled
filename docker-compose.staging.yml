@@ -1,20 +1,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Nestled — STAGING stack for Coolify
+# Nestled — STAGING stack
 #
-# Three services on one private network:
-#   web  – nginx serving the built frontend + proxying /api and /ws  (PUBLIC)
-#   app  – Fastify backend                                            (internal)
-#   migrate – one-shot `prisma migrate deploy`, must succeed before app starts
-#   db   – Postgres 16                                                (internal)
+# Identical in shape to docker-compose.production.yml; read that file's header
+# for the Coolify setup, the two domain layouts, and why `migrate` shows as
+# exited after a successful deploy.
 #
-# Coolify setup:
-#   1. New Resource → Docker Compose → point at this file.
-#   2. Set the domain on the `web` service (or edit SERVICE_FQDN_WEB below) e.g.
-#      https://staging.nestled.example.com
-#   3. Add the environment variables listed under `app` in Coolify's env UI
-#      (secrets: JWT_*, ANTHROPIC_API_KEY, VAPID_*, POSTGRES_PASSWORD, …).
-#   4. Deploy. Seed the first admin via SEED_ADMIN_* (runs once) or:
-#        coolify exec app npm run seed
+# Differences here: its own database name and volumes, a 30-day retention
+# default, and Stripe TEST keys (entered in the ops panel, not here).
 # ─────────────────────────────────────────────────────────────────────────────
 services:
   web:
@@ -27,15 +19,14 @@ services:
     expose:
       - '80'
     environment:
-      # Coolify routes the domain to this service on port 80. IMPORTANT: include
-      # the https:// scheme so Coolify provisions a Let's Encrypt certificate —
-      # a bare domain is treated as HTTP-only (no SSL). Set it in Coolify's env:
-      #   SERVICE_FQDN_WEB_80=https://chat-staging.iydo.com
+      # Set the domain(s) on THIS service only. Include the https:// scheme or
+      # Coolify provisions no certificate.
       - SERVICE_FQDN_WEB_80
     healthcheck:
       # 127.0.0.1 (not localhost) — localhost can resolve to ::1 while nginx
       # listens on IPv4, which makes the check fail and the proxy drop the site.
-      # Hit /up (nginx returns 200) — the bare `/` is a 404 (no landing page).
+      # /up is answered by nginx itself, so this stays green while the backend
+      # is still starting and the proxy is not pulled out from under it.
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:80/up']
       interval: 15s
       timeout: 5s

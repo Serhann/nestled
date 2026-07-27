@@ -10,23 +10,52 @@ Read "What is not verified" before you point real customers at it.
 
 ---
 
-## The four surfaces
+## The four surfaces, and the two ways to serve them
 
-| Origin | What it is |
+| Surface | What it is |
 |---|---|
-| `nestled.chat` | Marketing. Prerendered HTML — real documents, not an SPA shell. |
-| `app.nestled.chat` | The customer panel. Inbox, visitors, websites, automation, settings. |
-| `ops.nestled.chat` | Your own staff console. Separate auth mechanism; never indexed, never framed. |
-| `widget.nestled.chat` | The visitor widget and `embed.js`. |
+| Marketing | Prerendered HTML — real documents, not an SPA shell. |
+| App | The customer panel: inbox, visitors, websites, automation, settings. |
+| Ops | Your own staff console. Separate auth mechanism; never indexed, never framed. |
+| Widget | The visitor widget and `embed.js`. |
 
-One container serves all four. In production each is a subdomain; the same nginx
-config also serves them under `/app`, `/ops`, `/widget` path prefixes, and no
-application code hardcodes either — every cross-surface URL comes from
-`src/lib/origins.ts`.
+One container serves all four, in either layout, with no extra configuration:
 
-Putting the widget on its own origin is a security decision, not a deployment
-preference: the panel's tokens live in the app origin's storage, so a widget
-running inside a customer's page physically cannot read them.
+```
+ONE DOMAIN        chat.example.com/        marketing
+                  chat.example.com/app     the panel
+                  chat.example.com/ops     the staff console
+                  chat.example.com/widget  the widget
+
+FOUR SUBDOMAINS   example.com  app.example.com  ops.example.com  widget.example.com
+```
+
+nginx dispatches on the leading DNS label and the frontend works out which
+layout it is in from its own URL, so nothing anywhere names a domain — any
+domain works, and the same image serves both.
+
+**Prefer four subdomains if you can.** The widget document is embedded in your
+customers' pages, and a separate origin is what makes it physically unable to
+read an agent's token out of the app's localStorage. On a single domain they
+share an origin and that protection is gone. Everything else works identically.
+
+### In Coolify
+
+Set a domain on the **`web` service only** — one for the path layout, or all
+four (comma-separated) for the subdomain layout. Include the `https://` scheme
+or no certificate is provisioned. Put the same list in `ALLOWED_ORIGINS`.
+
+Leave `app`, `db` and `migrate` with no domain. They are reached over the
+compose network, and a backend routable alongside the proxy is a way to reach
+the API with the proxy's rules skipped. (`app` no longer declares `EXPOSE`, so
+Coolify should not offer it a domain at all.)
+
+After a successful deploy Coolify shows **`migrate` as exited**. That is
+correct — it is a one-shot release step, and `app` is configured not to start
+until it has finished. If your Coolify version refuses to call the stack healthy
+with an exited container, delete the `migrate` service and set
+`MIGRATE_ON_BOOT=true` on `app`; you lose the ordering guarantee, which only
+matters with more than one replica.
 
 ---
 
