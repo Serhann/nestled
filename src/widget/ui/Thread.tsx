@@ -15,6 +15,7 @@ import { BotStep, readBotStep } from './BotStep';
  */
 export function Thread({
   messages,
+  welcome,
   nudge,
   contextCard,
   agentTyping,
@@ -23,6 +24,8 @@ export function Thread({
   onBotAnswer,
 }: {
   messages: ChatMessage[];
+  /** Shown when there is nothing else in the thread. From the Wording screen. */
+  welcome: string;
   nudge: string | null;
   contextCard: ContextCardPayload | null;
   agentTyping: boolean;
@@ -45,8 +48,25 @@ export function Thread({
   const step =
     botStepsEnabled && last && last.sender_type !== 'visitor' ? readBotStep(last.metadata) : null;
 
+  const empty = messages.length === 0 && !nudge && !contextCard;
+
   return (
     <div className="n-body" ref={scroller}>
+      {/*
+        An open panel with nothing in it.
+        
+        Four hundred pixels of empty grey was what a visitor saw every time they opened
+        a chat on a website with no welcome message and no starters configured — which
+        is the default. It reads as broken rather than as ready, and it is the first
+        thing anyone sees. `welcomeMessage` is already an editable string on the Wording
+        screen, so this needs no new copy key and the customer can change it.
+      */}
+      {empty && (
+        <div className="n-empty">
+          <p>{welcome}</p>
+        </div>
+      )}
+
       {contextCard && <ContextCard card={contextCard} />}
 
       {nudge && (

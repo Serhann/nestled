@@ -276,6 +276,7 @@ export function Widget({
               autoFocus={plainChat}
               onSend={(text) => void chat.send(text)}
               onTyping={chat.setTyping}
+              preview={params.preview}
             />
           ) : null
         }

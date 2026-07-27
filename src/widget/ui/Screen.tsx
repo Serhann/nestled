@@ -106,6 +106,7 @@ export function Screen(props: ScreenProps) {
   return (
     <Thread
       messages={chat.messages}
+      welcome={props.copy.welcomeMessage}
       nudge={props.nudge}
       contextCard={chat.contextCard}
       agentTyping={chat.agentTyping}

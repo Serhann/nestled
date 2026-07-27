@@ -67,20 +67,57 @@ textarea {
  * offsets as the inline custom properties the widget sets in preview mode.
  */
 .n-root[data-preview='true'] {
+  /* `position: fixed` is inherited from .n-root and must STAY fixed. Setting it to
+     relative here gave a block with `inset: 0` and no content flow a height of zero,
+     so `bottom: 12px` on the panel resolved against nothing and put it off the top of
+     the frame — a preview that measured correctly and rendered nowhere. */
   inset: 0;
-  align-items: flex-end;
-  justify-content: flex-end;
-  padding: var(--n-preview-offset-y, 20px) var(--n-preview-offset-x, 20px);
+  display: block;
+  padding: 0;
 }
-.n-root[data-preview='true'][data-position='left'] {
-  justify-content: flex-start;
-}
+
+/*
+ * The launcher honours the offsets, absolutely positioned, exactly as embed.js
+ * positions its iframe on a real page. Padding on the root cannot do this job: an
+ * 80px offset would then also be 80px of padding either side of the PANEL, which on a
+ * 358px preview frame left it 198px wide — half its real width, with the body
+ * collapsed. Measured, not guessed.
+ */
 .n-root[data-preview='true'] .n-launcher {
+  position: absolute;
   margin: 0;
+  bottom: var(--n-preview-offset-y, 20px);
+  right: var(--n-preview-offset-x, 20px);
 }
-/* The panel fills the frame rather than hanging off the bottom of it. */
+.n-root[data-preview='true'][data-position='left'] .n-launcher {
+  right: auto;
+  left: var(--n-preview-offset-x, 20px);
+}
+
+/*
+ * The panel at the size embed.js gives it — 384x640 — because the document itself
+ * never states a size: on a real page the IFRAME is that size and the panel just fills
+ * it. `flex: none` is required, not decorative; the panel's own `flex: 1 1 0%` makes a
+ * specified width do nothing at all.
+ *
+ * A fixed small inset rather than the customer's offsets. Those are measured against a
+ * whole viewport on a real page, and inside a 360px preview a 60px offset would push
+ * the panel off the frame — showing something that happens on nobody's screen.
+ */
 .n-root[data-preview='true'] .n-panel {
-  max-height: 100%;
+  position: absolute;
+  flex: none;
+  bottom: 12px;
+  right: 12px;
+  /* Viewport units, not percentages: inside this iframe 100vh IS the frame, and a
+     percentage height needs a definite containing height that an absolutely positioned
+     child of a fixed root does not reliably have — it resolved to zero. */
+  width: min(384px, calc(100vw - 24px));
+  height: min(640px, calc(100vh - 24px));
+}
+.n-root[data-preview='true'][data-position='left'] .n-panel {
+  right: auto;
+  left: 12px;
 }
 
 /* Standalone (/widget opened directly): a floating card, not a full takeover. */
@@ -216,6 +253,24 @@ textarea {
   color: var(--n-color-danger);
   font-size: 12px;
   border-bottom: 1px solid var(--n-color-border);
+}
+
+.n-empty {
+  /* Centred in whatever height is left, so it reads as "ready" rather than as the
+     top of a list that failed to load. */
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px 20px;
+  color: var(--n-color-text-muted);
+}
+.n-empty p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  max-width: 26ch;
 }
 
 .n-body {
