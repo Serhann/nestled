@@ -20,8 +20,28 @@ export async function ensureSeedAdmin(): Promise<void> {
   const name = process.env.SEED_ADMIN_NAME ?? 'Admin';
   if (!email || !password) return;
 
+  // Only while the install has NO users at all — not "while this email is
+  // missing". The variable stays in the compose file forever, so a per-email
+  // check would resurrect an admin somebody deliberately removed, on the next
+  // restart, quietly.
+  //
+  // The cost is that a race loses: if anyone signs up before the first boot
+  // finishes, this never runs. That is rare and recoverable, but it must not be
+  // SILENT — "I set the variables and no account appeared" is an infuriating
+  // thing to debug from nothing.
   const count = await prisma.users.count();
-  if (count > 0) return;
+  if (count > 0) {
+    const existing = await prisma.users.findUnique({ where: { email }, select: { id: true } });
+    if (!existing) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[seed] SEED_ADMIN_EMAIL is set to ${email} but the database already has users, ` +
+          'so the first-user bootstrap was skipped. Sign up through the app, or invite ' +
+          'this address from an existing workspace.',
+      );
+    }
+    return;
+  }
 
   // The most capable public plan, with status 'active' rather than 'trialing': a
   // self-hosted install is not evaluating anything and shouldn't be silently

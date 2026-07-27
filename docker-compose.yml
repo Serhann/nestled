@@ -10,7 +10,8 @@
 # the right trade for one container. The production stack runs them as a separate
 # release step the app waits on.
 #
-# Seed a demo workspace with:  docker compose exec app npm run seed
+# The demo seed (`npm run seed`) needs a source checkout — the image has no tsx.
+# Run it from ./server with DATABASE_URL pointed at this stack's Postgres.
 services:
   db:
     image: postgres:16-alpine
