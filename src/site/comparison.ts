@@ -213,8 +213,8 @@ export const ROWS: Row[] = [
   {
     label: 'Chat on channels other than your website',
     detail:
-      'WhatsApp, Instagram, Messenger, SMS. This is a row we lose, and it is worth knowing before you buy.',
-    nestled: false,
+      'Email and SMS land in the same inbox as your website chat, with the same assignment rules and knowledge base. WhatsApp and Instagram are not here yet, and that is a real gap.',
+    nestled: 'Website, email, SMS',
     others: {
       Crisp: 'Yes, omnichannel from $95/mo',
       Intercom: 'Yes, usage-billed',
@@ -272,7 +272,7 @@ export const TRADEOFFS: Tradeoff[] = [
   {
     competitor: 'Crisp',
     strength:
-      'The closest of the three to how we price, and the only one of them that does not cap conversations at all. It also beats us outright on reach: one inbox covering WhatsApp, Instagram, Messenger, SMS and email, with translation running across all of them. If you answer a very high volume of chats on more channels than a website, Crisp is a strong buy and we will not pretend otherwise.',
+      'The closest of the three to how we price, and the only one of them that does not cap conversations at all. It still beats us on reach: we cover website chat, email and SMS, and Crisp adds WhatsApp, Instagram and Messenger on top, with translation running across all of them. If WhatsApp is where your customers already are, Crisp is a strong buy today and we will not pretend otherwise.',
     costs: [
       'The cap moved rather than disappeared: each plan limits stored customer profiles — 5,000 on Mini, 50,000 on Essentials, 200,000 on Plus — so you can be pushed up a tier by how many people you have talked to, not by how much support you are doing.',
       'AI arrives as prepaid credits ($5 / $25 / $75 a month by plan, which Crisp puts at roughly 90 / 450 / 1,350 automated conversations). A busy month spends them.',

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, Languages, Sparkles, User } from 'lucide-react';
+import { AlertTriangle, Bot, Languages, Sparkles, User } from 'lucide-react';
 import { Markdown } from '../../../lib/markdown';
 import { relative } from './ConversationList';
 import type { TranslationState } from './useTranslate';
@@ -136,6 +136,23 @@ export function MessageBubble({
               <Languages className="w-3 h-3" aria-hidden />
               {showOriginal ? 'show translation' : 'translated · show original'}
             </button>
+          )}
+          {/*
+            Delivery, and only where it can actually fail. A reply that bounced is the
+            one thing an agent must not miss: they will move on believing they
+            answered, and the customer is waiting for a message that does not exist.
+          */}
+          {message.delivery_status === 'failed' && (
+            <span
+              className="inline-flex items-center gap-1 text-red-700 font-medium"
+              title={message.delivery_error ?? undefined}
+            >
+              <AlertTriangle className="w-3 h-3" aria-hidden />
+              not delivered
+            </span>
+          )}
+          {message.delivery_status === 'pending' && (
+            <span className="inline-flex items-center gap-1 text-gray-400">sending…</span>
           )}
         </span>
       </div>

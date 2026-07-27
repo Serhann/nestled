@@ -7,6 +7,7 @@ import { publishToWorkspace, sendToConversationVisitors } from '../../realtime/h
 import { publishAssignment } from '../../services/routing.js';
 import { getPersonProfile } from '../../services/identity.js';
 import { translateText } from '../../services/translate/index.js';
+import { deliverReply } from '../../services/channels/outbound.js';
 import { planById } from '../../services/billing/plans.js';
 import { bumpUsage, checkUsageLimit } from '../../lib/usage.js';
 import { notifyNewMessage } from '../../services/discord.js';
@@ -33,6 +34,7 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
         website_id?: string;
         assignee?: string;
         tag?: string;
+        channel?: string;
         q?: string;
         cursor?: string;
         limit?: string;
@@ -51,6 +53,7 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
                 ? { assigned_member_id: q.assignee }
                 : {}),
           ...(q.tag ? { tags: { has: q.tag } } : {}),
+          ...(q.channel && q.channel !== 'all' ? { channel: q.channel } : {}),
           ...(q.q
             ? {
                 OR: [
@@ -81,6 +84,8 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
           created_at: true,
           updated_at: true,
           metadata: true,
+          channel: true,
+          channel_address: true,
           messages: {
             orderBy: { created_at: 'desc' },
             take: 1,
@@ -131,7 +136,14 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
 
       const conv = await req.db.conversations.findUnique({
         where: { id },
-        select: { id: true, workspace_id: true, website_id: true, first_response_at: true, status: true },
+        select: {
+          id: true,
+          workspace_id: true,
+          website_id: true,
+          first_response_at: true,
+          status: true,
+          channel: true,
+        },
       });
       if (!conv) return reply.code(404).send({ error: 'Not found' });
       // Per-website grants apply to replying, not just to reading.
@@ -139,6 +151,7 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
         return reply.code(403).send({ error: 'Missing permission: conversation:reply' });
       }
 
+      const offWidget = conv.channel !== 'widget';
       const message = await insertMessage({
         workspaceId: conv.workspace_id,
         websiteId: conv.website_id,
@@ -146,6 +159,10 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
         content: body.content,
         senderType: 'agent',
         senderMemberId: req.auth!.member!.id,
+        // `pending` only where sending can actually fail. On the widget, writing the
+        // row IS delivery, and a status column that always says 'sent' teaches an
+        // agent to ignore it — which is the one thing it must not do.
+        deliveryStatus: offWidget ? 'pending' : null,
       });
 
       // Stamp the first human response once, for response-time reporting. Doing it
@@ -166,8 +183,34 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
         });
       }
 
+      /**
+       * Delivery, AWAITED, and its outcome returned.
+       *
+       * Fire-and-forget would be wrong here in a way it is not elsewhere: the agent is
+       * looking at the screen right now, and a reply that bounced is something they
+       * have to know before they move to the next conversation. Awaiting an SMTP or
+       * Twilio round trip costs a second on the response; not awaiting it costs a
+       * customer who never got an answer while an agent believes they replied.
+       */
+      let delivery: { ok: boolean; error?: string } = { ok: true };
+      if (offWidget && message) {
+        const result = await deliverReply({
+          workspaceId: conv.workspace_id,
+          conversationId: id,
+          messageId: message.id,
+          content: body.content,
+        });
+        delivery = result.ok ? { ok: true } : { ok: false, error: result.error };
+      }
+
       void notifyNewMessage(conv.workspace_id, id, body.content, 'agent');
-      return reply.code(201).send({ message });
+      // The message is returned either way — it IS in the thread, and pretending
+      // otherwise would lose the agent's words. `delivery` is how the client knows
+      // whether it reached anybody.
+      return reply.code(201).send({
+        message: message ? { ...message, delivery_status: delivery.ok ? 'sent' : 'failed' } : null,
+        delivery,
+      });
     },
   );
 

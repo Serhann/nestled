@@ -1,6 +1,7 @@
 import { del, get, post, put } from '../http';
 import type {
   CannedResponse,
+  Channel,
   ConversationDetail,
   ConversationRow,
   ConversationStatus,
@@ -20,6 +21,7 @@ const w = (workspaceId: string, path: string): string => `/api/v1/w/${workspaceI
 
 export interface InboxFilters {
   status?: ConversationStatus | 'all';
+  channel?: Channel | 'all';
   website_id?: string;
   /** A member id, or the two special values the server understands. */
   assignee?: string | 'me' | 'unassigned';
@@ -55,11 +57,20 @@ export const getConversation = (
   conversationId: string,
 ): Promise<{ conversation: ConversationDetail }> => get(w(id, `/conversations/${conversationId}`));
 
+/**
+ * Post an agent reply.
+ *
+ * `delivery` is how the caller learns whether the reply actually reached anybody.
+ * On the widget it is always ok; on email or SMS the send can fail after the message
+ * is already in the thread, and the agent has to be told rather than left believing
+ * they answered.
+ */
 export const sendReply = (
   id: string,
   conversationId: string,
   content: string,
-): Promise<{ message: Message }> => post(w(id, `/conversations/${conversationId}/messages`), { content });
+): Promise<{ message: Message | null; delivery?: { ok: boolean; error?: string } }> =>
+  post(w(id, `/conversations/${conversationId}/messages`), { content });
 
 export const setStatus = (
   id: string,

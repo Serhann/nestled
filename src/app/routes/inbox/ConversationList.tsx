@@ -2,6 +2,7 @@ import { Link } from 'react-router';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRef } from 'react';
 import { Badge, statusTone } from '../../../ui/Badge';
+import { ChannelBadge } from './channel';
 import { useAppStore } from '../../store';
 import type { ConversationRow } from '../../../lib/api/types';
 
@@ -83,6 +84,15 @@ export function ConversationList({
                   )}
                 </p>
                 <div className="flex items-center gap-1.5 mt-1.5">
+                  {/*
+                    Only non-widget channels are badged. The widget is the great
+                    majority of rows, so badging it would put a label on almost every
+                    one — which is noise, and noise is what stops an agent noticing the
+                    one row that is an SMS.
+                  */}
+                  {row.channel !== 'widget' && (
+                    <ChannelBadge channel={row.channel} size="xs" />
+                  )}
                   <Badge tone={statusTone(row.status)}>{row.status}</Badge>
                   {row.needs_human && <Badge tone="red">needs a human</Badge>}
                   {!row.assigned_member_id && <Badge tone="amber">unassigned</Badge>}

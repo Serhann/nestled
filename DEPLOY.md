@@ -1,8 +1,8 @@
 # Deploying Nestled
 
-All fourteen phases are merged. **220 server tests pass, both typechecks are
-clean, ESLint reports zero errors, and the production images have been built and
-exercised end to end** — signup, website creation, widget boot, a visitor
+All fourteen phases are merged, plus live translation and the email/SMS channels.
+**254 server tests pass, both typechecks are clean, ESLint reports zero errors,
+and the production images have been built and exercised end to end** — signup, website creation, widget boot, a visitor
 message, an agent reply, the billing state, and both directions of the
 customer/staff auth wall.
 
@@ -184,6 +184,54 @@ nothing.
 
 ---
 
+## Email and SMS as inbox channels
+
+Website chat, email and SMS now land in one inbox. Both extra channels are **off
+until an operator configures them**, and both are off in the safe direction: an
+unset secret means inbound is closed, never open.
+
+**Ops panel → Settings → Channels:**
+
+| Field | What it is for |
+|---|---|
+| Inbound mail domain | Where you receive, e.g. `inbox.nestled.chat`. Shown to customers so they know what an address may look like. |
+| Inbound mail secret | Sent by your mail provider as `X-Nestled-Signature`. Anyone with the webhook URL and this value can post into any customer's inbox — treat it like a password. |
+| Twilio account SID / auth token | SMS in both directions. The auth token also verifies the inbound signature, so SMS is off until it is set. |
+
+**Webhooks to point at this app:**
+
+- `POST /api/v1/channels/email/inbound` — normalised JSON (`from`, `to`, `subject`,
+  `text`, `message_id`), so any ESP can be mapped onto it rather than us picking one
+  for you. `message_id` is required: it is the idempotency key.
+- `POST /api/v1/channels/sms/inbound` — Twilio's form post. Twilio signs the exact
+  **public** URL, so if this app is behind a proxy, `X-Forwarded-Proto` and
+  `X-Forwarded-Host` must reach it or every signature check fails in a way that
+  looks like a wrong auth token.
+
+**Then, per website:** the customer adds their address under Website → Email & SMS.
+For email, the practical route is that they forward a mailbox on their own domain to
+their address on yours — they keep control of their domain and you need no DNS access.
+
+Three behaviours worth knowing before support asks:
+
+- **A channel belongs to a website.** That is what makes business hours, the
+  knowledge base, routing rules and per-agent website permissions apply to email and
+  SMS with no extra configuration. It also means "website" now means "brand/inbox",
+  which reads oddly for an email-only customer. Deliberate; see migration 0005.
+- **Replies are not retried.** A failed send is shown to the agent in the thread and
+  on the message, and stops there. A retry needs a provider-honoured idempotency key,
+  and getting that half right sends a customer the same reply twice.
+- **Bot flows do not run on email or SMS.** Flows are authored against a widget's
+  buttons and forms. The plain assistant does answer on these channels.
+
+**Not built:** WhatsApp and Instagram. Both are in the schema and the `channel` CHECK
+constraint, and replying on them returns "not supported yet" rather than failing
+obscurely. They need Meta business verification and approved message templates, which
+is weeks of paperwork on the critical path and not code — start that before the
+engineering, not after.
+
+---
+
 ## What is NOT verified
 
 Be aware of these before a launch. None is a known defect; each is something
@@ -233,6 +281,14 @@ because it is the same LLM call at the same cost. Switching translation on in a
 long conversation translates up to the 30 most recent visitor messages. If you
 ever advertise the AI allowance as "AI replies" and nothing else, that wording
 will be wrong.
+
+**Email and SMS have never touched a real provider.** The whole path is exercised
+end to end against the running app — a signed webhook in, tenant resolved from our
+address, quoted history stripped, the conversation in the inbox with a channel badge,
+an agent reply, and the failure surfaced when SMTP is absent. What has not happened:
+one real mail through a real ESP, and one real text through Twilio. Do both before a
+customer does. In particular nobody has yet confirmed that a reply threads correctly
+in Gmail and Outlook, which is the part most likely to be subtly wrong.
 
 **Stripe has only been tested against a fake client.** The webhook route's branch
 logic, all three idempotency mechanisms, out-of-order delivery and both checkout

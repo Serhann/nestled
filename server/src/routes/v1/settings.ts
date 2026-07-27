@@ -5,6 +5,7 @@ import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
 import { COPY_KEYS, DEFAULT_COPY } from '../../lib/widgetCopy.js';
 import { generateOpaqueToken } from '../../auth/tokens.js';
+import { settings } from '../../services/platform/settings.js';
 // Plan gating reads the shared plan catalog.
 // eslint-disable-next-line no-restricted-imports -- shared plan catalog
 import { unscopedPrisma } from '../../db/unscoped.js';
@@ -205,6 +206,128 @@ export async function settingsV1Routes(app: FastifyInstance): Promise<void> {
    * is currently signing, so the response says so plainly rather than letting the
    * customer discover it from a silently-empty visitor card.
    */
+  // ── Channel endpoints ─────────────────────────────────────────────────────
+  //
+  // The addresses a website receives on besides its widget. Gated on
+  // `website_settings:update`, the same capability as everything else that changes
+  // how a website behaves — an agent should not be able to redirect a customer's
+  // inbound mail.
+  app.get(
+    '/api/v1/w/:workspaceId/websites/:websiteId/channels',
+    { preHandler: [requireWorkspace, can('website:read')] },
+    async (req, reply) => {
+      const { websiteId } = req.params as { websiteId: string };
+      if (!req.auth!.can('website:read', websiteId)) {
+        return reply.code(403).send({ error: 'Missing permission: website:read' });
+      }
+      const endpoints = await req.db.channel_endpoints.findMany({
+        where: { website_id: websiteId },
+        orderBy: [{ channel: 'asc' }, { created_at: 'asc' }],
+        select: {
+          id: true,
+          channel: true,
+          address: true,
+          label: true,
+          is_active: true,
+          verified_at: true,
+          last_inbound_at: true,
+          created_at: true,
+        },
+      });
+      // The receiving domain is platform configuration, and the UI needs it to tell
+      // the customer what an address may look like rather than making them guess.
+      return reply.send({ endpoints, inbound_mail_domain: settings().inboundMail.domain });
+    },
+  );
+
+  app.post(
+    '/api/v1/w/:workspaceId/websites/:websiteId/channels',
+    { preHandler: [requireWorkspace, can('website_settings:update')] },
+    async (req, reply) => {
+      const { websiteId } = req.params as { websiteId: string };
+      if (!req.auth!.can('website_settings:update', websiteId)) {
+        return reply.code(403).send({ error: 'Missing permission: website_settings:update' });
+      }
+      const body = parseBody(
+        z.object({
+          channel: z.enum(['email', 'sms']),
+          address: z.string().min(3).max(320),
+          label: z.string().max(120).optional(),
+        }),
+        req.body,
+        reply,
+      );
+      if (!body) return;
+
+      const address = body.address.trim().toLowerCase();
+      if (body.channel === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) {
+        return reply.code(400).send({ error: 'That does not look like an email address' });
+      }
+      if (body.channel === 'sms' && !/^\+[1-9]\d{6,14}$/.test(address)) {
+        return reply.code(400).send({
+          error: 'A phone number must be in E.164 form, like +905551112233',
+        });
+      }
+
+      try {
+        const endpoint = await req.db.channel_endpoints.create({
+          data: {
+            // Stated because the composite FK to websites(workspace_id, id) requires it
+            // in the create input. The tenant client overwrites it regardless, so this
+            // cannot be used to plant a row in another workspace — see db/tenant.ts.
+            workspace_id: req.auth!.workspace!.id,
+            website_id: websiteId,
+            channel: body.channel,
+            address,
+            label: body.label ?? null,
+          },
+          select: { id: true, channel: true, address: true, label: true, is_active: true },
+        });
+        await audit(req, {
+          action: 'channel_endpoint.created',
+          targetType: 'channel_endpoint',
+          targetId: endpoint.id,
+          details: { channel: body.channel, address },
+        });
+        return reply.code(201).send({ endpoint });
+      } catch (err) {
+        // The global unique index on (channel, lower(address)) is what makes inbound
+        // routing unambiguous, so a collision is a real answer rather than an error to
+        // paper over — and it must NOT say which workspace holds it.
+        if ((err as { code?: string }).code === 'P2002') {
+          return reply.code(409).send({
+            error: 'That address is already connected to an inbox',
+            code: 'address_taken',
+          });
+        }
+        throw err;
+      }
+    },
+  );
+
+  app.delete(
+    '/api/v1/w/:workspaceId/websites/:websiteId/channels/:endpointId',
+    { preHandler: [requireWorkspace, can('website_settings:update')] },
+    async (req, reply) => {
+      const { websiteId, endpointId } = req.params as { websiteId: string; endpointId: string };
+      if (!req.auth!.can('website_settings:update', websiteId)) {
+        return reply.code(403).send({ error: 'Missing permission: website_settings:update' });
+      }
+      // deleteMany, not delete: the tenant client narrows the where clause, so another
+      // workspace's endpoint id simply matches nothing instead of 404-ing informatively.
+      const { count } = await req.db.channel_endpoints.deleteMany({
+        where: { id: endpointId, website_id: websiteId },
+      });
+      if (count === 0) return reply.code(404).send({ error: 'Not found' });
+      await audit(req, {
+        action: 'channel_endpoint.deleted',
+        targetType: 'channel_endpoint',
+        targetId: endpointId,
+      });
+      return reply.send({ ok: true });
+    },
+  );
+
   app.post(
     '/api/v1/w/:workspaceId/websites/:websiteId/identity-secret',
     { preHandler: [requireWorkspace, can('integration:manage')] },

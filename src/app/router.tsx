@@ -116,6 +116,7 @@ export const router = createBrowserRouter(
                 { path: 'forms', ...lazyRoute(() => import('./routes/websites/Forms')) },
                 { path: 'behavior', ...lazyRoute(() => import('./routes/websites/Behavior')) },
                 { path: 'hours', ...lazyRoute(() => import('./routes/websites/Hours')) },
+                { path: 'channels', ...lazyRoute(() => import('./routes/websites/Channels')) },
                 { path: 'security', ...lazyRoute(() => import('./routes/websites/Security')) },
               ],
             },

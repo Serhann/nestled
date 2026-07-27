@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Inbox as InboxIcon, Languages, Search } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Inbox as InboxIcon, Languages, Search } from 'lucide-react';
 import { useWorkspace } from '../../providers/WorkspaceProvider';
 import { useRealtime } from '../../providers/RealtimeProvider';
 import {
@@ -20,12 +20,13 @@ import { Select } from '../../../ui/Form';
 import { EmptyState, ErrorState, Spinner } from '../../../ui/Page';
 import { NoAccess } from '../../../ui/Locked';
 import { visitorLanguage } from '../../../lib/language';
+import { ChannelBadge } from './channel';
 import { ConversationList } from './ConversationList';
 import { Thread } from './Thread';
 import { Composer } from './Composer';
 import { ConversationDetails } from './ConversationDetails';
 import { useTranslate } from './useTranslate';
-import type { ConversationStatus, Message } from '../../../lib/api/types';
+import type { ConversationDetail, ConversationStatus, Message } from '../../../lib/api/types';
 
 /** Stable identity, so the translation hook's effect does not see a new array each render. */
 const EMPTY_MESSAGES: Message[] = [];
@@ -51,6 +52,7 @@ export default function Inbox() {
     status: (params.get('status') as ConversationStatus | 'all') ?? 'open',
     website_id: params.get('website') ?? undefined,
     assignee: params.get('assignee') ?? undefined,
+    channel: (params.get('channel') as InboxFilters['channel']) ?? undefined,
     q: params.get('q') ?? undefined,
   };
 
@@ -120,6 +122,17 @@ export default function Inbox() {
               <option value="pending">Pending</option>
               <option value="resolved">Resolved</option>
               <option value="all">All</option>
+            </Select>
+            <Select
+              value={filters.channel ?? ''}
+              onChange={(e) => setFilter('channel', e.target.value || null)}
+              className="!py-1.5 !text-xs"
+              aria-label="Channel"
+            >
+              <option value="">All channels</option>
+              <option value="widget">Website</option>
+              <option value="email">Email</option>
+              <option value="sms">SMS</option>
             </Select>
             <Select
               value={filters.assignee ?? ''}
@@ -207,22 +220,45 @@ function ConversationPane({
     queryFn: () => getConversation(workspace.id, conversationId),
   });
 
+  // A reply that reached nobody. Held in state rather than derived from the message
+  // list, because the failure is about THIS send: the agent needs to see it now, in
+  // the moment they would otherwise move on to the next conversation.
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
+
   const reply = useMutation({
     mutationFn: (content: string) => sendReply(workspace.id, conversationId, content),
     onSuccess: async (result) => {
       clearDraft(conversationId);
-      // The socket echo will also carry this message; the cache patch matches on
-      // id so the agent sees their reply instantly without it appearing twice.
-      queryClient.setQueryData(qk.conversation(workspace.id, conversationId), (prev: unknown) => {
-        const typed = prev as { conversation: { messages: unknown[] } } | undefined;
-        if (!typed) return prev;
-        return {
-          conversation: {
-            ...typed.conversation,
-            messages: [...typed.conversation.messages, result.message],
+      setDeliveryError(result.delivery?.ok === false ? (result.delivery.error ?? 'Unknown error') : null);
+      /**
+       * Merge, never blindly append.
+       *
+       * The socket echo carries this same message, and the reducer for `message:new`
+       * dedupes by id — but only in that direction. This side used to append
+       * unconditionally and got away with it because the HTTP response almost always
+       * won the race, so there was nothing in the cache yet to collide with.
+       *
+       * Awaiting delivery on email and SMS inverted that: an SMTP round trip is
+       * slower than a socket frame, the echo lands first, and the append produced a
+       * SECOND copy of the agent's own reply. Found by sending one and looking at the
+       * screen. Matching on id makes the order irrelevant, which is what it should
+       * have been all along.
+       */
+      if (result.message) {
+        const message = result.message;
+        queryClient.setQueryData<{ conversation: ConversationDetail }>(
+          qk.conversation(workspace.id, conversationId),
+          (prev) => {
+            if (!prev) return prev;
+            const index = prev.conversation.messages.findIndex((m) => m.id === message.id);
+            const messages =
+              index === -1
+                ? [...prev.conversation.messages, message]
+                : prev.conversation.messages.map((m, i) => (i === index ? message : m));
+            return { conversation: { ...prev.conversation, messages } };
           },
-        };
-      });
+        );
+      }
     },
   });
 
@@ -262,7 +298,15 @@ function ConversationPane({
             <p className="text-sm font-semibold text-gray-800 truncate">
               {conversation.visitor_name || conversation.visitor_email || 'Visitor'}
             </p>
-            <Badge tone={statusTone(conversation.status)}>{conversation.status}</Badge>
+            <span className="flex items-center gap-1.5 flex-wrap">
+              <Badge tone={statusTone(conversation.status)}>{conversation.status}</Badge>
+              {/*
+                In the header the channel is always shown, unlike in the list: this is
+                the moment before the agent types, and how a reply will travel changes
+                what they should write. The address is the person they are answering.
+              */}
+              <ChannelBadge channel={conversation.channel} address={conversation.channel_address} />
+            </span>
           </div>
           {/*
             Only offered when the visitor's browser says they are not reading
@@ -294,6 +338,22 @@ function ConversationPane({
           )}
         </header>
 
+        {deliveryError && (
+          <div className="shrink-0 flex items-start gap-2 px-4 py-2.5 text-xs text-red-800 bg-red-50 border-b border-red-100">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-px" aria-hidden />
+            <span className="flex-1">
+              <b>Your reply was saved but not delivered.</b> {deliveryError} The customer has
+              not received it.
+            </span>
+            <button
+              onClick={() => setDeliveryError(null)}
+              className="font-semibold underline shrink-0"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {translation.problem && (
           <p className="shrink-0 px-4 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-100">
             {translation.problem === 'plan_limit'
@@ -315,6 +375,7 @@ function ConversationPane({
           disabled={!can('conversation:reply')}
           onSend={(content) => reply.mutate(content)}
           translateTo={theirLanguage}
+          channel={conversation.channel}
         />
       </div>
 

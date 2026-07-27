@@ -18,6 +18,7 @@ import { workspaceV1Routes } from './routes/v1/workspaces.js';
 import { teamV1Routes } from './routes/v1/team.js';
 import { widgetV1Routes } from './routes/v1/widget.js';
 import { conversationV1Routes } from './routes/v1/conversations.js';
+import { channelRoutes } from './routes/v1/channels.js';
 import { contentV1Routes } from './routes/v1/content.js';
 import { settingsV1Routes } from './routes/v1/settings.js';
 import { presenceV1Routes } from './routes/v1/presence.js';
@@ -74,6 +75,26 @@ export async function buildServer() {
   // Attachment uploads (per-file size cap enforced here).
   await app.register(multipart, { limits: { fileSize: env.MAX_UPLOAD_BYTES, files: 1 } });
 
+  /**
+   * Form-encoded bodies, for one caller: Twilio's inbound SMS webhook.
+   *
+   * Eight lines instead of @fastify/formbody, because that is the entire feature we
+   * need from it. `URLSearchParams` collapses repeated keys to the last value, which
+   * is correct here — Twilio sends none — and the 1 MB cap is well above an SMS and
+   * well below anything worth buffering from an unauthenticated caller.
+   */
+  app.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string', bodyLimit: 1_000_000 },
+    (_req, body, done) => {
+      try {
+        done(null, Object.fromEntries(new URLSearchParams(body as string)));
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
+  );
+
   // Health check for load balancers / compose healthchecks.
   app.get('/healthz', async (_req, reply) => {
     try {
@@ -118,6 +139,10 @@ export async function buildServer() {
   await app.register(supportV1Routes);
   await app.register(automationV1Routes);
   await app.register(billingV1Routes);
+
+  // Inbound channel webhooks. Unauthenticated callers, so each one verifies its
+  // provider's signature before believing a word of the body — see routes/v1/channels.
+  await app.register(channelRoutes);
 
   // The vendor's own surface. Mounted under /platform/*, authenticated by opaque
   // staff sessions rather than the customer JWT — the two never overlap.

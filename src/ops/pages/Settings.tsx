@@ -40,6 +40,14 @@ interface SettingsResponse {
       provider: string;
       deepl_api_key: Masked;
     };
+    sms: {
+      twilio_account_sid: string | null;
+      twilio_auth_token: Masked;
+    };
+    inbound_mail: {
+      inbound_mail_secret: Masked;
+      inbound_mail_domain: string | null;
+    };
     mail: {
       smtp_host: string | null;
       smtp_port: number;
@@ -241,6 +249,50 @@ export function Settings() {
           >
             {secret('deepl_api_key', s.translate.deepl_api_key)}
           </Field>
+        </div>
+      </Card>
+
+      <Card title="Channels">
+        <p className="text-sm text-gray-500 mb-4 leading-relaxed">
+          Email and SMS as inbox channels. These credentials are ours, not a
+          customer&rsquo;s: a customer connects an address or a number, never a key. Both
+          webhooks are <b>closed until configured</b> — an unset secret means inbound is off,
+          not open.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label="Inbound mail domain"
+            hint="Where you receive mail, e.g. inbox.nestled.chat. Point its MX at your mail provider and forward to this app's webhook. Shown to customers so they know what an address may look like."
+          >
+            {text('inbound_mail_domain', s.inbound_mail.inbound_mail_domain, 'inbox.nestled.chat')}
+          </Field>
+          <Field
+            label="Inbound mail secret"
+            hint="Sent by your mail provider as the X-Nestled-Signature header. Anyone who knows the webhook URL and this value can post into any customer's inbox, so treat it like a password."
+          >
+            {secret('inbound_mail_secret', s.inbound_mail.inbound_mail_secret)}
+          </Field>
+          <Field label="Twilio account SID">
+            {text('twilio_account_sid', s.sms.twilio_account_sid, 'AC…')}
+          </Field>
+          <Field
+            label="Twilio auth token"
+            hint="Also verifies the inbound SMS signature, so SMS is off in both directions until this is set."
+          >
+            {secret('twilio_auth_token', s.sms.twilio_auth_token)}
+          </Field>
+        </div>
+        <div className="mt-4 rounded-xl bg-gray-50 border border-gray-200 p-3 text-xs text-gray-600 leading-relaxed">
+          <p className="font-semibold text-gray-700">Webhook URLs to configure</p>
+          <p className="mt-1 font-mono break-all">POST /api/v1/channels/email/inbound</p>
+          <p className="font-mono break-all">POST /api/v1/channels/sms/inbound</p>
+          <p className="mt-1.5">
+            The mail one takes normalised JSON — <code>from</code>, <code>to</code>,{' '}
+            <code>subject</code>, <code>text</code>, <code>message_id</code> — so any provider
+            can be mapped onto it. Point Twilio&rsquo;s number config at the SMS one; it signs
+            the exact public URL, so if this app sits behind a proxy make sure{' '}
+            <code>X-Forwarded-Proto</code> and <code>X-Forwarded-Host</code> reach it.
+          </p>
         </div>
       </Card>
 

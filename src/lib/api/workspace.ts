@@ -137,3 +137,35 @@ export const getUsage = (
 ): Promise<{ counters: UsageCounter[]; limits: Record<string, number> }> => get(w(id, '/usage'));
 
 export const getAudit = (id: string): Promise<{ entries: AuditEntry[] }> => get(w(id, '/audit'));
+
+// ── Channel endpoints ───────────────────────────────────────────────────────
+
+export interface ChannelEndpoint {
+  id: string;
+  channel: 'email' | 'sms';
+  address: string;
+  label: string | null;
+  is_active: boolean;
+  verified_at: string | null;
+  last_inbound_at: string | null;
+  created_at: string;
+}
+
+export const listChannelEndpoints = (
+  id: string,
+  websiteId: string,
+): Promise<{ endpoints: ChannelEndpoint[]; inbound_mail_domain: string | null }> =>
+  get(`/api/v1/w/${id}/websites/${websiteId}/channels`);
+
+export const addChannelEndpoint = (
+  id: string,
+  websiteId: string,
+  input: { channel: 'email' | 'sms'; address: string; label?: string },
+): Promise<{ endpoint: ChannelEndpoint }> =>
+  post(`/api/v1/w/${id}/websites/${websiteId}/channels`, input);
+
+export const deleteChannelEndpoint = (
+  id: string,
+  websiteId: string,
+  endpointId: string,
+): Promise<{ ok: true }> => del(`/api/v1/w/${id}/websites/${websiteId}/channels/${endpointId}`);

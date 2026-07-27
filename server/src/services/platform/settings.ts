@@ -55,6 +55,10 @@ export interface PlatformSettings {
     provider: 'llm' | 'deepl';
     deeplApiKey: string | null;
   };
+  /** Twilio, for the SMS channel. Platform level — see migration 0006. */
+  sms: { accountSid: string | null; authToken: string | null };
+  /** Inbound mail: the shared secret the webhook verifies, and our receiving domain. */
+  inboundMail: { secret: string | null; domain: string | null };
   mail: {
     host: string | null;
     port: number;
@@ -93,6 +97,8 @@ export const SECRET_FIELDS = [
   'anthropic_api_key',
   'openai_api_key',
   'deepl_api_key',
+  'twilio_auth_token',
+  'inbound_mail_secret',
   'smtp_password',
   'vapid_private_key',
   'maxmind_license_key',
@@ -222,6 +228,14 @@ function resolve(row: Row): PlatformSettings {
           ? 'deepl'
           : 'llm',
       deeplApiKey: str(row, 'deepl_api_key', null),
+    },
+    sms: {
+      accountSid: str(row, 'twilio_account_sid', e.TWILIO_ACCOUNT_SID ?? null),
+      authToken: str(row, 'twilio_auth_token', e.TWILIO_AUTH_TOKEN ?? null),
+    },
+    inboundMail: {
+      secret: str(row, 'inbound_mail_secret', null),
+      domain: str(row, 'inbound_mail_domain', null),
     },
     mail: {
       host: str(row, 'smtp_host', e.SMTP_HOST ?? null),
@@ -362,6 +376,14 @@ export function redactedSettings(): Record<string, unknown> {
     translate: {
       provider: s.translate.provider,
       deepl_api_key: mask(s.translate.deeplApiKey),
+    },
+    sms: {
+      twilio_account_sid: s.sms.accountSid,
+      twilio_auth_token: mask(s.sms.authToken),
+    },
+    inbound_mail: {
+      inbound_mail_secret: mask(s.inboundMail.secret),
+      inbound_mail_domain: s.inboundMail.domain,
     },
     mail: {
       smtp_host: s.mail.host,

@@ -351,8 +351,8 @@ function NotForYou() {
       'The assistant runs on our infrastructure and is metered per workspace. That keeps it simple and keeps your keys out of our database, but it does mean you cannot point it at your own account or your own model.',
     ],
     [
-      'You need phone, WhatsApp or social channels',
-      'Chat on your website, and email for what happens after. Nothing else.',
+      'You need WhatsApp or Instagram',
+      'Website chat, email and SMS all land in one inbox. WhatsApp, Instagram and Messenger do not — those need Meta business verification and approved message templates, and we have not built them yet. If most of your customers message you on WhatsApp, buy something that already does it.',
     ],
     [
       'You want to run it on your own servers',

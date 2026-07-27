@@ -46,6 +46,12 @@ const settingsBody = z.object({
   translate_provider: z.enum(['llm', 'deepl', '']).optional(),
   deepl_api_key: text(200),
 
+  // Channels
+  twilio_account_sid: text(100),
+  twilio_auth_token: text(200),
+  inbound_mail_secret: text(200),
+  inbound_mail_domain: text(200),
+
   // Email
   smtp_host: text(200),
   smtp_port: z.coerce.number().int().min(1).max(65535).optional(),

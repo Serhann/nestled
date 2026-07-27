@@ -40,6 +40,7 @@ const TABS = [
   { to: 'forms', label: 'Forms' },
   { to: 'behavior', label: 'Behaviour' },
   { to: 'hours', label: 'Hours' },
+  { to: 'channels', label: 'Email & SMS' },
   { to: 'security', label: 'Security' },
 ];
 

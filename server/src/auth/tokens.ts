@@ -93,8 +93,18 @@ export function generateOpaqueToken(bytes = 32): { token: string; hash: string }
   return { token, hash: hashToken(token) };
 }
 
-/** Constant-time compare of a presented token against a stored hash. */
-export function tokenMatchesHash(token: string, storedHash: string): boolean {
+/**
+ * Constant-time compare of a presented token against a stored hash.
+ *
+ * `storedHash` is nullable and a null NEVER matches. That signature is deliberate:
+ * since migration 0005, `conversations.visitor_token_hash` is null for every
+ * conversation that did not come from the widget — an email or SMS thread has no
+ * visitor token and never will. A row with no hash must not be openable by anyone
+ * presenting anything, and the only way to guarantee that for present and future
+ * callers is to answer it here rather than trusting each of them to check first.
+ */
+export function tokenMatchesHash(token: string, storedHash: string | null | undefined): boolean {
+  if (!storedHash) return false;
   const presented = Buffer.from(hashToken(token));
   const stored = Buffer.from(storedHash);
   if (presented.length !== stored.length) return false;

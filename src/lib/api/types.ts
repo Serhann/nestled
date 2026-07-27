@@ -131,9 +131,16 @@ export interface ConversationRow {
   created_at: string;
   updated_at: string;
   metadata: Record<string, unknown> | null;
+  /** Where the conversation lives. 'widget' for everything before channels existed. */
+  channel: Channel;
+  /** Their address on that channel. Null on the widget. */
+  channel_address: string | null;
   last_message: string | null;
   last_sender: SenderType | null;
 }
+
+export const CHANNELS = ['widget', 'email', 'sms', 'whatsapp', 'instagram'] as const;
+export type Channel = (typeof CHANNELS)[number];
 
 export interface Message {
   id: string;
@@ -144,6 +151,13 @@ export interface Message {
   sender_name: string | null;
   created_at: string;
   metadata: Record<string, unknown> | null;
+  /**
+   * Only ever set on channels where sending can fail after the agent pressed send.
+   * Null on the widget, where writing the row IS delivery — a status that always
+   * said "sent" would teach an agent to stop reading it.
+   */
+  delivery_status?: 'pending' | 'sent' | 'failed' | null;
+  delivery_error?: string | null;
 }
 
 export interface Note {

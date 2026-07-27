@@ -151,6 +151,33 @@ export function applyEvent(
       break;
     }
 
+    /**
+     * A reply's delivery outcome, arriving after the message itself.
+     *
+     * Patches in place rather than appending. On email and SMS the row is written as
+     * `pending` and published immediately, then the send is attempted — so the copy
+     * already on screen says "sending…" and nothing else would ever correct it.
+     */
+    case 'message:delivery': {
+      const conversationId = event.conversationId as string;
+      const messageId = event.messageId as string;
+      const status = event.status as 'sent' | 'failed';
+      const error = (event.error ?? null) as string | null;
+
+      queryClient.setQueryData<{ conversation: ConversationDetail }>(
+        qk.conversation(workspaceId, conversationId),
+        (prev) => {
+          if (!prev) return prev;
+          const index = prev.conversation.messages.findIndex((m) => m.id === messageId);
+          if (index === -1) return prev;
+          const messages = [...prev.conversation.messages];
+          messages[index] = { ...messages[index]!, delivery_status: status, delivery_error: error };
+          return { conversation: { ...prev.conversation, messages } };
+        },
+      );
+      break;
+    }
+
     case 'conversation:new': {
       const conversation = event.conversation as ConversationRow;
       patchConversationLists(queryClient, workspaceId, (rows) =>

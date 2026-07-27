@@ -24,6 +24,22 @@ export type RealtimeEvent =
   | { type: 'conversation:new'; conversation: unknown }
   | { type: 'conversation:updated'; conversation: unknown }
   | { type: 'message:new'; conversationId: string; message: unknown }
+  /**
+   * A message's delivery outcome, resolved after the row was already published.
+   *
+   * Needed because on email and SMS the row is written as `pending` and the send
+   * happens after — so `message:new` carries a status that is already stale by the
+   * time anyone reads it. Without this frame the socket echo and the HTTP response
+   * race, and when the socket wins the agent watches "sending…" forever on a reply
+   * that has in fact already bounced.
+   */
+  | {
+      type: 'message:delivery';
+      conversationId: string;
+      messageId: string;
+      status: 'sent' | 'failed';
+      error?: string | null;
+    }
   | { type: 'typing'; conversationId: string; from: 'visitor' | 'agent'; isTyping: boolean }
   | { type: 'presence:list'; visitors: unknown[] }
   | { type: 'agent:status'; online: boolean }
@@ -338,6 +354,29 @@ export function publishMessage(
 ): void {
   publishToWorkspace(workspaceId, { type: 'message:new', conversationId, message }, { websiteId });
   sendToConversationVisitors(conversationId, { type: 'message:new', conversationId, message });
+}
+
+/**
+ * Tell every agent watching that a message did or did not get out.
+ *
+ * Workspace-wide rather than to one socket: a second agent looking at the same
+ * conversation needs to know the reply bounced just as much as the person who sent
+ * it. Deliberately NOT sent to the visitor — our delivery plumbing is not their
+ * business, and on a failed send there is nobody at the other end to receive it.
+ */
+export function publishDelivery(
+  workspaceId: string,
+  websiteId: string,
+  conversationId: string,
+  messageId: string,
+  status: 'sent' | 'failed',
+  error?: string | null,
+): void {
+  publishToWorkspace(
+    workspaceId,
+    { type: 'message:delivery', conversationId, messageId, status, error: error ?? null },
+    { websiteId },
+  );
 }
 
 /** Drop bookkeeping for a conversation nobody is connected to any more. */

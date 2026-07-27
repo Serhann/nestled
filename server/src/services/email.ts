@@ -204,6 +204,98 @@ export async function sendEmail(args: SendArgs): Promise<void> {
 }
 
 /**
+ * Send a conversation reply as mail, from one of the workspace's own addresses.
+ *
+ * Separate from `sendEmail` because almost everything differs: the From is the
+ * customer's inbound address rather than ours, the body is an agent's words rather
+ * than a template, and threading headers matter. What it shares — the transporter,
+ * the `outbound_emails` ledger, and never throwing into a request — is what it
+ * reuses.
+ *
+ * Unlike `sendEmail` this one REPORTS failure to its caller. A transactional email
+ * that fails is retried by a sweep and nobody is waiting; an agent's reply that
+ * fails has a person on the other end expecting an answer, and the agent has to be
+ * told in the thread.
+ */
+export async function sendChannelEmail(args: {
+  from: string;
+  fromName?: string | null;
+  to: string;
+  subject: string;
+  text: string;
+  /**
+   * The Message-ID of the mail we are replying to. Both headers are set from it,
+   * because clients disagree about which one they thread on: Apple Mail and Outlook
+   * lean on References, most others on In-Reply-To. Setting one and not the other is
+   * how a reply arrives as a brand-new thread in half your customers' inboxes.
+   */
+  inReplyTo?: string | null;
+  workspaceId: string;
+  conversationId: string;
+}): Promise<{ ok: true; messageId: string | null } | { ok: false; error: string }> {
+  const row = await unscopedPrisma.outbound_emails.create({
+    data: {
+      workspace_id: args.workspaceId,
+      to_email: args.to.toLowerCase(),
+      template: 'channel_reply',
+      subject: args.subject,
+      status: 'queued',
+      related_type: 'conversation',
+      related_id: args.conversationId,
+    },
+    select: { id: true },
+  });
+
+  const tx = getTransporter();
+  if (!tx) {
+    await unscopedPrisma.outbound_emails.update({
+      where: { id: row.id },
+      data: { status: 'failed', error: 'No SMTP configured', attempts: { increment: 1 } },
+    });
+    return { ok: false, error: 'Email is not configured on this installation' };
+  }
+
+  try {
+    const info = await tx.sendMail({
+      // The customer's address, so the reply lands back on the same endpoint and
+      // threads. Sending as our own address would route their reply to us.
+      from: args.fromName ? `"${args.fromName.replace(/"/g, '')}" <${args.from}>` : args.from,
+      to: args.to,
+      subject: args.subject,
+      text: args.text,
+      ...(args.inReplyTo
+        ? { inReplyTo: args.inReplyTo, references: [args.inReplyTo] }
+        : {}),
+      headers: {
+        // Marks this as an automated-ish reply so other systems' vacation responders
+        // stay quiet. Without it, two autoresponders can talk to each other until
+        // somebody notices the bill.
+        'Auto-Submitted': 'auto-replied',
+      },
+    });
+    await unscopedPrisma.outbound_emails.update({
+      where: { id: row.id },
+      data: {
+        status: 'sent',
+        sent_at: new Date(),
+        provider_message_id: info.messageId ?? null,
+        attempts: { increment: 1 },
+      },
+    });
+    return { ok: true, messageId: info.messageId ?? null };
+  } catch (err) {
+    const error = (err as Error).message.slice(0, 500);
+    await unscopedPrisma.outbound_emails.update({
+      where: { id: row.id },
+      data: { status: 'failed', error, attempts: { increment: 1 } },
+    });
+    // eslint-disable-next-line no-console
+    console.error(`[email] channel reply failed -> ${args.to}`, err);
+    return { ok: false, error };
+  }
+}
+
+/**
  * Re-drive failed sends. Called by the jobs sweep; exported so it can be tested
  * and triggered from the ops panel.
  */

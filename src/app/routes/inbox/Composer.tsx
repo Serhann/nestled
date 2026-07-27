@@ -5,6 +5,7 @@ import { listCanned, sendTyping, translate } from '../../../lib/api/inbox';
 import { qk } from '../../../lib/queryKeys';
 import { useAppStore } from '../../store';
 import { Button } from '../../../ui/Button';
+import type { Channel } from '../../../lib/api/types';
 
 /**
  * The reply box.
@@ -31,6 +32,7 @@ export function Composer({
   sending,
   disabled,
   translateTo,
+  channel,
 }: {
   workspaceId: string;
   conversationId: string;
@@ -42,6 +44,8 @@ export function Composer({
    * Null hides the control — see `visitorLanguage`.
    */
   translateTo?: { code: string; name: string } | null;
+  /** Which medium this reply will travel on. Changes what the agent should know. */
+  channel?: Channel;
 }) {
   const draft = useAppStore((s) => s.drafts[conversationId] ?? '');
   const setDraft = useAppStore((s) => s.setDraft);
@@ -126,6 +130,26 @@ export function Composer({
             </li>
           ))}
         </ul>
+      )}
+
+      {/*
+        A one-line reminder of where this reply is going, on channels where it matters.
+        No segment arithmetic here on purpose: the exact count depends on a GSM-7
+        table that lives on the server, and a duplicated copy of it that drifted would
+        put a confidently wrong price in front of an agent. Character count needs no
+        table; the rest is stated as the direction it is, not as a number.
+      */}
+      {channel === 'sms' && (
+        <p className="mb-2 text-[11px] text-gray-500">
+          Replying by SMS · {draft.length} characters. Long messages, and any message with
+          Turkish or other non-Latin characters, are split into several parts and billed
+          per part.
+        </p>
+      )}
+      {channel === 'email' && (
+        <p className="mb-2 text-[11px] text-gray-500">
+          Replying by email · plain text, sent from this inbox&rsquo;s address.
+        </p>
       )}
 
       {(translateTo || translateNote) && (

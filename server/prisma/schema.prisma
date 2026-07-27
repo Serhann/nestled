@@ -86,6 +86,7 @@ model workspaces {
   visitor_links          visitor_links[]
   person_signals         person_signals[]
   visitor_ips            visitor_ips[]
+  channel_endpoints      channel_endpoints[]
   ai_usage               ai_usage[]
   usage_counters         usage_counters[]
   audit_log              audit_log[]
@@ -288,6 +289,7 @@ model websites {
   routing_rules    routing_rules[]
   visitor_links    visitor_links[]
   ai_usage         ai_usage[]
+  channel_endpoints channel_endpoints[]
 
   /// The keystone: every website-scoped child FKs on (workspace_id, id), so
   /// Postgres rejects a child pointing at another tenant's website.
@@ -395,6 +397,39 @@ model website_domains {
   @@index([workspace_id])
 }
 
+/// An address we RECEIVE on: an inbound mailbox, a phone number we own.
+///
+/// The unique index on (channel, lower(address)) in migration 0005 is the
+/// load-bearing one. An inbound email carries nothing but a To: header and an SMS
+/// nothing but a destination number, so that address IS the tenant routing key —
+/// two workspaces claiming one address would mean guessing whose customer a
+/// stranger is. No credentials live here: we hold the provider account, so those
+/// are platform-level in `platform_settings`.
+model channel_endpoints {
+  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspace_id String @db.Uuid
+  website_id   String @db.Uuid
+
+  /// CHECK (email|sms|whatsapp|instagram) — no 'widget': a website IS its widget.
+  channel String
+  address String
+  label   String?
+
+  is_active Boolean @default(true)
+  config    Json    @default(dbgenerated("'{}'::jsonb"))
+
+  verified_at     DateTime? @db.Timestamptz(6)
+  last_inbound_at DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  website   websites   @relation(fields: [workspace_id, website_id], references: [workspace_id, id], onDelete: Cascade)
+
+  @@unique([workspace_id, id])
+  @@index([workspace_id, channel])
+}
+
 /// SECRETS. Reachable only from admin-capability routes. No public route may ever
 /// select from this table.
 ///
@@ -429,14 +464,23 @@ model conversations {
   visitor_email      String?
   /// The visitor's bearer token for this conversation, hashed. Unique because it
   /// is also the WS handshake lookup key.
-  visitor_token_hash String    @unique
+  /// Nullable since 0005: a visitor bearer token is a widget concept, and someone
+  /// emailing us has none. Postgres treats NULLs as distinct in a unique index, so
+  /// this stays @unique and every non-widget conversation carries NULL.
+  visitor_token_hash String?   @unique
   /// Single-use, 60s token for proactive handover. The proactive frame carries
   /// THIS, never the visitor token — so a leaked frame is worthless on its own.
   claim_token_hash   String?
   claim_expires_at   DateTime? @db.Timestamptz(6)
 
   status             String   @default("open") // CHECK (open|pending|resolved)
-  source             String   @default("widget") // CHECK (widget|proactive|bot)
+  /// How it began. CHECK (widget|proactive|bot|inbound)
+  source             String   @default("widget")
+  /// Where it lives. CHECK (widget|email|sms|whatsapp|instagram)
+  channel            String   @default("widget")
+  /// The customer's address on that channel — email address, E.164 number. NULL on
+  /// the widget, where a visitor has no address.
+  channel_address    String?
   assigned_member_id String?  @db.Uuid
   needs_human        Boolean  @default(false)
   message_count      Int      @default(0)
@@ -492,6 +536,14 @@ model messages {
   sender_type      String
   sender_member_id String?  @db.Uuid
   metadata         Json     @default(dbgenerated("'{}'::jsonb"))
+  /// The provider's id for an inbound message. Unique per workspace, because every
+  /// one of these providers redelivers webhooks and the database is the only place
+  /// two concurrent deliveries cannot both win.
+  external_id      String?
+  /// Only set on channels where sending can fail after the agent pressed send.
+  /// CHECK (pending|sent|failed)
+  delivery_status  String?
+  delivery_error   String?
   created_at       DateTime @default(now()) @db.Timestamptz(6)
 
   workspace    workspaces         @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
@@ -500,6 +552,7 @@ model messages {
 
   attachments attachments[]
 
+  @@unique([workspace_id, external_id])
   @@index([conversation_id, created_at])
   /// Monthly metering + retention sweeps, without a join.
   @@index([workspace_id, created_at])
@@ -1140,6 +1193,13 @@ model platform_settings {
   /// dedicated engine is the better default.
   translate_provider String? // llm|deepl
   deepl_api_key      String?
+
+  // Channel providers. Platform level on purpose: we hold the accounts, a customer
+  // supplies only which address or number is theirs. See migration 0006.
+  twilio_account_sid  String?
+  twilio_auth_token   String?
+  inbound_mail_secret String?
+  inbound_mail_domain String?
 
   // ── Transactional email ──
   smtp_host     String?
