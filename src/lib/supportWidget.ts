@@ -1,4 +1,4 @@
-import { ORIGINS } from './origins';
+import { embedScriptUrl } from './origins';
 
 /**
  * Our own support chat, on our own surfaces.
@@ -63,9 +63,14 @@ export function mountSupportWidget(
           }) as NestledFn);
         window.NestledId = config.key;
 
+        // embedScriptUrl(), not ORIGINS.widget + '/embed.js'. In the single-domain
+        // layout ORIGINS.widget is the PATH '/widget', and '/widget/embed.js' is
+        // not where nginx serves the script — it falls through to the SPA
+        // fallback, so the browser loads HTML as JavaScript and the bubble simply
+        // never appears. There is one function that knows this; use it.
         const script = document.createElement('script');
         script.async = true;
-        script.src = `${ORIGINS.widget.replace(/\/$/, '')}/embed.js`;
+        script.src = embedScriptUrl();
         document.body.appendChild(script);
 
         // Queued before the script has loaded — the stub above collects calls and

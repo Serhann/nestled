@@ -34,10 +34,30 @@ export function PricingIsland() {
   }
 
   if (!plans) {
+    // Prerendered, and therefore the state a crawler and a slow connection see.
+    // Three empty pulsing boxes would waste the whole point of rendering this page
+    // ahead of time, so the shape and the tiers are here in words. Only the prices
+    // are held back, because those must come from the same rows checkout charges
+    // from — a number hardcoded here is a number that is wrong the first time
+    // somebody edits a plan.
     return (
-      <div className="grid gap-4 sm:grid-cols-3" aria-busy="true">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="rounded-3xl border border-gray-200 bg-white p-6 h-64 animate-pulse" />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true">
+        {[
+          ['Starter', 'For one person answering their own customers.'],
+          ['Pro', 'For a small team sharing an inbox.'],
+          ['Business', 'For several websites and a bigger team.'],
+        ].map(([name, who]) => (
+          <div key={name} className="rounded-3xl border border-gray-200 bg-white p-6">
+            <p className="font-semibold text-gray-800">{name}</p>
+            <p className="mt-2 text-sm text-gray-500">{who}</p>
+            <p className="mt-6 text-sm text-gray-400">Loading today’s prices…</p>
+            <a
+              href={`${ORIGINS.app}/signup`}
+              className="mt-6 block text-center bg-blue-600 text-white rounded-full px-4 py-2.5 text-sm font-semibold hover:bg-blue-700 transition"
+            >
+              Start free
+            </a>
+          </div>
         ))}
       </div>
     );
@@ -62,7 +82,7 @@ export function PricingIsland() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {plans.map((plan) => {
           const price = interval === 'year' ? plan.price_yearly_cents : plan.price_monthly_cents;
           return (

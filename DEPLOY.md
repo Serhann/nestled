@@ -162,7 +162,9 @@ nobody has watched happen.
 **The panel and the ops console have not been clicked through in a browser.**
 Both typecheck, lint, build, and their API contracts are covered by integration
 tests. The React rendering itself is not — no human and no headless browser has
-used them. The widget, by contrast, *was* driven in a real browser end to end.
+used them. The widget and the marketing site, by contrast, *were* driven in a
+real browser: the marketing pages render, the pricing table hydrates with live
+prices, and our own support bubble appears.
 
 **Stripe has only been tested against a fake client.** The webhook route's branch
 logic, all three idempotency mechanisms, out-of-order delivery and both checkout
