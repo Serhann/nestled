@@ -65,6 +65,7 @@ export const TENANT_MODELS = {
   ai_usage: 'workspace',
   usage_counters: 'workspace',
   channel_endpoints: 'workspace',
+  website_response_targets: 'workspace',
 } as const satisfies Record<string, 'workspace' | 'parent'>;
 
 export type TenantModel = keyof typeof TENANT_MODELS;

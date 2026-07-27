@@ -1,5 +1,6 @@
 import { startRetentionJob } from './retention.js';
 import { runBillingLifecycle } from '../services/billing/index.js';
+import { startResponseTargetSweep } from '../services/responseTargets.js';
 
 /**
  * Every recurring background job, started from one place.
@@ -45,4 +46,8 @@ export function startBackgroundJobs(): void {
   startRetentionJob();
   // Trial expiry, dunning transitions, the purge sweep and Stripe customer backfill.
   startBillingLifecycleJob();
+  // Missed response deadlines: reassign and announce them. Every MINUTE, unlike the
+  // sweeps above, because the whole value is escalating while the conversation can
+  // still be answered — a daily pass would be a report, which is what this replaces.
+  startResponseTargetSweep();
 }

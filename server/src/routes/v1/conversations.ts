@@ -8,6 +8,7 @@ import { publishAssignment } from '../../services/routing.js';
 import { getPersonProfile } from '../../services/identity.js';
 import { translateText } from '../../services/translate/index.js';
 import { deliverReply } from '../../services/channels/outbound.js';
+import { onAgentReply } from '../../services/responseTargets.js';
 import { planById } from '../../services/billing/plans.js';
 import { bumpUsage, checkUsageLimit } from '../../lib/usage.js';
 import { notifyNewMessage } from '../../services/discord.js';
@@ -24,6 +25,33 @@ import { audit } from '../../lib/audit.js';
 
 const LIST_LIMIT = 100;
 
+/**
+ * The urgency views.
+ *
+ * `at_risk` deliberately means "due within the next 15 minutes OR already past due",
+ * not just "past due". A list of conversations that are already late is a list of
+ * things you have already failed at; the point is to catch them while there is still
+ * time, so the window looks forward.
+ */
+const AT_RISK_WINDOW_MS = 15 * 60_000;
+
+function dueFilter(due: string | undefined): Record<string, unknown> {
+  const now = new Date();
+  switch (due) {
+    case 'at_risk':
+      return { response_due_at: { not: null, lte: new Date(now.getTime() + AT_RISK_WINDOW_MS) } };
+    case 'breached':
+      return { response_breached_at: { not: null } };
+    case 'waiting':
+      // Somebody is waiting for a reply, target or no target.
+      return { awaiting_reply_since: { not: null } };
+    case 'unread':
+      return { unread_at: { not: null } };
+    default:
+      return {};
+  }
+}
+
 export async function conversationV1Routes(app: FastifyInstance): Promise<void> {
   app.get(
     '/api/v1/w/:workspaceId/conversations',
@@ -35,6 +63,8 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
         assignee?: string;
         tag?: string;
         channel?: string;
+        /** 'at_risk' | 'breached' | 'waiting' | 'unread' — the urgency views. */
+        due?: string;
         q?: string;
         cursor?: string;
         limit?: string;
@@ -54,6 +84,7 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
                 : {}),
           ...(q.tag ? { tags: { has: q.tag } } : {}),
           ...(q.channel && q.channel !== 'all' ? { channel: q.channel } : {}),
+          ...dueFilter(q.due),
           ...(q.q
             ? {
                 OR: [
@@ -64,7 +95,15 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
               }
             : {}),
         },
-        orderBy: { updated_at: 'desc' },
+        /**
+         * Urgency, not recency, when an urgency view is selected.
+         *
+         * This is the actual workflow change. An inbox ordered by "most recent" puts
+         * the conversation nobody has answered for three hours BELOW the one that
+         * arrived a minute ago — which is precisely how a request gets missed. Asking
+         * for the at-risk view sorts by deadline instead, soonest first.
+         */
+        orderBy: q.due && q.due !== 'all' ? { response_due_at: 'asc' } : { updated_at: 'desc' },
         take,
         // Keyset pagination rather than offset: an inbox reorders on every new
         // message, so page 2 of an offset query would skip or repeat rows.
@@ -86,6 +125,10 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
           metadata: true,
           channel: true,
           channel_address: true,
+          awaiting_reply_since: true,
+          response_due_at: true,
+          response_breached_at: true,
+          unread_at: true,
           messages: {
             orderBy: { created_at: 'desc' },
             take: 1,
@@ -105,6 +148,34 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
         }),
         next_cursor: conversations.length === take ? conversations[conversations.length - 1]?.id : null,
       });
+    },
+  );
+
+  /**
+   * How many need attention right now.
+   *
+   * Its own tiny endpoint rather than a field on the list, because the numbers have to
+   * be visible when the agent is NOT looking at the at-risk view — that is the entire
+   * point. Four indexed counts, polled by the shell.
+   */
+  app.get(
+    '/api/v1/w/:workspaceId/conversations/attention',
+    { preHandler: [requireWorkspace, can('conversation:read')] },
+    async (req, reply) => {
+      const now = new Date();
+      const open = { status: { not: 'resolved' } };
+      const [atRisk, breached, unread, waiting] = await Promise.all([
+        req.db.conversations.count({
+          where: {
+            ...open,
+            response_due_at: { not: null, lte: new Date(now.getTime() + AT_RISK_WINDOW_MS) },
+          },
+        }),
+        req.db.conversations.count({ where: { ...open, response_breached_at: { not: null } } }),
+        req.db.conversations.count({ where: { ...open, unread_at: { not: null } } }),
+        req.db.conversations.count({ where: { ...open, awaiting_reply_since: { not: null } } }),
+      ]);
+      return reply.send({ at_risk: atRisk, breached, unread, waiting });
     },
   );
 
@@ -174,6 +245,11 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
           data: { first_response_at: new Date() },
         });
       }
+      // A human answered: the clock stops. `response_breached_at` is deliberately
+      // left in place — a breach that vanishes once somebody finally replies is a
+      // breach nobody learns from.
+      await onAgentReply({ workspaceId: conv.workspace_id, conversationId: id });
+
       // Replying to a resolved conversation re-opens it: an agent following up
       // should not have to remember to change the status first.
       if (conv.status === 'resolved') {
@@ -235,6 +311,12 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
           },
           select: { id: true, status: true, website_id: true, workspace_id: true, needs_human: true },
         });
+        // Resolving stops the clock too. Otherwise a settled conversation keeps its
+        // deadline, breaches overnight, and the sweep escalates something that was
+        // dealt with — the fastest way to teach a team to ignore the alerts.
+        if (body.status === 'resolved') {
+          await onAgentReply({ workspaceId: updated.workspace_id, conversationId: id });
+        }
         publishToWorkspace(
           updated.workspace_id,
           { type: 'conversation:updated', conversation: updated },
@@ -250,6 +332,44 @@ export async function conversationV1Routes(app: FastifyInstance): Promise<void> 
         if ((err as { code?: string }).code === 'P2025') return reply.code(404).send({ error: 'Not found' });
         throw err;
       }
+    },
+  );
+
+  /**
+   * Mark a conversation unread, or read again.
+   *
+   * A verbatim request from reviewers of the competition: with no way to mark a
+   * conversation unread, a support team that opens something they cannot deal with
+   * right now has no way to put it back — so it slides down a list ordered by
+   * recency and is never seen again. Gated on `conversation:read` rather than reply,
+   * because it is a reading gesture and an agent who can see it can flag it.
+   */
+  app.post(
+    '/api/v1/w/:workspaceId/conversations/:id/unread',
+    { preHandler: [requireWorkspace, can('conversation:read')] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = parseBody(z.object({ unread: z.boolean() }), req.body, reply);
+      if (!body) return;
+
+      const { count } = await req.db.conversations.updateMany({
+        where: { id },
+        data: { unread_at: body.unread ? new Date() : null },
+      });
+      if (count === 0) return reply.code(404).send({ error: 'Not found' });
+
+      const conv = await req.db.conversations.findUnique({
+        where: { id },
+        select: { id: true, website_id: true, workspace_id: true, unread_at: true },
+      });
+      if (conv) {
+        publishToWorkspace(
+          conv.workspace_id,
+          { type: 'conversation:updated', conversation: conv },
+          { websiteId: conv.website_id },
+        );
+      }
+      return reply.send({ conversation: conv });
     },
   );
 

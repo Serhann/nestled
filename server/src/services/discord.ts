@@ -118,3 +118,47 @@ export async function notifyNewMessage(
     ],
   });
 }
+
+/**
+ * A missed response deadline.
+ *
+ * Sent whether or not `discord_notify_new_message` is on, and gated only on the
+ * webhook being enabled at all: a workspace that muted per-message chatter has not
+ * asked to be kept in the dark about a broken promise. Those are different subscriptions
+ * and conflating them is how the one alert that mattered gets filtered away.
+ */
+export async function notifyBreach(
+  workspaceId: string,
+  conversationId: string,
+  visitorName: string | null,
+  dueAt: Date | null,
+): Promise<void> {
+  const settings = await loadSettings(workspaceId);
+  if (!settings) return;
+  const url = resolveWebhook(settings);
+  if (!url) return;
+
+  const conv = await unscopedPrisma.conversations.findFirst({
+    where: { id: conversationId, workspace_id: workspaceId },
+    select: { website: { select: { name: true } } },
+  });
+
+  await post(url, {
+    embeds: [
+      {
+        title: 'Response time missed',
+        // Red, unlike every other notification this file sends. The colour is the
+        // whole point in a busy channel.
+        color: 0xdc2626,
+        fields: [
+          { name: 'Visitor', value: visitorName || 'Anonymous', inline: true },
+          { name: 'Website', value: conv?.website?.name ?? 'Unknown', inline: true },
+          ...(dueAt
+            ? [{ name: 'Was due', value: dueAt.toISOString().replace('T', ' ').slice(0, 16) + ' UTC' }]
+            : []),
+        ],
+        footer: { text: 'It has been reassigned and marked unread.' },
+      },
+    ],
+  });
+}

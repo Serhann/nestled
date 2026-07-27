@@ -19,6 +19,7 @@ import { teamV1Routes } from './routes/v1/team.js';
 import { widgetV1Routes } from './routes/v1/widget.js';
 import { conversationV1Routes } from './routes/v1/conversations.js';
 import { channelRoutes } from './routes/v1/channels.js';
+import { reportRoutes } from './routes/v1/reports.js';
 import { contentV1Routes } from './routes/v1/content.js';
 import { settingsV1Routes } from './routes/v1/settings.js';
 import { presenceV1Routes } from './routes/v1/presence.js';
@@ -139,6 +140,7 @@ export async function buildServer() {
   await app.register(supportV1Routes);
   await app.register(automationV1Routes);
   await app.register(billingV1Routes);
+  await app.register(reportRoutes);
 
   // Inbound channel webhooks. Unauthenticated callers, so each one verifies its
   // provider's signature before believing a word of the body — see routes/v1/channels.

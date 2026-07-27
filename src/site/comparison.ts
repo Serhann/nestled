@@ -195,6 +195,33 @@ export const ROWS: Row[] = [
     },
   },
   {
+    label: 'A response-time promise that alerts BEFORE it is broken',
+    detail:
+      'Set "first reply within 30 minutes" and the inbox sorts by deadline instead of by whichever message arrived last. Miss one and it is reassigned, marked unread and announced — not summarised next week. The clock pauses outside your business hours, so a message arriving at 17:50 is due at 09:20 tomorrow.',
+    nestled: true,
+    others: {
+      // NOT claimed as absent. Reviewers report "no SLA breakdowns, no response-time
+      // analysis", but that is review coverage rather than the vendor's own
+      // documentation, and their docs were not readable from here. A dash is honest; a
+      // "no" would be the exact guess this file's header forbids. The sourced version
+      // of the claim lives in TRADEOFFS, worded as a report and linked.
+      Crisp: 'unknown',
+      Intercom: 'unknown',
+      Tidio: 'unknown',
+    },
+  },
+  {
+    label: 'Put a conversation back as unread',
+    detail:
+      'So something you open and cannot deal with right now returns to the queue instead of sliding down a list ordered by recency.',
+    nestled: true,
+    others: {
+      Crisp: 'unknown',
+      Intercom: 'unknown',
+      Tidio: 'unknown',
+    },
+  },
+  {
     label: 'Live translation in the shared inbox',
     detail:
       'Ours translates the visitor’s messages for the agent and the agent’s draft back into the visitor’s language, on a click and never automatically. It draws on the same monthly AI allowance as replies.',
@@ -281,9 +308,9 @@ export const TRADEOFFS: Tradeoff[] = [
     ],
     reported: {
       text:
-        'Reviewers note there is no published overage price for the profile ceilings, so what happens when you cross one is not obvious in advance.',
-      source: 'Featurebase',
-      url: 'https://www.featurebase.app/blog/crisp-pricing',
+        'Two things come up repeatedly in review coverage, and they are why we built response-time targets: reviewers report no SLA breakdown and no response-time analysis, and verified reviewers report there is no way to mark a conversation unread — which one of them describes as causing support departments to miss requests. Separately, there is no published overage price for the customer-profile ceilings, so what happens when you cross one is not obvious in advance.',
+      source: 'Capterra reviews',
+      url: 'https://www.capterra.com/p/151292/Crisp/reviews/',
     },
   },
   {

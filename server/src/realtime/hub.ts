@@ -45,6 +45,12 @@ export type RealtimeEvent =
   | { type: 'agent:status'; online: boolean }
   | { type: 'agent:joined'; conversationId: string; agentName: string | null }
   | { type: 'conversation:resolved'; conversationId: string }
+  /**
+   * A response deadline was missed. Its own frame rather than a flag on
+   * `conversation:updated`, because the inbox reacts differently: this one moves the
+   * row, marks it unread and shows an alert, and a generic update would have to guess.
+   */
+  | { type: 'conversation:breached'; conversationId: string; dueAt: Date | string | null }
   | { type: 'website:install_progress'; websiteId: string; phase: string; host?: string }
   // Control frames for the catch-up protocol. `hello` gives a reconnecting client
   // the current cursor; `resync` says the gap is too large to replay and the

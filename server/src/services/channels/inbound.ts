@@ -10,6 +10,7 @@ import { resolveIdentity } from '../identity.js';
 import { notifyNewMessage } from '../discord.js';
 import { routeConversation } from '../routing.js';
 import { maybeAIReply } from '../ai/reply.js';
+import { onCustomerMessage } from '../responseTargets.js';
 import type { InboundMessage } from './types.js';
 
 /**
@@ -203,6 +204,13 @@ export async function ingestInbound(msg: InboundMessage): Promise<IngestOutcome>
     fingerprint: null,
     email: msg.channel === 'email' ? from : null,
     websiteId: conversation.website_id,
+  });
+
+  // An email or a text is somebody waiting, exactly like a widget message.
+  await onCustomerMessage({
+    workspaceId,
+    websiteId: conversation.website_id,
+    conversationId: conversation.id,
   });
 
   void notifyNewMessage(workspaceId, conversation.id, msg.text, 'visitor');

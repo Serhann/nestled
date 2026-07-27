@@ -13,8 +13,7 @@ import {
   ShieldAlert,
   Sparkles,
   Users,
-  Zap,
-} from 'lucide-react';
+  Zap, Timer } from 'lucide-react';
 import { useSession } from './providers/SessionProvider';
 import { useWorkspace } from './providers/WorkspaceProvider';
 import { useRealtime } from './providers/RealtimeProvider';
@@ -63,6 +62,7 @@ export function AppShell() {
   const items: NavItem[] = [
     { to: `${base}/inbox`, label: 'Inbox', icon: Inbox, capability: 'conversation:read', badge: workspace.counts.open_conversations },
     { to: `${base}/visitors`, label: 'Visitors', icon: Users, capability: 'visitor:read' },
+    { to: `${base}/reports`, label: 'Response times', icon: Timer, capability: 'conversation:read' },
     { to: `${base}/websites`, label: 'Websites', icon: Globe, capability: 'website:read' },
     { to: `${base}/content/kb`, label: 'Knowledge', icon: BookOpen, capability: 'kb:read' },
     { to: `${base}/content/canned`, label: 'Canned replies', icon: MessageSquareText, capability: 'canned:read' },

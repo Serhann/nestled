@@ -22,6 +22,7 @@ import { attachConversationToVisitor } from '../../realtime/presence.js';
 import { maybeAIReply } from '../../services/ai/reply.js';
 import { advanceBotRun, startBotRun } from '../../services/bot/engine.js';
 import { routeConversation } from '../../services/routing.js';
+import { onCustomerMessage } from '../../services/responseTargets.js';
 import { notifyNewChat, notifyNewMessage } from '../../services/discord.js';
 import { pushNewConversation, pushVisitorMessage } from '../../services/push.js';
 import { DEFAULT_COPY } from '../../lib/widgetCopy.js';
@@ -643,6 +644,15 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
         });
       }
 
+      // The clock starts when the customer speaks. Awaited so the conversation the
+      // agent's inbox then renders already carries its deadline — a countdown that
+      // appears a second later reads as a glitch.
+      await onCustomerMessage({
+        workspaceId: conv.workspace_id,
+        websiteId: conv.website_id,
+        conversationId: id,
+      });
+
       void notifyNewMessage(conv.workspace_id, id, body.content, 'visitor');
       void pushVisitorMessage(conv.workspace_id, conv.website_id, id, conv.visitor_name, body.content);
 
@@ -814,6 +824,14 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
         metadata: { offline: true },
       });
       void bumpUsage(session.ws, 'conversations', 1);
+      // Somebody left a message and is waiting for an answer, so the clock runs here
+      // too. It is the offline path, so the deadline lands after opening — which is
+      // exactly what business-hours arithmetic is for.
+      await onCustomerMessage({
+        workspaceId: session.ws,
+        websiteId: session.wsite,
+        conversationId: conv.id,
+      });
       void notifyNewChat(session.ws, conv.id);
       return reply.code(201).send({ conversation_id: conv.id, visitor_token: token });
     },

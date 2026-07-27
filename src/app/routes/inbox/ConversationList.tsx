@@ -3,6 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRef } from 'react';
 import { Badge, statusTone } from '../../../ui/Badge';
 import { ChannelBadge } from './channel';
+import { DueBadge } from './due';
 import { useAppStore } from '../../store';
 import type { ConversationRow } from '../../../lib/api/types';
 
@@ -68,6 +69,17 @@ export function ConversationList({
                 }`}
               >
                 <div className="flex items-center gap-2 mb-0.5">
+                  {/*
+                    An unread dot, not bold text. Bold is already doing work here (the
+                    visitor's name), and an agent scanning forty rows finds a dot faster
+                    than a weight change.
+                  */}
+                  {row.unread_at && (
+                    <span
+                      className="w-2 h-2 rounded-full bg-blue-600 shrink-0"
+                      aria-label="Marked unread"
+                    />
+                  )}
                   <span className="text-sm font-semibold text-gray-800 truncate flex-1">
                     {row.visitor_name || row.visitor_email || 'Visitor'}
                   </span>
@@ -90,6 +102,12 @@ export function ConversationList({
                     one — which is noise, and noise is what stops an agent noticing the
                     one row that is an SMS.
                   */}
+                  {/*
+                    The deadline goes FIRST, ahead of status and tags. On a row the eye
+                    reads left to right and stops early, and "12m overdue" is the only
+                    thing on this line that is time-critical.
+                  */}
+                  <DueBadge dueAt={row.response_due_at} breachedAt={row.response_breached_at} size="xs" />
                   {row.channel !== 'widget' && (
                     <ChannelBadge channel={row.channel} size="xs" />
                   )}

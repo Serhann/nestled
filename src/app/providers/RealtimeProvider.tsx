@@ -178,6 +178,23 @@ export function applyEvent(
       break;
     }
 
+    /**
+     * A deadline was missed while the agent was looking at something else.
+     *
+     * Invalidate rather than patch: the sweep also reassigned it and marked it unread,
+     * so several fields moved at once and re-reading is both simpler and correct. The
+     * attention counts go too, because the badge is the thing that makes this visible.
+     */
+    case 'conversation:breached': {
+      const conversationId = event.conversationId as string;
+      void queryClient.invalidateQueries({ queryKey: qk.conversation(workspaceId, conversationId) });
+      // Every filtered list, by prefix — an at-risk view and an "everything" view can
+      // both be cached, and only one of them is the one on screen.
+      void queryClient.invalidateQueries({ queryKey: ['w', workspaceId, 'conversations'] });
+      void queryClient.invalidateQueries({ queryKey: ['attention', workspaceId] });
+      break;
+    }
+
     case 'conversation:new': {
       const conversation = event.conversation as ConversationRow;
       patchConversationLists(queryClient, workspaceId, (rows) =>

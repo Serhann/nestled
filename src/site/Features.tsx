@@ -7,6 +7,7 @@ import {
   Inbox,
   Languages,
   Lock,
+  Timer,
   MessagesSquare,
   Route,
   Smartphone,
@@ -114,6 +115,11 @@ export function Features() {
             Route,
             'Send it to the right person',
             'Rules decide who picks up: take turns, give it to whoever has the fewest open chats, or always one person. Anyone offline is skipped and keeps their turn.',
+          ],
+          [
+            Timer,
+            'Nothing sits unanswered without you knowing',
+            'Say how quickly you want to reply and the list sorts by what is running out of time, not by whatever arrived last. Go past it and the conversation is handed to someone else, flagged unread and announced — while it can still be answered. The clock stops when you are closed, so an evening message is due in the morning rather than overdue by breakfast.',
           ],
           [
             Languages,

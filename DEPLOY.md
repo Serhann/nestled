@@ -1,7 +1,8 @@
 # Deploying Nestled
 
-All fourteen phases are merged, plus live translation and the email/SMS channels.
-**254 server tests pass, both typechecks are clean, ESLint reports zero errors,
+All fourteen phases are merged, plus live translation, the email/SMS channels and
+response-time targets.
+**285 server tests pass, both typechecks are clean, ESLint reports zero errors,
 and the production images have been built and exercised end to end** — signup, website creation, widget boot, a visitor
 message, an agent reply, the billing state, and both directions of the
 customer/staff auth wall.
@@ -232,6 +233,45 @@ engineering, not after.
 
 ---
 
+## Response-time targets
+
+The feature built to be a reason to switch, and the one most likely to be misconfigured
+into uselessness. Per website, under **Website → Response times**.
+
+Set "first reply within N minutes" and three things change:
+
+1. The inbox gains urgency views (**due soon or overdue**, **missed**, **waiting on us**,
+   **unread**) and, in those views, sorts by **deadline instead of recency**. That
+   ordering is the actual product — a list ordered by "most recent" puts the conversation
+   nobody has touched for three hours below the one that arrived a minute ago.
+2. A sweep runs **every minute**. A missed deadline is stamped, marked unread,
+   optionally reassigned, and announced in the workspace's Discord channel in red.
+3. `/w/:slug/reports` reports p50 and p90 first-response times in **working minutes**,
+   plus a count of conversations nobody ever answered.
+
+**Three things to get right or the feature turns into noise:**
+
+- **Set business hours first.** "Pause the clock outside business hours" is on by
+  default and needs a schedule to pause for. Without one the clock runs overnight, every
+  Monday morning shows a wall of breaches, and the team stops believing any of it. The
+  settings page warns when hours are missing; the warning is the whole point.
+- **Changing a target does not move deadlines already running.** A promise made under
+  the old target keeps it. This is deliberate — silently recomputing live deadlines means
+  a conversation that was fine a second ago is suddenly breached — and it is why the page
+  says so out loud.
+- **The breach survives the reply.** `response_breached_at` is not cleared when somebody
+  finally answers, because a breach that vanishes on reply is one nobody learns from. The
+  inbox shows a grey "missed" badge on those.
+
+**A schedule that never opens produces NO deadline**, not a guess. Empty weekly rules, or
+every day a holiday, and `response_due_at` stays NULL — an invented deadline is a false
+breach, and false breaches are exactly how this stops being trusted.
+
+Escalation is off by default and reassignment is separate from notification, because a
+notification on its own is one more thing to miss.
+
+---
+
 ## What is NOT verified
 
 Be aware of these before a launch. None is a known defect; each is something
@@ -281,6 +321,13 @@ because it is the same LLM call at the same cost. Switching translation on in a
 long conversation translates up to the 30 most recent visitor messages. If you
 ever advertise the AI allowance as "AI replies" and nothing else, that wording
 will be wrong.
+
+**Response-time escalation has not been watched over a real day.** The clock, the
+breach, the sweep, the reassignment, the queue ordering and the report are all covered by
+tests and were driven in a browser against a running stack — including a conversation
+going overdue and being escalated while the page was open. What has not happened: a week
+of real traffic across a real business-hours boundary, and one Discord breach alert
+arriving in a real channel. Send yourself one before relying on it.
 
 **Email and SMS have never touched a real provider.** The whole path is exercised
 end to end against the running app — a signed webhook in, tenant resolved from our

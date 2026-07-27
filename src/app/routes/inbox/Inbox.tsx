@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Inbox as InboxIcon, Languages, Search } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Inbox as InboxIcon, Languages, Mail, MailOpen, Search } from 'lucide-react';
 import { useWorkspace } from '../../providers/WorkspaceProvider';
 import { useRealtime } from '../../providers/RealtimeProvider';
 import {
+  conversationAttention,
   getConversation,
   listConversations,
   sendReply,
   setStatus,
+  setUnread,
   type InboxFilters,
 } from '../../../lib/api/inbox';
 import { listWebsites } from '../../../lib/api/workspace';
@@ -21,6 +23,7 @@ import { EmptyState, ErrorState, Spinner } from '../../../ui/Page';
 import { NoAccess } from '../../../ui/Locked';
 import { visitorLanguage } from '../../../lib/language';
 import { ChannelBadge } from './channel';
+import { DueBadge } from './due';
 import { ConversationList } from './ConversationList';
 import { Thread } from './Thread';
 import { Composer } from './Composer';
@@ -53,6 +56,7 @@ export default function Inbox() {
     website_id: params.get('website') ?? undefined,
     assignee: params.get('assignee') ?? undefined,
     channel: (params.get('channel') as InboxFilters['channel']) ?? undefined,
+    due: (params.get('due') as InboxFilters['due']) ?? undefined,
     q: params.get('q') ?? undefined,
   };
 
@@ -60,6 +64,20 @@ export default function Inbox() {
     queryKey: qk.conversations(workspace.id, filters),
     queryFn: () => listConversations(workspace.id, filters),
     enabled: can('conversation:read'),
+  });
+
+  /**
+   * The counts, polled.
+   *
+   * Polled rather than pushed because a deadline passes because TIME passed — there is
+   * no event to subscribe to. Thirty seconds is well inside the amber window and cheap:
+   * four indexed counts.
+   */
+  const attention = useQuery({
+    queryKey: ['attention', workspace.id],
+    queryFn: () => conversationAttention(workspace.id),
+    enabled: can('conversation:read'),
+    refetchInterval: 30_000,
   });
 
   const websites = useQuery({
@@ -95,6 +113,33 @@ export default function Inbox() {
         }`}
       >
         <div className="p-3 space-y-2 border-b border-gray-200/70">
+          {/*
+            One line, and only when there is something on it. A permanent row of zeroes
+            is furniture; a row that appears when two conversations are overdue is a
+            thing you look at.
+          */}
+          {attention.data && (attention.data.breached > 0 || attention.data.at_risk > 0) && (
+            <div className="flex items-center gap-1.5 flex-wrap text-xs">
+              {attention.data.breached > 0 && (
+                <button
+                  onClick={() => setFilter('due', 'breached')}
+                  className="inline-flex items-center gap-1 rounded-full bg-red-50 text-red-700 px-2 py-1 font-semibold hover:bg-red-100"
+                >
+                  <AlertTriangle className="w-3 h-3" aria-hidden />
+                  {attention.data.breached} missed
+                </button>
+              )}
+              {attention.data.at_risk > 0 && (
+                <button
+                  onClick={() => setFilter('due', 'at_risk')}
+                  className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-800 px-2 py-1 font-semibold hover:bg-amber-100"
+                >
+                  <Clock className="w-3 h-3" aria-hidden />
+                  {attention.data.at_risk} due soon
+                </button>
+              )}
+            </div>
+          )}
           <label className="relative block">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" aria-hidden />
             <input
@@ -111,6 +156,27 @@ export default function Inbox() {
               className="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40"
             />
           </label>
+          {/*
+            The urgency view gets its own row, and it is the widest control.
+
+            Four selects side by side in a 320px column truncate to "Everyt⌄" and
+            "All cha⌄" — which is how a filter nobody can read becomes a filter nobody
+            uses. This one is the reason the panel exists, so it gets the space.
+          */}
+          <div className="flex gap-1.5">
+            <Select
+              value={filters.due ?? ''}
+              onChange={(e) => setFilter('due', e.target.value || null)}
+              className="!py-1.5 !text-xs"
+              aria-label="Needs attention"
+            >
+              <option value="">Everything</option>
+              <option value="at_risk">Due soon or overdue</option>
+              <option value="breached">Missed</option>
+              <option value="waiting">Waiting on us</option>
+              <option value="unread">Unread</option>
+            </Select>
+          </div>
           <div className="flex gap-1.5">
             <Select
               value={filters.status ?? 'open'}
@@ -262,6 +328,14 @@ function ConversationPane({
     },
   });
 
+  const unread = useMutation({
+    mutationFn: (value: boolean) => setUnread(workspace.id, conversationId, value),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.conversation(workspace.id, conversationId) });
+      void queryClient.invalidateQueries({ queryKey: ['attention', workspace.id] });
+    },
+  });
+
   const resolve = useMutation({
     mutationFn: (status: ConversationStatus) => setStatus(workspace.id, conversationId, status),
     onSuccess: () =>
@@ -306,6 +380,10 @@ function ConversationPane({
                 what they should write. The address is the person they are answering.
               */}
               <ChannelBadge channel={conversation.channel} address={conversation.channel_address} />
+              <DueBadge
+                dueAt={conversation.response_due_at}
+                breachedAt={conversation.response_breached_at}
+              />
             </span>
           </div>
           {/*
@@ -325,6 +403,30 @@ function ConversationPane({
               {translation.on ? 'Showing English' : `Translate from ${theirLanguage.name}`}
             </Button>
           )}
+          {/*
+            Put it back. Requested verbatim by reviewers of the competition: without
+            this, an agent who opens something they cannot deal with right now has no
+            way to return it to the queue, so it slides down a list ordered by recency
+            and is never seen again.
+          */}
+          <Button
+            size="sm"
+            variant="ghost"
+            busy={unread.isPending}
+            onClick={() => unread.mutate(!conversation.unread_at)}
+            title={
+              conversation.unread_at
+                ? 'Clear the unread flag'
+                : 'Put this back in the queue as unread'
+            }
+          >
+            {conversation.unread_at ? (
+              <MailOpen className="w-4 h-4" aria-hidden />
+            ) : (
+              <Mail className="w-4 h-4" aria-hidden />
+            )}
+            {conversation.unread_at ? 'Mark read' : 'Mark unread'}
+          </Button>
           {can('conversation:resolve') && conversation.status !== 'resolved' && (
             <Button
               size="sm"

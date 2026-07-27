@@ -135,6 +135,12 @@ export interface ConversationRow {
   channel: Channel;
   /** Their address on that channel. Null on the widget. */
   channel_address: string | null;
+  /** The response clock. Null when nobody is waiting or no target applies. */
+  awaiting_reply_since: string | null;
+  response_due_at: string | null;
+  response_breached_at: string | null;
+  /** Deliberately flagged by an agent, so it cannot slide off a list sorted by recency. */
+  unread_at: string | null;
   last_message: string | null;
   last_sender: SenderType | null;
 }

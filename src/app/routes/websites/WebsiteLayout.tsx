@@ -41,6 +41,7 @@ const TABS = [
   { to: 'behavior', label: 'Behaviour' },
   { to: 'hours', label: 'Hours' },
   { to: 'channels', label: 'Email & SMS' },
+  { to: 'response-times', label: 'Response times' },
   { to: 'security', label: 'Security' },
 ];
 

@@ -87,6 +87,7 @@ model workspaces {
   person_signals         person_signals[]
   visitor_ips            visitor_ips[]
   channel_endpoints      channel_endpoints[]
+  response_targets       website_response_targets[]
   ai_usage               ai_usage[]
   usage_counters         usage_counters[]
   audit_log              audit_log[]
@@ -148,6 +149,7 @@ model workspace_members {
   conversations conversations[]
   messages      messages[]
   bot_versions  bot_flow_versions[]
+  escalations   website_response_targets[] @relation("ResponseEscalation")
 
   @@unique([workspace_id, user_id])
   /// Composite-FK target: lets conversations.assigned_member_id be proven to
@@ -290,6 +292,7 @@ model websites {
   visitor_links    visitor_links[]
   ai_usage         ai_usage[]
   channel_endpoints channel_endpoints[]
+  response_targets  website_response_targets?
 
   /// The keystone: every website-scoped child FKs on (workspace_id, id), so
   /// Postgres rejects a child pointing at another tenant's website.
@@ -374,6 +377,43 @@ model website_business_hours {
   website   websites   @relation(fields: [website_id], references: [id], onDelete: Cascade)
   workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
 
+  @@index([workspace_id])
+}
+
+/// A response-time promise for one website: the target, whether the clock pauses
+/// outside opening hours, and who to escalate to when it is missed.
+///
+/// Absent row = no targets, which is the default. The point of the feature is not the
+/// number, it is that a missed deadline reassigns and notifies BEFORE the customer
+/// complains — a report that tells you last week went badly is not the same product.
+model website_response_targets {
+  website_id   String @id @db.Uuid
+  workspace_id String @db.Uuid
+
+  enabled Boolean @default(false)
+
+  /// NULL means no target for this one, which is different from 0. A team can promise
+  /// a first reply and promise nothing about follow-ups.
+  first_response_minutes Int?
+  next_response_minutes  Int?
+
+  /// Whether the clock pauses when the business is closed. True by default — the
+  /// opposite is what makes a team stop believing the numbers.
+  business_hours_only Boolean @default(true)
+
+  escalate_enabled      Boolean @default(false)
+  escalate_to_member_id String? @db.Uuid
+  notify_owners         Boolean @default(true)
+
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  website     websites           @relation(fields: [workspace_id, website_id], references: [workspace_id, id], onDelete: Cascade)
+  workspace   workspaces         @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+  escalate_to workspace_members? @relation("ResponseEscalation", fields: [escalate_to_member_id], references: [id], onDelete: SetNull)
+
+  /// Required by Prisma for the 1:1 back-relation from websites, and harmless: the
+  /// primary key already makes one row per website.
+  @@unique([workspace_id, website_id])
   @@index([workspace_id])
 }
 
@@ -489,6 +529,19 @@ model conversations {
 
   first_response_at DateTime? @db.Timestamptz(6)
   resolved_at       DateTime? @db.Timestamptz(6)
+
+  /// The response clock. See migration 0007 for why the DEADLINE is stored rather
+  /// than the target duration.
+  /// When the customer last said something still unanswered. NULL = nobody waiting.
+  awaiting_reply_since DateTime? @db.Timestamptz(6)
+  /// The deadline itself, in open time. NULL when there is no target to apply.
+  response_due_at      DateTime? @db.Timestamptz(6)
+  /// Stamped once, and KEPT after the reply lands so the report can count it.
+  response_breached_at DateTime? @db.Timestamptz(6)
+  /// So the sweep escalates once rather than every minute.
+  escalated_at         DateTime? @db.Timestamptz(6)
+  /// Deliberately marked unread by an agent, so it cannot quietly fall off the list.
+  unread_at            DateTime? @db.Timestamptz(6)
   rating_stars      Int?
   rating_tags       String[]  @default([])
   rating_comment    String?

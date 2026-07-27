@@ -22,6 +22,8 @@ const w = (workspaceId: string, path: string): string => `/api/v1/w/${workspaceI
 export interface InboxFilters {
   status?: ConversationStatus | 'all';
   channel?: Channel | 'all';
+  /** The urgency views. Selecting one also sorts by deadline instead of recency. */
+  due?: 'at_risk' | 'breached' | 'waiting' | 'unread';
   website_id?: string;
   /** A member id, or the two special values the server understands. */
   assignee?: string | 'me' | 'unassigned';
@@ -187,3 +189,65 @@ export const updateStarter = (
 ): Promise<{ item: Starter }> => put(w(id, `/starters/${entryId}`), input);
 export const deleteStarter = (id: string, entryId: string): Promise<{ ok: true }> =>
   del(w(id, `/starters/${entryId}`));
+
+// ── Response times ──────────────────────────────────────────────────────────
+
+export interface AttentionCounts {
+  at_risk: number;
+  breached: number;
+  unread: number;
+  waiting: number;
+}
+
+/** Polled by the shell, so the numbers are visible when you are NOT in the queue view. */
+export const conversationAttention = (id: string): Promise<AttentionCounts> =>
+  get(w(id, '/conversations/attention'));
+
+export const setUnread = (
+  id: string,
+  conversationId: string,
+  unread: boolean,
+): Promise<{ conversation: { id: string; unread_at: string | null } | null }> =>
+  post(w(id, `/conversations/${conversationId}/unread`), { unread });
+
+export interface ResponseTargets {
+  enabled: boolean;
+  first_response_minutes: number | null;
+  next_response_minutes: number | null;
+  business_hours_only: boolean;
+  escalate_enabled: boolean;
+  escalate_to_member_id: string | null;
+  notify_owners: boolean;
+}
+
+export const getResponseTargets = (
+  id: string,
+  websiteId: string,
+): Promise<{ targets: ResponseTargets; business_hours: { enabled: boolean; timezone: string } }> =>
+  get(w(id, `/websites/${websiteId}/response-targets`));
+
+export const saveResponseTargets = (
+  id: string,
+  websiteId: string,
+  input: ResponseTargets,
+): Promise<{ targets: ResponseTargets }> =>
+  put(w(id, `/websites/${websiteId}/response-targets`), input);
+
+export interface ResponseTimeReport {
+  days: number;
+  total: number;
+  answered: number;
+  unanswered: number;
+  breached: number;
+  first_response_minutes: {
+    p50: number | null;
+    p90: number | null;
+    fastest: number | null;
+    slowest: number | null;
+  };
+  by_channel: { channel: Channel; answered: number; p50: number | null; p90: number | null }[];
+  unit: 'business_minutes';
+}
+
+export const responseTimeReport = (id: string, days = 30): Promise<ResponseTimeReport> =>
+  get(w(id, `/reports/response-times?days=${days}`));

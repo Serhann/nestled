@@ -117,10 +117,12 @@ export const router = createBrowserRouter(
                 { path: 'behavior', ...lazyRoute(() => import('./routes/websites/Behavior')) },
                 { path: 'hours', ...lazyRoute(() => import('./routes/websites/Hours')) },
                 { path: 'channels', ...lazyRoute(() => import('./routes/websites/Channels')) },
+                { path: 'response-times', ...lazyRoute(() => import('./routes/websites/ResponseTimes')) },
                 { path: 'security', ...lazyRoute(() => import('./routes/websites/Security')) },
               ],
             },
 
+            { path: 'reports', ...lazyRoute(() => import('./routes/Reports')) },
             { path: 'content/kb', ...lazyRoute(() => import('./routes/content/KnowledgeBase')) },
             { path: 'content/canned', ...lazyRoute(() => import('./routes/content/Canned')) },
             { path: 'content/starters', ...lazyRoute(() => import('./routes/content/Starters')) },

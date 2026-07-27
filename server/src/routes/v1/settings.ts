@@ -206,6 +206,119 @@ export async function settingsV1Routes(app: FastifyInstance): Promise<void> {
    * is currently signing, so the response says so plainly rather than letting the
    * customer discover it from a silently-empty visitor card.
    */
+  // ── Response-time targets ─────────────────────────────────────────────────
+  app.get(
+    '/api/v1/w/:workspaceId/websites/:websiteId/response-targets',
+    { preHandler: [requireWorkspace, can('website:read')] },
+    async (req, reply) => {
+      const { websiteId } = req.params as { websiteId: string };
+      if (!req.auth!.can('website:read', websiteId)) {
+        return reply.code(403).send({ error: 'Missing permission: website:read' });
+      }
+      const row = await req.db.website_response_targets.findFirst({
+        where: { website_id: websiteId },
+        select: {
+          enabled: true,
+          first_response_minutes: true,
+          next_response_minutes: true,
+          business_hours_only: true,
+          escalate_enabled: true,
+          escalate_to_member_id: true,
+          notify_owners: true,
+        },
+      });
+      const hours = await req.db.website_business_hours.findFirst({
+        where: { website_id: websiteId },
+        select: { enabled: true, timezone: true },
+      });
+      // The UI needs to know whether there ARE opening hours, because "pause outside
+      // business hours" with no hours configured silently means "never pause" — and a
+      // setting that quietly does nothing is worse than one that is greyed out.
+      return reply.send({
+        targets: row ?? {
+          enabled: false,
+          first_response_minutes: null,
+          next_response_minutes: null,
+          business_hours_only: true,
+          escalate_enabled: false,
+          escalate_to_member_id: null,
+          notify_owners: true,
+        },
+        business_hours: { enabled: hours?.enabled ?? false, timezone: hours?.timezone ?? 'UTC' },
+      });
+    },
+  );
+
+  app.put(
+    '/api/v1/w/:workspaceId/websites/:websiteId/response-targets',
+    { preHandler: [requireWorkspace, can('website_settings:update')] },
+    async (req, reply) => {
+      const { websiteId } = req.params as { websiteId: string };
+      if (!req.auth!.can('website_settings:update', websiteId)) {
+        return reply.code(403).send({ error: 'Missing permission: website_settings:update' });
+      }
+      const body = parseBody(
+        z.object({
+          enabled: z.boolean(),
+          first_response_minutes: z.number().int().min(1).max(100000).nullable(),
+          next_response_minutes: z.number().int().min(1).max(100000).nullable(),
+          business_hours_only: z.boolean(),
+          escalate_enabled: z.boolean(),
+          escalate_to_member_id: z.string().uuid().nullable(),
+          notify_owners: z.boolean(),
+        }),
+        req.body,
+        reply,
+      );
+      if (!body) return;
+
+      // The escalation target must be a member of THIS workspace. The composite FK
+      // would catch a foreign id, but a 400 naming the problem beats a 500.
+      if (body.escalate_to_member_id) {
+        const member = await req.db.workspace_members.findFirst({
+          where: { id: body.escalate_to_member_id },
+          select: { id: true },
+        });
+        if (!member) return reply.code(400).send({ error: 'That teammate is not in this workspace' });
+      }
+
+      const data = {
+        enabled: body.enabled,
+        first_response_minutes: body.first_response_minutes,
+        next_response_minutes: body.next_response_minutes,
+        business_hours_only: body.business_hours_only,
+        escalate_enabled: body.escalate_enabled,
+        escalate_to_member_id: body.escalate_to_member_id,
+        notify_owners: body.notify_owners,
+      };
+      const targets = await req.db.website_response_targets.upsert({
+        where: { website_id: websiteId },
+        create: { workspace_id: req.auth!.workspace!.id, website_id: websiteId, ...data },
+        update: data,
+        select: {
+          enabled: true,
+          first_response_minutes: true,
+          next_response_minutes: true,
+          business_hours_only: true,
+          escalate_enabled: true,
+          escalate_to_member_id: true,
+          notify_owners: true,
+        },
+      });
+      await audit(req, {
+        action: 'response_targets.updated',
+        targetType: 'website',
+        targetId: websiteId,
+        details: data,
+      });
+      // Deliberately NOT recomputing the deadlines already on the clock. A promise made
+      // under the old target was made under the old target, and silently moving live
+      // deadlines is how a team finds a conversation breached that was fine a moment
+      // ago. The settings page says so.
+      return reply.send({ targets });
+    },
+  );
+
   // ── Channel endpoints ─────────────────────────────────────────────────────
   //
   // The addresses a website receives on besides its widget. Gated on

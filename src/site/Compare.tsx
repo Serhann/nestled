@@ -87,6 +87,11 @@ function Choices() {
       'Every visitor-facing string is a field in your settings, next to a live preview of the real widget. We store only what you changed, so improvements to the defaults still reach you. What you do not get is a stylesheet: colours, radius, font and copy, not arbitrary CSS.',
     ],
     [
+      'You find out before your customer does',
+      'The way support actually fails is quiet. One conversation goes unanswered, nobody notices, and you hear about it from the customer — or from a review. Most tools will tell you afterwards, in a weekly number.',
+      'Promise a first reply within thirty minutes and the inbox sorts by deadline rather than by whichever message arrived last. Miss one and it is handed to somebody else, marked unread and announced in your channel while it can still be answered. The clock pauses outside your opening hours, because a target that runs overnight cries wolf every Monday. What you do not get is a full SLA policy engine: one promise per website, not one per plan and priority.',
+    ],
+    [
       'Our own access to your account is on your record',
       'Vendor support usually reaches your data through a door you cannot see.',
       'Ours needs a written reason, expires in half an hour, cannot touch your billing, your team or your keys — and every action lands in your own audit log, labelled as ours.',
@@ -97,7 +102,7 @@ function Choices() {
     <Band tone="cream">
       <SectionHeading
         eyebrow="What we chose differently"
-        title="Five decisions that shape the whole product"
+        title="Six decisions that shape the whole product"
         lead="Each of these has a cost, and the cost is named. That is what makes them decisions rather than marketing."
       />
       <div className="space-y-4 max-w-4xl mx-auto">
