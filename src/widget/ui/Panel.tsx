@@ -1,3 +1,4 @@
+import type { BootTheme } from '../../types/chat';
 import type { Copy } from '../copy';
 import { FIXED } from '../copy';
 import { ChatIcon, CloseIcon, MinimizeIcon } from './icons';
@@ -12,6 +13,7 @@ import { ChatIcon, CloseIcon, MinimizeIcon } from './icons';
  */
 export function Panel({
   copy,
+  theme,
   online,
   contrastWarning,
   showBranding,
@@ -23,6 +25,8 @@ export function Panel({
   notice,
 }: {
   copy: Copy;
+  /** Header presentation and the brand avatar both come off the theme. */
+  theme?: BootTheme;
   online: boolean;
   contrastWarning: string | null;
   showBranding: boolean;
@@ -35,9 +39,27 @@ export function Panel({
 }) {
   return (
     <div className="n-panel">
-      <header className="n-header">
+      {/*
+        `data-style` rather than three header components. The difference between solid,
+        soft and minimal is entirely which colours are used — the structure, the buttons
+        and the accessible names are identical, and three copies of that would drift.
+      */}
+      <header className="n-header" data-style={theme?.header_style ?? 'solid'}>
         <span className="n-avatar" aria-hidden="true">
-          <ChatIcon size={14} />
+          {theme?.brand_avatar_url ? (
+            // The customer's own image. `onError` hides it rather than leaving a broken
+            // icon in the corner of their chat: the URL points at a server we do not
+            // control, and it will eventually 404 without anyone telling us.
+            <img
+              src={theme.brand_avatar_url}
+              alt=""
+              onError={(event) => {
+                event.currentTarget.style.display = 'none';
+              }}
+            />
+          ) : (
+            <ChatIcon size={14} />
+          )}
         </span>
         <div className="n-spread">
           <h1 className="n-header-title">{copy.headerTitle}</h1>

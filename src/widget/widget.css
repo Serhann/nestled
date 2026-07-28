@@ -185,6 +185,13 @@ textarea {
 }
 .n-launcher[data-style='pill'] {
   width: auto;
+  /* The label never wraps. Its width is what the host frame is sized from, so a
+     wrapping label is a measurement that disagrees with itself: the frame is made wide
+     enough for one line, the button then fills that frame, and the text wraps inside it
+     anyway. One line, and the frame follows. */
+  white-space: nowrap;
+  flex: none;
+  align-self: center;
   height: 48px;
   padding: 0 20px;
   gap: 8px;
@@ -749,4 +756,43 @@ textarea {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+
+/* ── Header weight ─────────────────────────────────────────────────────────
+ *
+ * 'solid' is the original: a full-bleed block of the brand colour. It is loud, and
+ * on a saturated brand it is the first thing anyone criticises — so the other two
+ * exist to let a customer keep a bright brand without a slab of it above every
+ * conversation.
+ *
+ * `color-mix` rather than a second stored colour: derived tints stay in step when
+ * the brand colour changes, and a customer who picks one colour should not have to
+ * pick three.
+ */
+.n-header[data-style='soft'] {
+  background: color-mix(in srgb, var(--n-color-primary) 12%, var(--n-color-surface));
+  color: var(--n-color-text);
+  border-bottom: 1px solid color-mix(in srgb, var(--n-color-primary) 22%, transparent);
+}
+.n-header[data-style='minimal'] {
+  background: var(--n-color-surface);
+  color: var(--n-color-text);
+  border-bottom: 1px solid var(--n-color-border);
+}
+/* On the lighter headers the avatar needs the brand colour back, or the only trace
+   of it above the fold disappears entirely. */
+.n-header[data-style='soft'] .n-avatar,
+.n-header[data-style='minimal'] .n-avatar {
+  background: var(--n-color-primary);
+  color: var(--n-color-on-primary);
+}
+
+/* The customer's own image, cropped to the circle rather than distorted into it. */
+.n-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
 }

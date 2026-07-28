@@ -23,6 +23,18 @@ const themeBody = z.object({
   primary_color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   color_mode: z.enum(['light', 'dark', 'auto']).optional(),
   radius_px: z.number().int().min(0).max(40).optional(),
+  launcher_size: z.number().int().min(40).max(96).optional(),
+  launcher_icon: z.enum(['chat', 'question', 'sparkle', 'envelope', 'wave']).optional(),
+  header_style: z.enum(['solid', 'soft', 'minimal']).optional(),
+  // A URL the customer already hosts. https only: an http image on an https page is
+  // blocked as mixed content and simply does not appear, which reads as our bug.
+  brand_avatar_url: z
+    .string()
+    .url()
+    .startsWith('https://', 'Must be an https:// address')
+    .max(500)
+    .or(z.literal(''))
+    .optional(),
   font_family: z.string().max(60).optional(),
   position: z.enum(['left', 'right']).optional(),
   offset_x: z.number().int().min(0).max(200).optional(),

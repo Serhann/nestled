@@ -210,6 +210,58 @@ export default function Appearance() {
                 />
               )}
             </Field>
+            <Field label="Size">
+              {() => (
+                <div className="flex gap-1.5">
+                  {(
+                    [
+                      [48, 'Small'],
+                      [60, 'Medium'],
+                      [72, 'Large'],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => save({ launcher_size: value })}
+                      className={`flex-1 border-[1.5px] px-2 py-2 text-xs font-semibold transition rounded-xl ${
+                        settings.launcher_size === value
+                          ? 'border-blue-500 text-blue-700 bg-blue-50/50'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Field>
+            <Field label="Icon">
+              {() => (
+                <div className="flex gap-1.5">
+                  {(
+                    [
+                      ['chat', 'Chat'],
+                      ['question', 'Question'],
+                      ['sparkle', 'Sparkle'],
+                      ['envelope', 'Envelope'],
+                      ['wave', 'Wave'],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => save({ launcher_icon: value })}
+                      className={`flex-1 border-[1.5px] px-1.5 py-2 text-[11px] font-semibold transition rounded-xl ${
+                        settings.launcher_icon === value
+                          ? 'border-blue-500 text-blue-700 bg-blue-50/50'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Field>
           </div>
         </Section>
 
@@ -225,6 +277,54 @@ export default function Appearance() {
               <Toggle checked={false} onChange={() => undefined} label="Hide “Powered by Nestled”" />
             </Locked>
           )}
+        </Section>
+
+      <Section title="Header" description="How much of your brand colour sits above every conversation.">
+          <div className="space-y-4">
+            <Field label="Style">
+              {() => (
+              <div className="flex gap-1.5">
+                {(
+                  [
+                    ['solid', 'Solid', 'A full block of your colour.'],
+                    // Not "Soft": the Corners control above already has a button by
+                    // that name, and two different settings offering the same word on
+                    // one screen is a page nobody reads carefully.
+                    ['soft', 'Tinted', 'A light tint of it.'],
+                    ['minimal', 'Minimal', 'Just a line.'],
+                  ] as const
+                ).map(([value, label, hint]) => (
+                  <button
+                    key={value}
+                    onClick={() => save({ header_style: value })}
+                    title={hint}
+                    className={`flex-1 border-[1.5px] px-3 py-2 text-xs font-semibold transition rounded-xl ${
+                      settings.header_style === value
+                        ? 'border-blue-500 text-blue-700 bg-blue-50/50'
+                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              )}
+            </Field>
+
+            <Field
+              label="Picture"
+              hint="A square image you already host. Shown at the top of the chat. Leave empty for the default mark."
+            >
+              {(a) => (
+                <TextInput
+                  {...a}
+                  value={settings.brand_avatar_url ?? ''}
+                  placeholder="https://your-site.com/logo.png"
+                  onChange={(e) => save({ brand_avatar_url: e.target.value })}
+                />
+              )}
+            </Field>
+          </div>
         </Section>
       </div>
 

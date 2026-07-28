@@ -18,6 +18,8 @@ import { Screen, type View } from './ui/Screen';
 
 /** Iframe sizes the embed resizes to. Closed leaves room for the launcher's shadow. */
 const SIZES = { closed: [96, 96], minimized: [384, 68], open: [384, 640] } as const;
+/** Breathing room around the closed launcher so its drop shadow is not clipped square. */
+const SHADOW_ROOM = 18;
 
 export function Widget({
   params,
@@ -114,14 +116,39 @@ export function Widget({
     onSound: () => boot.behavior?.sound_enabled !== false && chime(),
   });
 
-  // Tell the embed how large to be. The two-state sizing is what keeps the host
-  // page's bottom-right corner clickable while the widget is closed.
+  /**
+   * Tell the embed how large to be. The two-state sizing is what keeps the host page's
+   * bottom-right corner clickable while the widget is closed.
+   *
+   * The CLOSED size is measured, not assumed. A `pill` launcher is as wide as its label,
+   * and the label is a string the customer writes — so there is no constant that fits
+   * it. The fixed 96px box clipped every pill launcher on every real page: 105px of
+   * button in a 96px frame, with the end of the customer's own words cut off. A bubble
+   * still lands on 96 because that is what it measures.
+   */
+  const launcherRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const state = !open ? 'closed' : minimized ? 'minimized' : 'open';
-    const [width, height] = SIZES[state];
-    bridge.resize(state, width, height);
-    bridge.emit(open ? 'open' : 'close');
-  }, [bridge, open, minimized]);
+    if (state !== 'closed') {
+      const [width, height] = SIZES[state];
+      bridge.resize(state, width, height);
+      bridge.emit('open');
+      return;
+    }
+    // A frame, so the launcher has been laid out with its final label and size.
+    const frame = requestAnimationFrame(() => {
+      const el = launcherRef.current;
+      const [fallbackW, fallbackH] = SIZES.closed;
+      const rect = el?.getBoundingClientRect();
+      // SHADOW_ROOM on each side: the button draws a drop shadow outside its own box,
+      // and a frame sized to the button alone clips it into a hard square.
+      const width = rect && rect.width > 0 ? Math.ceil(rect.width) + SHADOW_ROOM * 2 : fallbackW;
+      const height = rect && rect.height > 0 ? Math.ceil(rect.height) + SHADOW_ROOM * 2 : fallbackH;
+      bridge.resize('closed', Math.max(width, 48), Math.max(height, 48));
+    });
+    bridge.emit('close');
+    return () => cancelAnimationFrame(frame);
+  }, [bridge, open, minimized, boot.theme?.launcher_style, copy.launcherLabel]);
 
   useEffect(() => {
     if (unread > 0) bridge.emit('unread', { count: unread });
@@ -191,7 +218,13 @@ export function Widget({
         data-position={boot.theme?.position ?? params.position}
         style={previewOffsets(params, boot)}
       >
-        <Launcher theme={boot.theme} label={copy.launcherLabel} unread={unread} onOpen={show} />
+        <Launcher
+          ref={launcherRef}
+          theme={boot.theme}
+          label={copy.launcherLabel}
+          unread={unread}
+          onOpen={show}
+        />
       </div>
     );
   }
@@ -255,6 +288,7 @@ export function Widget({
     >
       <Panel
         copy={copy}
+        theme={boot.theme}
         online={availability.online}
         contrastWarning={theme.contrastWarning}
         showBranding={boot.theme?.show_branding !== false}

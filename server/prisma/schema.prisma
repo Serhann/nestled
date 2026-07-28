@@ -316,6 +316,15 @@ model website_settings {
   offset_x         Int     @default(20)
   offset_y         Int     @default(20)
   launcher_style   String  @default("bubble") // CHECK (bubble|pill|custom_icon)
+  /// 40–96. A number rather than an enum so a new size needs no migration.
+  launcher_size    Int     @default(60)
+  /// CHECK (chat|question|sparkle|envelope|wave) — a curated set, not a URL.
+  launcher_icon    String  @default("chat")
+  /// CHECK (solid|soft|minimal). 'solid' is a full-bleed block of the brand colour,
+  /// which on a saturated brand is the first thing anyone criticises.
+  header_style     String  @default("solid")
+  /// A picture the customer already hosts. Not an upload — see migration 0008.
+  brand_avatar_url String?
   launcher_file_id String? @db.Uuid
   avatar_file_id   String? @db.Uuid
   logo_file_id     String? @db.Uuid

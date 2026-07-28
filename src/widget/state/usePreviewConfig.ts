@@ -62,6 +62,13 @@ function bootFromDraft(message: PreviewMessage): BootPayload {
     offset_x: num('offset_x', 20),
     offset_y: num('offset_y', 20),
     launcher_style: str<BootTheme['launcher_style']>('launcher_style', 'bubble'),
+    launcher_size: num('launcher_size', 60),
+    launcher_icon: str<BootTheme['launcher_icon']>('launcher_icon', 'chat'),
+    header_style: str<BootTheme['header_style']>('header_style', 'solid'),
+    brand_avatar_url:
+      typeof draft.brand_avatar_url === 'string' && draft.brand_avatar_url
+        ? draft.brand_avatar_url
+        : null,
     show_branding: draft.show_branding !== false,
   };
 

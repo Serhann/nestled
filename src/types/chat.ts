@@ -48,6 +48,11 @@ export interface BootTheme {
   offset_x: number;
   offset_y: number;
   launcher_style: 'bubble' | 'pill' | 'custom_icon';
+  /** 40–96 px. */
+  launcher_size: number;
+  launcher_icon: 'chat' | 'question' | 'sparkle' | 'envelope' | 'wave';
+  header_style: 'solid' | 'soft' | 'minimal';
+  brand_avatar_url: string | null;
   show_branding: boolean;
 }
 

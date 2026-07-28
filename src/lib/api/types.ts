@@ -245,6 +245,10 @@ export interface WebsiteSettings {
   offset_x: number;
   offset_y: number;
   launcher_style: 'bubble' | 'pill' | 'custom_icon';
+  launcher_size: number;
+  launcher_icon: 'chat' | 'question' | 'sparkle' | 'envelope' | 'wave';
+  header_style: 'solid' | 'soft' | 'minimal';
+  brand_avatar_url: string | null;
   show_branding: boolean;
   ai_enabled: boolean;
   ai_response_mode: 'off' | 'first_message' | 'when_no_agent_online' | 'always';
