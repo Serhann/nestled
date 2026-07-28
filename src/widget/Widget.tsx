@@ -184,10 +184,23 @@ export function Widget({
   // colour. Caught by counting the preview iframe's own network requests rather than
   // by reading this file, which is why the check is worth keeping in the test above.
   const ensureSession = chat.ensureSession;
+  /*
+    Whether presence.js should record the host page for live view.
+
+    This flag has been travelling from the database to `/boot` to this component for
+    as long as live view has existed, and stopping here — because the recorder does
+    not run in this iframe. It runs in presence.js, on the host page, where the DOM
+    an agent wants to watch actually is. So the flag has to cross the frame boundary
+    too, or "Enable live view" is a switch wired to nothing: every part of the
+    feature existed except the one that turns the camera on.
+  */
+  const recordForLiveView = boot.behavior?.live_view_enabled === true;
   useEffect(() => {
     if (!params.embedded || params.preview) return;
-    void ensureSession().then(bridge.session).catch(() => undefined);
-  }, [bridge, ensureSession, params.embedded, params.preview]);
+    void ensureSession()
+      .then((token) => bridge.session(token, recordForLiveView))
+      .catch(() => undefined);
+  }, [bridge, ensureSession, params.embedded, params.preview, recordForLiveView]);
 
   /**
    * Tell embed.js where the customer wants the launcher.

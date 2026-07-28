@@ -55,8 +55,13 @@ export interface HostBridge {
    * Deliberately NOT routed through `emit`: that channel is subscribable by the
    * customer's own JavaScript via `Nestled('on', …)`, and the session token is a
    * credential, not an event.
+   *
+   * `record` rides along rather than arriving as its own message. Presence STARTS
+   * when embed.js receives this, and the recorder is an argument to that start — a
+   * separate message would race it, and the losing branch of that race is "live view
+   * silently records nothing", which is the bug this parameter exists to fix.
    */
-  session(token: string): void;
+  session(token: string, record: boolean): void;
   /**
    * Where the launcher should sit, from the customer's saved settings.
    *
@@ -154,7 +159,7 @@ export function useHostBridge(
     () => ({
       emit: (name, payload) => post({ type: 'nestled:event', name, payload: payload ?? {} }),
       resize: (state, width, height) => post({ type: 'nestled:resize', state, width, height }),
-      session: (token) => post({ type: 'nestled:session', token }),
+      session: (token, record) => post({ type: 'nestled:session', token, record }),
       placement: (position, offsetX, offsetY, radius) =>
         post({ type: 'nestled:placement', position, offsetX, offsetY, radius }),
     }),

@@ -19,7 +19,9 @@ const PUSH_CONFIG_CACHE = 'nestled-push-config';
 
 // Bump SHELL_VERSION on deploy to bust the app-shell cache. Hashed Vite asset
 // filenames change on their own; this version only gates the static shell.
-const SHELL_VERSION = 'v2';
+// v3 also purges whatever v2 cached, which may include widget documents it should
+// never have touched — the activate handler drops every older shell cache.
+const SHELL_VERSION = 'v3';
 const SHELL_CACHE = `nestled-shell-${SHELL_VERSION}`;
 // The installable PWA is the team app at /app — precache that shell (not the
 // marketing landing at /).
@@ -47,35 +49,116 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Offline app shell. Navigations: network-first, fall back to cached shell.
-// Same-origin GET assets: stale-while-revalidate. API/WS never cached.
+/*
+ * Offline app shell. Navigations: network-first, fall back to cached shell.
+ * Same-origin GET assets: stale-while-revalidate. API/WS never cached.
+ *
+ * ── The rule that both bugs here broke ──────────────────────────────────────
+ *
+ * Once you call `event.respondWith(p)`, `p` MUST settle to a Response. It is not
+ * enough for it to usually do so:
+ *
+ *   - resolving to `undefined` throws "Failed to convert value to 'Response'"
+ *   - rejecting turns the navigation into "resulted in a network error response"
+ *
+ * Both happened. The asset branch did `fetch(req).catch(() => cached)` with
+ * `cached` undefined on a cache miss, so any failed request for an uncached asset
+ * resolved to undefined. The navigate branch fell back to re-running the same
+ * fetch that had just failed, so it failed again and the promise rejected.
+ *
+ * The consequence is worse than a console error: a service worker that answers a
+ * navigation with a network error takes down a page that would have loaded fine
+ * without any service worker at all. So every path below ends at a real Response,
+ * and the last resort is a plain fetch with no interception left in the way.
+ */
+
+/*
+ * Paths this worker must never touch.
+ *
+ * `/widget`, `/embed.js` and `/presence.js` are the CUSTOMER-FACING surface: they
+ * run on other people's websites, in front of their visitors. Caching them in the
+ * team app's shell cache means a stale widget served to somebody else's customers,
+ * with a lifetime governed by a version constant in the team app. It is also just
+ * not this worker's business — the app is what is installable, not the widget.
+ * (It only came up at all because this worker's scope is the whole origin.)
+ */
+function isOffLimits(url) {
+  return (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/ws') ||
+    url.pathname === '/widget' ||
+    url.pathname === '/embed.js' ||
+    url.pathname === '/presence.js' ||
+    url.pathname.startsWith('/vendor/')
+  );
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
-  const url = new URL(req.url);
+  let url;
+  try {
+    url = new URL(req.url);
+  } catch {
+    return;
+  }
   if (url.origin !== self.location.origin) return; // don't touch the API origin
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) return;
+  if (isOffLimits(url)) return;
 
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req).catch(() => caches.match('/app').then((r) => r || fetch(req))),
+      (async () => {
+        try {
+          return await fetch(req);
+        } catch {
+          // The shell, if we have it. Not another fetch — the network just failed,
+          // and retrying it is how this branch used to reject.
+          const shell = await caches.match('/app');
+          return shell || offlineResponse();
+        }
+      })(),
     );
     return;
   }
 
   event.respondWith(
-    caches.open(SHELL_CACHE).then(async (cache) => {
+    (async () => {
+      const cache = await caches.open(SHELL_CACHE);
       const cached = await cache.match(req);
-      const network = fetch(req)
-        .then((res) => {
-          if (res && res.status === 200 && res.type === 'basic') cache.put(req, res.clone());
-          return res;
-        })
-        .catch(() => cached);
-      return cached || network;
-    }),
+      if (cached) {
+        // Stale-while-revalidate: serve the copy we have and refresh it behind the
+        // scenes. The refresh must not be able to reject into the response path.
+        event.waitUntil(
+          fetch(req)
+            .then((res) => {
+              if (res && res.status === 200 && res.type === 'basic') return cache.put(req, res.clone());
+              return undefined;
+            })
+            .catch(() => undefined),
+        );
+        return cached;
+      }
+      try {
+        const res = await fetch(req);
+        if (res && res.status === 200 && res.type === 'basic') {
+          await cache.put(req, res.clone());
+        }
+        return res;
+      } catch {
+        return offlineResponse();
+      }
+    })(),
   );
 });
+
+/** A real Response for the cases where there is genuinely nothing to serve. */
+function offlineResponse() {
+  return new Response('Offline', {
+    status: 503,
+    statusText: 'Offline',
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  });
+}
 
 // ── Push ────────────────────────────────────────────────────────────────────
 self.addEventListener('push', (event) => {

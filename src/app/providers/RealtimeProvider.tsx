@@ -3,6 +3,7 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { RealtimeConnection, type RealtimeEvent } from '../../lib/realtime';
 import { qk } from '../../lib/queryKeys';
 import { useAppStore } from '../store';
+import { playChime, playSent } from '../../lib/sound';
 import { useWorkspace } from './WorkspaceProvider';
 import type { ConversationDetail, ConversationRow, Message, PresenceVisitor } from '../../lib/api/types';
 
@@ -48,6 +49,15 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
    * retaining megabytes of DOM mutations nobody will read again.
    */
   const replaySink = useRef<((events: unknown[]) => void) | null>(null);
+  /**
+   * In a ref, not a dependency.
+   *
+   * The socket effect below reconnects whenever its dependencies change, and a
+   * reconnect drops presence and replays the event gap. Nothing about "who am I"
+   * should be able to cause that.
+   */
+  const memberIdRef = useRef(workspace.member_id);
+  memberIdRef.current = workspace.member_id;
 
   useEffect(() => {
     const connection = new RealtimeConnection(workspaceId, {
@@ -64,6 +74,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
           return;
         }
         applyEvent(queryClient, workspaceId, event);
+        announce(event, memberIdRef.current);
       },
     });
     connectionRef.current = connection;
@@ -90,6 +101,47 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   );
 
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
+}
+
+/**
+ * The audible half of an event.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * There was no audible half at all: `playChime` existed, was well written, was
+ * tested by hand once, and was imported by nobody — so an agent with the tab in the
+ * background found out about a waiting customer whenever they next looked. The
+ * store even persisted a `soundEnabled` preference for a sound that could not play.
+ *
+ * Three rules, and the second and third are what stop this becoming noise people
+ * mute permanently:
+ *
+ *   1. **Someone else wrote → chime.** A customer message, or a brand new
+ *      conversation, which is the most important sound in the product.
+ *   2. **You sent → a different, quieter sound.** Confirmation, not an alert. On
+ *      email and SMS "it left" is genuinely slower and less certain than it looks.
+ *   3. **A COLLEAGUE sent → silence.** In a shared inbox every agent is subscribed
+ *      to every conversation; chiming on their replies turns a busy afternoon into
+ *      a chorus, and the fix people reach for is switching sound off entirely.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function announce(event: RealtimeEvent, myMemberId: string): void {
+  // Not gated on tab visibility: a backgrounded tab is exactly when a sound is the
+  // only signal there is.
+  if (!useAppStore.getState().soundEnabled) return;
+
+  if (event.type === 'conversation:new') {
+    playChime();
+    return;
+  }
+  if (event.type !== 'message:new') return;
+
+  const message = event.message as Message | undefined;
+  if (!message) return;
+  if (message.sender_type !== 'agent') {
+    playChime();
+    return;
+  }
+  if (message.sender_member_id === myMemberId) playSent();
 }
 
 /** Patch every cached list of conversations, whatever filters produced it. */

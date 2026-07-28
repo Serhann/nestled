@@ -78,6 +78,13 @@ export interface BootBehavior {
   auto_welcome_delay: number;
   file_upload_enabled: boolean;
   sound_enabled: boolean;
+  /**
+   * Whether presence.js records the host page for live view.
+   *
+   * Consumed by the WIDGET only to forward it to embed.js — the recorder lives on
+   * the host page, not in this frame. See the note in Widget.tsx.
+   */
+  live_view_enabled?: boolean;
   reset_after_resolve: boolean;
   rating_tags: string[];
 }

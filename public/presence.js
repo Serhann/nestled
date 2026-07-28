@@ -119,6 +119,9 @@
     // runs host code). Coordinates are viewport (fixed) positions matching what
     // the agent sees. A watchdog tears the overlay down if the agent goes quiet.
     var assist = { root: null, cursor: null, banner: null, watchdog: null };
+    // Set once rrweb is actually running; null means "not recording", which is the
+    // normal state for every website that has not switched live view on.
+    var onSnapshotRequest = null;
 
     function assistTeardown() {
       if (assist.watchdog) { clearTimeout(assist.watchdog); assist.watchdog = null; }
@@ -228,6 +231,9 @@
         } else if (data && data.type === 'assist') {
           // Live Assist: an agent is guiding this visitor's screen.
           handleAssist(data);
+        } else if (data && data.type === 'replay:snapshot') {
+          // An agent just started watching. No-op unless we are recording.
+          if (onSnapshotRequest) onSnapshotRequest();
         }
       };
 
@@ -274,12 +280,16 @@
 
     function startRecording() {
       var run = function () {
-        var record = window.rrwebRecord;
-        if (typeof record !== 'function') return;
+        var recorder = window.rrwebRecord;
+        if (typeof recorder !== 'function') return;
         var buffer = [];
+        var flush = function () {
+          if (buffer.length === 0) return;
+          send({ type: 'rrweb', events: buffer.splice(0, buffer.length) });
+        };
         // Privacy: mask every input, and block payment/PII containers, our own
         // iframe, and anything the site marks data-nestled-block.
-        record({
+        recorder({
           emit: function (event) { buffer.push(event); },
           maskAllInputs: true,
           blockSelector: 'iframe,[data-nestled-block],.nestled-block,[data-cc],[autocomplete*="cc-"]',
@@ -287,11 +297,25 @@
           checkoutEveryNms: 5000, // periodic full snapshot for late viewers
         });
         // Batch flush every 3s to budget bandwidth.
-        setInterval(function () {
-          if (buffer.length === 0) return;
-          var batch = buffer.splice(0, buffer.length);
-          send({ type: 'rrweb', events: batch });
-        }, 3000);
+        setInterval(flush, 3000);
+
+        /*
+         * The server asks for this the moment an agent clicks Watch.
+         *
+         * Nothing is buffered server-side until then, so the first frames an agent
+         * would otherwise receive are mutations against a DOM their replayer has
+         * never seen — a blank screen until the 5s periodic checkout happens to
+         * come round. Taking a snapshot on demand and flushing it immediately makes
+         * Watch show the page straight away instead of a rectangle that looks broken.
+         */
+        onSnapshotRequest = function () {
+          try {
+            if (typeof recorder.takeFullSnapshot === 'function') recorder.takeFullSnapshot(true);
+          } catch (e) {
+            /* the periodic checkout still covers us */
+          }
+          flush();
+        };
       };
       if (window.rrwebRecord) return run();
       var s = document.createElement('script');

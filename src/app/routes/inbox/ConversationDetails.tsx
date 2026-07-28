@@ -1,6 +1,7 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Globe, MapPin, Monitor, StickyNote, Tag as TagIcon } from 'lucide-react';
+import { History, Monitor, ShieldCheck, StickyNote, Tag as TagIcon } from 'lucide-react';
 import { addNote, assign, setTags, visitorIps, visitorPerson } from '../../../lib/api/inbox';
 import { listMembers } from '../../../lib/api/workspace';
 import { qk } from '../../../lib/queryKeys';
@@ -9,6 +10,7 @@ import { Button } from '../../../ui/Button';
 import { Badge } from '../../../ui/Badge';
 import { Select, TextInput } from '../../../ui/Form';
 import { relative } from './ConversationList';
+import { HANDLED_HINTS, toFacts, visitorContext, type Fact } from './visitorFacts';
 import type { ConversationDetail } from '../../../lib/api/types';
 
 /**
@@ -65,25 +67,47 @@ export function ConversationDetails({ conversation }: { conversation: Conversati
     },
   });
 
-  const attributes = Object.entries(conversation.custom_attributes ?? {});
-  const hints = Object.entries(conversation.metadata ?? {}).filter(
-    ([key]) => !key.startsWith('_'),
-  );
+  const attributes = toFacts(conversation.custom_attributes);
+  // The well-known hints get the block below; only what is left over falls through
+  // to a generic list, which is usually nothing.
+  const context = visitorContext(conversation.metadata);
+  const otherHints = toFacts(conversation.metadata, HANDLED_HINTS);
   const location = ips.data?.ips[0];
+  const place = [location?.city, location?.country].filter(Boolean).join(', ');
+  const earlier = (person.data?.person?.conversations ?? []).filter((c) => c.id !== conversation.id);
 
   return (
     <aside className="w-72 shrink-0 border-l border-gray-200/70 bg-cream overflow-y-auto hidden xl:block">
       <div className="p-4 space-y-5">
-        <div>
-          <p className="font-semibold text-gray-800">
-            {conversation.visitor_name || conversation.visitor_email || 'Visitor'}
-          </p>
-          {conversation.visitor_email && (
-            <p className="text-xs text-gray-500 truncate">{conversation.visitor_email}</p>
-          )}
-          <p className="text-[11px] text-gray-400 mt-1">
-            First seen {relative(conversation.created_at)} ago · {conversation.message_count} messages
-          </p>
+        {/*
+          A person, not a row.
+
+          The panel used to open on a bare name over a raw timestamp. An initial and
+          a mail link cost nothing and make the top of this column answer "who am I
+          talking to" at a glance, which is the only question it is here for.
+        */}
+        <div className="flex items-start gap-3">
+          <span className="w-10 h-10 shrink-0 rounded-full bg-blue-100 text-blue-800 font-display text-lg flex items-center justify-center">
+            {(conversation.visitor_name || conversation.visitor_email || '?').charAt(0).toUpperCase()}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-gray-800 truncate">
+              {conversation.visitor_name || conversation.visitor_email || 'Visitor'}
+            </p>
+            {conversation.visitor_email && (
+              <a
+                href={`mailto:${conversation.visitor_email}`}
+                className="block text-xs text-blue-700 hover:underline truncate"
+              >
+                {conversation.visitor_email}
+              </a>
+            )}
+            <p className="text-[11px] text-gray-400 mt-1">
+              {conversation.message_count} message{conversation.message_count === 1 ? '' : 's'} ·
+              first seen {relative(conversation.created_at)} ago
+              {place ? ` · ${place}` : ''}
+            </p>
+          </div>
         </div>
 
         {can('conversation:assign') && (
@@ -132,50 +156,79 @@ export function ConversationDetails({ conversation }: { conversation: Conversati
         </Block>
 
         {attributes.length > 0 && (
-          <Block title="Verified details">
+          <Block title="Verified details" icon={ShieldCheck}>
             <p className="text-[10px] text-gray-400 mb-1.5">
               Signed by your own server, so these can be trusted.
             </p>
-            <dl className="space-y-1">
-              {attributes.map(([key, value]) => (
-                <div key={key} className="flex gap-2 text-xs">
-                  <dt className="text-gray-500 shrink-0">{key}</dt>
-                  <dd className="text-gray-800 truncate">{String(value)}</dd>
-                </div>
-              ))}
-            </dl>
+            <FactList facts={attributes} strong />
           </Block>
         )}
 
-        {hints.length > 0 && (
-          <Block title="Browser hints" icon={Monitor}>
-            <p className="text-[10px] text-gray-400 mb-1.5">Sent by the page. Unverified.</p>
-            <dl className="space-y-1">
-              {hints.slice(0, 8).map(([key, value]) => (
-                <div key={key} className="flex gap-2 text-xs">
-                  <dt className="text-gray-500 shrink-0">{key}</dt>
-                  <dd className="text-gray-600 truncate">{String(value)}</dd>
-                </div>
-              ))}
-            </dl>
-          </Block>
-        )}
+        {/*
+          What the page can see, arranged by what an agent asks.
 
-        {location && (
-          <Block title="Location" icon={MapPin}>
-            <p className="text-xs text-gray-600">
-              {[location.city, location.country].filter(Boolean).join(', ') || 'Unknown'}
+          Which page they are on, where they came from, what they are using, and what
+          language they read — four questions, not eight key-value pairs. The two that
+          matter most are links, because "which page" is usually followed by wanting
+          to look at it.
+        */}
+        {(context.page || context.referrer || context.device || context.locale) && (
+          <Block title="Right now" icon={Monitor}>
+            <p className="text-[10px] text-gray-400 mb-1.5">
+              Reported by their browser. Not verified.
             </p>
+            <div className="space-y-1.5 text-xs">
+              {context.page && <LinkedLine label="On" fact={context.page} />}
+              {context.referrer && <LinkedLine label="Came from" fact={context.referrer} />}
+              {context.device && <p className="text-gray-600">{context.device}</p>}
+              {context.locale && <p className="text-gray-600">{context.locale}</p>}
+              {context.ip && (
+                <p className="text-gray-400">
+                  {context.ip}
+                  {place ? ` · ${place}` : ''}
+                </p>
+              )}
+            </div>
           </Block>
         )}
 
-        {person.data?.person ? (
-          <Block title="Also seen" icon={Globe}>
-            <p className="text-xs text-gray-600">
-              This visitor has been matched to a known person in this workspace.
-            </p>
+        {otherHints.length > 0 && (
+          <Block title="Also sent by the page">
+            <FactList facts={otherHints} />
           </Block>
-        ) : null}
+        )}
+
+        {/*
+          "Also seen" used to say that a match had been made — a fact about our
+          database rather than about the customer. What an agent actually wants is
+          the thing they said last time, so this is a list of links.
+        */}
+        {earlier.length > 0 && (
+          <Block title="Earlier conversations" icon={History}>
+            <ul className="space-y-1">
+              {earlier.slice(0, 5).map((c) => (
+                <li key={c.id}>
+                  <Link
+                    to={`/w/${workspace.slug}/inbox/${c.id}`}
+                    className="flex items-baseline gap-2 rounded-lg px-2 py-1.5 -mx-2 hover:bg-gray-100"
+                  >
+                    <span className="text-xs text-gray-700 flex-1 truncate">
+                      {c.message_count} message{c.message_count === 1 ? '' : 's'}
+                    </span>
+                    <span className="text-[10px] text-gray-400 shrink-0">
+                      {relative(String(c.updated_at))}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            {earlier.length > 5 && (
+              <p className="text-[10px] text-gray-400 mt-1">
+                and {earlier.length - 5} more
+              </p>
+            )}
+          </Block>
+        )}
 
         {can('note:write') && (
           <Block title="Internal notes" icon={StickyNote}>
@@ -206,6 +259,80 @@ export function ConversationDetails({ conversation }: { conversation: Conversati
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * A labelled row whose value is worth clicking.
+ *
+ * The label is above the value rather than beside it. In a 288px column a
+ * side-by-side pair gives the value about 150px, which is why every URL in this
+ * panel used to end in an ellipsis before it reached the part that differs.
+ */
+function LinkedLine({ label, fact }: { label: string; fact: Fact }) {
+  return (
+    <p className="min-w-0">
+      <span className="text-gray-400">{label} </span>
+      {fact.href ? (
+        <a
+          href={fact.href}
+          target="_blank"
+          rel="noreferrer noopener"
+          title={fact.title}
+          className="text-blue-700 hover:underline break-all"
+        >
+          {fact.value}
+        </a>
+      ) : (
+        <span className="text-gray-700 break-all" title={fact.title}>
+          {fact.value}
+        </span>
+      )}
+    </p>
+  );
+}
+
+/** Longer than this and a value gets the full width instead of half. */
+const WIDE_VALUE = 16;
+
+/**
+ * Facts in two columns, with long ones spanning both.
+ *
+ * Stacked in one column, nine signed attributes are eighteen lines, which pushes
+ * "Right now" — the block an agent reads on every conversation — off the bottom of
+ * the panel. Most values are a word ("business", "owner", "active"), so half the
+ * width is plenty; an email or a URL takes the whole row rather than wrapping into
+ * a narrow ribbon.
+ */
+function FactList({ facts, strong }: { facts: Fact[]; strong?: boolean }) {
+  return (
+    <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
+      {facts.map((fact) => (
+        <div
+          key={fact.key}
+          className={`min-w-0 ${fact.value.length > WIDE_VALUE ? 'col-span-2' : ''}`}
+        >
+          <dt className="text-[10px] uppercase tracking-wide text-gray-400">{fact.label}</dt>
+          <dd
+            className={`text-xs break-words ${strong ? 'text-gray-800 font-medium' : 'text-gray-600'}`}
+            title={fact.title}
+          >
+            {fact.href ? (
+              <a
+                href={fact.href}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-blue-700 hover:underline"
+              >
+                {fact.value}
+              </a>
+            ) : (
+              fact.value
+            )}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

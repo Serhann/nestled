@@ -8,6 +8,7 @@ import type {
   KbEntry,
   Message,
   Note,
+  PersonProfile,
   PresenceVisitor,
   Starter,
 } from './types';
@@ -139,7 +140,7 @@ export const startChat = (
   id: string,
   visitorId: string,
   input: { website_id: string; message: string },
-): Promise<{ conversation: { id: string } }> =>
+): Promise<{ conversation: { id: string }; delivered: boolean }> =>
   post(w(id, `/presence/${encodeURIComponent(visitorId)}/start-chat`), input);
 
 export const visitorIps = (
@@ -151,7 +152,7 @@ export const visitorIps = (
 export const visitorPerson = (
   id: string,
   visitorId: string,
-): Promise<{ person: Record<string, unknown> | null }> =>
+): Promise<{ person: PersonProfile | null }> =>
   get(w(id, `/visitors/${encodeURIComponent(visitorId)}/person`));
 
 // ── Content ─────────────────────────────────────────────────────────────────

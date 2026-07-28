@@ -83,6 +83,34 @@ export interface WorkspaceSummary {
   counts: { open_conversations: number };
 }
 
+/**
+ * One human, as the identity graph has resolved them within this workspace.
+ *
+ * Deliberately workspace-scoped on the server: a global graph would tell one
+ * customer that a visitor of theirs had also talked to another customer, and would
+ * join fingerprints across accounts that have nothing to do with each other.
+ */
+export interface PersonProfile {
+  id: string;
+  display_name: string | null;
+  primary_email: string | null;
+  created_at: string;
+  visitor_ids: string[];
+  website_ids: string[];
+  emails: string[];
+  fingerprints: number;
+  conversations: {
+    id: string;
+    visitor_id: string;
+    visitor_name: string | null;
+    status: string;
+    website_id: string;
+    message_count: number;
+    updated_at: string;
+  }[];
+  ips: { ip: string; geo: unknown; hits: number; last_seen: string }[];
+}
+
 export interface Me {
   user: {
     id: string;

@@ -8,11 +8,15 @@ import {
   Inbox,
   LogOut,
   MessageSquareText,
+  PanelLeftClose,
+  PanelLeftOpen,
   Route,
   Settings,
   ShieldAlert,
   Sparkles,
   Users,
+  Volume2,
+  VolumeX,
   Zap, Timer } from 'lucide-react';
 import { useSession } from './providers/SessionProvider';
 import { useWorkspace } from './providers/WorkspaceProvider';
@@ -22,6 +26,7 @@ import { resendVerification } from '../lib/api/auth';
 import { Spinner } from '../ui/Page';
 import { useAppStore } from './store';
 import { mountSupportWidget } from '../lib/supportWidget';
+import { playChime } from '../lib/sound';
 import { get } from '../lib/http';
 import type { Capability } from '../lib/api/types';
 
@@ -112,6 +117,7 @@ export function AppShell() {
               ))}
           </ul>
           <ConnectionDot connected={connected} collapsed={collapsed} />
+          <SidebarFooterControls collapsed={collapsed} />
           <AccountMenu collapsed={collapsed} name={me.user.name} email={me.user.email} />
         </nav>
 
@@ -197,6 +203,59 @@ function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Narrow the sidebar, and mute.
+ *
+ * Both settings already existed and neither could be reached. `toggleSidebar` was
+ * written, persisted and called by nothing, so the collapsed width was dead code;
+ * `soundEnabled` was persisted for a sound that was never played. They sit together
+ * because they are the two things you change about the frame itself rather than
+ * about your account — and mute in particular has to be one click from the inbox,
+ * because the moment you want it is the moment a chime went off in a meeting.
+ */
+function SidebarFooterControls({ collapsed }: { collapsed: boolean }) {
+  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
+  const soundEnabled = useAppStore((s) => s.soundEnabled);
+  const setSoundEnabled = useAppStore((s) => s.setSoundEnabled);
+
+  return (
+    <div className={`px-2 pb-1 flex gap-1 ${collapsed ? 'flex-col items-stretch' : ''}`}>
+      <button
+        onClick={() => {
+          // Play as you turn it ON, so the control proves itself. Silence is the
+          // expected result of the other direction and needs no demonstration.
+          if (!soundEnabled) playChime();
+          setSoundEnabled(!soundEnabled);
+        }}
+        title={soundEnabled ? 'Mute notification sounds' : 'Unmute notification sounds'}
+        aria-pressed={soundEnabled}
+        className={`flex items-center justify-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition hover:bg-gray-100 ${
+          soundEnabled ? 'text-gray-600' : 'text-gray-400'
+        } ${collapsed ? '' : 'flex-1'}`}
+      >
+        {soundEnabled ? (
+          <Volume2 className="w-[18px] h-[18px] shrink-0" aria-hidden />
+        ) : (
+          <VolumeX className="w-[18px] h-[18px] shrink-0" aria-hidden />
+        )}
+        {!collapsed && <span className="truncate">{soundEnabled ? 'Sound on' : 'Muted'}</span>}
+      </button>
+      <button
+        onClick={toggleSidebar}
+        title={collapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
+        aria-label={collapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}
+        className="flex items-center justify-center rounded-2xl px-3 py-2 text-gray-500 hover:bg-gray-100 transition"
+      >
+        {collapsed ? (
+          <PanelLeftOpen className="w-[18px] h-[18px]" aria-hidden />
+        ) : (
+          <PanelLeftClose className="w-[18px] h-[18px]" aria-hidden />
+        )}
+      </button>
     </div>
   );
 }

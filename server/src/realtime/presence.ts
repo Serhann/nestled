@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws';
-import { publishToWorkspace } from './hub.js';
+import { publishPerAgent } from './hub.js';
 import type { GeoLocation } from '../services/geo.js';
 import type { VerifiedContext } from '../services/verifiedAttributes.js';
 
@@ -79,7 +79,11 @@ function scheduleBroadcast(workspaceId: string): void {
   queued.add(workspaceId);
   setTimeout(() => {
     queued.delete(workspaceId);
-    publishToWorkspace(workspaceId, { type: 'presence:list', visitors: snapshot(workspaceId) });
+    // Per agent, because each one may be granted a different set of websites.
+    publishPerAgent(workspaceId, (websiteIds) => ({
+      type: 'presence:list',
+      visitors: snapshot(workspaceId, websiteIds),
+    }));
   }, 250);
 }
 
@@ -292,6 +296,22 @@ export function sendAssistToVisitor(
   return true;
 }
 
+/**
+ * Ask a visitor's page for an immediate full rrweb snapshot.
+ *
+ * Sent when an agent starts watching. Carries no data and grants nothing — the page
+ * is already recording or it is not, and this only changes WHEN the next full frame
+ * is emitted. Returns false when the visitor has no socket, which the caller may
+ * ignore: they are about to find that out anyway.
+ */
+export function requestReplaySnapshot(websiteId: string, visitorId: string): boolean {
+  const t = find(websiteId, visitorId);
+  if (!t || t.sockets.size === 0) return false;
+  const frame = JSON.stringify({ type: 'replay:snapshot' });
+  for (const ws of t.sockets) if (ws.readyState === ws.OPEN) ws.send(frame);
+  return true;
+}
+
 export function isVisitorOnline(websiteId: string, visitorId: string): boolean {
   const t = find(websiteId, visitorId);
   return Boolean(t && t.sockets.size > 0);
@@ -301,22 +321,97 @@ export function getVisitor(websiteId: string, visitorId: string): PresenceEntry 
   return find(websiteId, visitorId)?.entry ?? null;
 }
 
+/**
+ * One visitor, as the live board consumes them.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * There was no serializer. `snapshot()` spread the in-memory entry onto the wire,
+ * which meant the board received `visitorId` while every line of the client read
+ * `visitor_id` — so EVERY field on that screen was undefined. It did not look
+ * broken, because each field has a fallback: "Anonymous visitor", "Unknown
+ * location", "Unknown page", "0 pages", "Unknown browser". It looked like a page
+ * full of visitors we knew nothing about.
+ *
+ * What gave it away was Say hello returning 400 for a missing `website_id`, and
+ * React warning about duplicate keys — every key was `undefined`.
+ *
+ * Two other things a boundary buys, beyond the names:
+ *
+ *   - `workspaceId` and the full `pages` history stop leaving the process. The
+ *     board needs a count, not a browsing history.
+ *   - The browser is derived here rather than shipping the raw user agent, which
+ *     is 120 characters of which six matter.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface PresenceRow {
+  visitor_id: string;
+  website_id: string;
+  name: string | null;
+  email: string | null;
+  current_url: string | null;
+  page_title: string | null;
+  referrer: string | null;
+  country: string | null;
+  city: string | null;
+  device: string | null;
+  browser: string | null;
+  started_at: string;
+  last_seen: string;
+  page_count: number;
+  conversation_id: string | null;
+  online: boolean;
+  context: unknown;
+  data: Record<string, unknown>;
+}
+
+/** Crude on purpose, and it falls back to null rather than to a misleading guess. */
+function browserOf(ua: string | null): string | null {
+  if (!ua) return null;
+  // Edge and Opera both claim Chrome in their user agent, so they are tested first.
+  if (/Edg\//.test(ua)) return 'Edge';
+  if (/OPR\//.test(ua)) return 'Opera';
+  if (/Firefox\//.test(ua)) return 'Firefox';
+  if (/Chrome\//.test(ua)) return 'Chrome';
+  if (/Safari\//.test(ua)) return 'Safari';
+  return null;
+}
+
+export function serializePresence(
+  entry: PresenceEntry,
+  online: boolean,
+): PresenceRow {
+  return {
+    visitor_id: entry.visitorId,
+    website_id: entry.websiteId,
+    name: entry.name,
+    email: entry.email,
+    current_url: entry.url,
+    // Not captured today; the board falls back to the URL. Present in the contract
+    // so adding it later is a server-only change.
+    page_title: null,
+    referrer: entry.referrer,
+    country: entry.geo?.country ?? null,
+    city: entry.geo?.city ?? null,
+    device: entry.device,
+    browser: browserOf(entry.userAgent),
+    started_at: new Date(entry.sessionStart).toISOString(),
+    last_seen: new Date(entry.lastSeen).toISOString(),
+    page_count: entry.pagesViewed,
+    conversation_id: entry.conversationId,
+    online,
+    context: entry.context,
+    data: entry.data,
+  };
+}
+
 /** The live board for one workspace, optionally narrowed to granted websites. */
-export function snapshot(
-  workspaceId: string,
-  websiteIds?: string[] | null,
-): Array<PresenceEntry & { online: boolean; timeOnSite: number }> {
-  const now = Date.now();
-  const out: Array<PresenceEntry & { online: boolean; timeOnSite: number }> = [];
+export function snapshot(workspaceId: string, websiteIds?: string[] | null): PresenceRow[] {
+  const out: PresenceRow[] = [];
   for (const [websiteId, visitors] of byWebsite) {
     if (websiteIds && !websiteIds.includes(websiteId)) continue;
     for (const t of visitors.values()) {
       if (t.entry.workspaceId !== workspaceId) continue;
-      out.push({
-        ...t.entry,
-        online: t.sockets.size > 0,
-        timeOnSite: Math.max(0, now - t.entry.sessionStart),
-      });
+      out.push(serializePresence(t.entry, t.sockets.size > 0));
     }
   }
   return out;

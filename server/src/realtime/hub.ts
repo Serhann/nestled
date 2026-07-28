@@ -4,7 +4,7 @@ import type { WebSocket } from 'ws';
 // eslint-disable-next-line no-restricted-imports -- registries span workspaces by nature
 import { unscopedPrisma } from '../db/unscoped.js';
 import { startWatch, stopWatch, isWatching } from './replay.js';
-import { sendAssistToVisitor } from './presence.js';
+import { requestReplaySnapshot, sendAssistToVisitor } from './presence.js';
 
 /**
  * In-process realtime hub, keyed by WORKSPACE.
@@ -163,6 +163,18 @@ export function registerAgentSocket(
         // ask to watch?", which proves nothing.
         if (!state.websiteIds || state.websiteIds.includes(msg.websiteId)) {
           startWatch(ws, state.workspaceId, msg.websiteId, msg.visitorId);
+          /*
+            Ask the page for a fresh full snapshot, now.
+
+            Nothing is buffered for a visitor until somebody watches — that is what
+            keeps one process from holding every visitor's DOM — so the buffer this
+            watch just created is empty, and the frames that follow are incremental
+            mutations against a DOM the replayer has never seen. rrweb's periodic
+            checkout would eventually supply one, which means the agent stares at a
+            blank rectangle for up to eight seconds after clicking Watch and
+            reasonably concludes it is broken.
+          */
+          requestReplaySnapshot(msg.websiteId, msg.visitorId);
         }
       } else if (msg.type === 'unwatch') {
         stopWatch(ws);
@@ -319,6 +331,40 @@ export function publishToWorkspace(
   for (const [ws, state] of agentSockets.get(workspaceId) ?? []) {
     if (opts.websiteId && state.websiteIds && !state.websiteIds.includes(opts.websiteId)) continue;
     send(ws, stamped);
+  }
+}
+
+/**
+ * Publish an event whose CONTENT depends on the receiving agent's grants.
+ *
+ * `publishToWorkspace` can skip a socket whose grants exclude one website, which is
+ * right for an event about one conversation. The live-visitor board is not that: it
+ * spans every website at once, so the choice is per-socket filtering or sending
+ * every agent the whole workspace. It was sending the whole workspace — a member
+ * narrowed to one website received the other sites' visitors over the socket even
+ * though the REST route was careful to narrow them.
+ *
+ * Not logged for replay. A presence list is a snapshot of NOW; replaying a stale one
+ * after a reconnect would put visitors on the board who left minutes ago, and the
+ * next tick supplies a fresh one anyway.
+ */
+export function publishPerAgent(
+  workspaceId: string,
+  build: (websiteIds: string[] | null) => RealtimeEvent,
+): void {
+  const sockets = agentSockets.get(workspaceId);
+  if (!sockets || sockets.size === 0) return;
+  // One payload per distinct grant set, not per socket: a workspace where everybody
+  // sees everything then serialises once however many agents are connected.
+  const byGrant = new Map<string, RealtimeEvent>();
+  for (const [ws, state] of sockets) {
+    const key = state.websiteIds ? state.websiteIds.slice().sort().join(',') : '*';
+    let event = byGrant.get(key);
+    if (!event) {
+      event = build(state.websiteIds ?? null);
+      byGrant.set(key, event);
+    }
+    send(ws, { ...event, seq: ++sequence });
   }
 }
 

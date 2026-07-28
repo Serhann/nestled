@@ -129,7 +129,21 @@ export async function presenceV1Routes(app: FastifyInstance): Promise<void> {
         targetId: conv.id,
       });
 
-      return reply.code(201).send({ conversation_id: conv.id, delivered });
+      /*
+        `conversation`, not `conversation_id`.
+
+        The client has always read `conversation.id` off this response and this has
+        always sent a flat `conversation_id`, so `onSuccess` threw on every single
+        proactive chat: the conversation WAS created and the message WAS delivered,
+        but the dialog never closed and never navigated, which reads as "start chat
+        does nothing". A 201 that the caller cannot use is a failure with a
+        successful status code.
+
+        `delivered` stays alongside it. It is false only if the visitor's socket
+        dropped between the liveness check above and the send — rare, but the
+        difference between "they have it" and "it is waiting for them".
+      */
+      return reply.code(201).send({ conversation: { id: conv.id }, delivered });
     },
   );
 }

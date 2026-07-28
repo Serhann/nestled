@@ -454,7 +454,7 @@
    * session, so the presence socket and the conversation agree on who this
    * visitor is — which is what makes a proactive claim redeemable.
    */
-  function loadPresence(sessionToken) {
+  function loadPresence(sessionToken, record) {
     if (presence || !sessionToken) return;
     var start = function () {
       if (!window.NestledPresence) return;
@@ -464,6 +464,21 @@
         fingerprint: fingerprint,
         contextToken: contextToken,
         recordScriptUrl: widgetOrigin + '/vendor/rrweb-record.min.js',
+        /*
+         * This is what actually turns live view on, and it was missing.
+         *
+         * presence.js gates recording on `options.record === true`, so passing only
+         * the script URL loaded nothing: rrweb was never fetched, no frames were
+         * ever sent, and an agent who clicked Watch got a permanently empty screen.
+         * Every other part of the feature — the plan gate, the website setting, the
+         * server-side buffer, the viewer — was in place and waiting on a flag that
+         * never crossed the frame boundary.
+         *
+         * It comes from the widget rather than from the snippet because it is the
+         * customer's saved setting, and the snippet was pasted once and never
+         * edited again.
+         */
+        record: record === true,
         onProactive: function (data) {
           /*
            * A proactive chat carries a single-use CLAIM token, never the
@@ -522,7 +537,7 @@
           void container.offsetWidth;
           container.style.transition = previous;
         }
-      } else if (data.type === 'nestled:session') loadPresence(data.token);
+      } else if (data.type === 'nestled:session') loadPresence(data.token, data.record === true);
       else if (data.type === 'nestled:event') emit(data.name, data.payload);
     });
 

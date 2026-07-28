@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Clock, Inbox as InboxIcon, Languages, Mail, MailOpen, Search } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, Eye, Inbox as InboxIcon, Languages, Mail, MailOpen, Search } from 'lucide-react';
 import { useWorkspace } from '../../providers/WorkspaceProvider';
 import { useRealtime } from '../../providers/RealtimeProvider';
 import {
   conversationAttention,
   getConversation,
   listConversations,
+  listPresence,
   sendReply,
   setStatus,
   setUnread,
@@ -29,7 +30,13 @@ import { Thread } from './Thread';
 import { Composer } from './Composer';
 import { ConversationDetails } from './ConversationDetails';
 import { useTranslate } from './useTranslate';
-import type { ConversationDetail, ConversationStatus, Message } from '../../../lib/api/types';
+import { LiveViewer } from '../visitors/LiveViewer';
+import type {
+  ConversationDetail,
+  ConversationStatus,
+  Message,
+  PresenceVisitor,
+} from '../../../lib/api/types';
 
 /** Stable identity, so the translation hook's effect does not see a new array each render. */
 const EMPTY_MESSAGES: Message[] = [];
@@ -287,7 +294,7 @@ function ConversationPane({
   conversationId: string;
   onClose: () => void;
 }) {
-  const { workspace, can } = useWorkspace();
+  const { workspace, can, plan } = useWorkspace();
   const queryClient = useQueryClient();
   const isTyping = useAppStore((s) => s.isTyping(conversationId));
   const clearDraft = useAppStore((s) => s.clearDraft);
@@ -361,6 +368,28 @@ function ConversationPane({
     conversationId,
     detail.data?.conversation.messages ?? EMPTY_MESSAGES,
   );
+
+  /*
+    Is the person we are talking to still on the site?
+
+    Only asked when this workspace could act on the answer, so a plan without live
+    view and an agent without the capability both cost nothing. The socket writes
+    `presence:list` into this exact cache key, so after the first load the answer
+    stays current without polling.
+  */
+  const [watching, setWatching] = useState<PresenceVisitor | null>(null);
+  const canWatch = can('visitor:replay') && plan.has('live_view');
+  const presence = useQuery({
+    queryKey: qk.presence(workspace.id),
+    queryFn: () => listPresence(workspace.id),
+    enabled: canWatch,
+    staleTime: 30_000,
+  });
+  const liveVisitor = canWatch
+    ? (presence.data?.visitors.find(
+        (v) => v.visitor_id === detail.data?.conversation.visitor_id,
+      ) ?? null)
+    : null;
 
   if (detail.isLoading) return <div className="flex-1"><Spinner /></div>;
   if (detail.error) return <div className="flex-1 p-6"><ErrorState error={detail.error} /></div>;
@@ -438,6 +467,22 @@ function ConversationPane({
             )}
             {conversation.unread_at ? 'Mark read' : 'Mark unread'}
           </Button>
+          {/*
+            Watch their screen, from the conversation.
+
+            This is where the feature is actually needed. "It just doesn't work" is
+            typed into a chat, not onto the visitor board — and until now the only
+            way to act on it was to leave the conversation, find the same person in a
+            grid of anonymous visitors, and hope you picked the right one. The button
+            is absent rather than disabled when they have gone offline, because a
+            greyed-out control invites a click that can never do anything.
+          */}
+          {liveVisitor && (
+            <Button size="sm" variant="ghost" onClick={() => setWatching(liveVisitor)}>
+              <Eye className="w-4 h-4" aria-hidden />
+              Watch screen
+            </Button>
+          )}
           {can('conversation:resolve') && conversation.status !== 'resolved' && (
             <Button
               size="sm"
@@ -450,6 +495,8 @@ function ConversationPane({
             </Button>
           )}
         </header>
+
+        {watching && <LiveViewer visitor={watching} onClose={() => setWatching(null)} />}
 
         {deliveryError && (
           <div className="shrink-0 flex items-start gap-2 px-4 py-2.5 text-xs text-red-800 bg-red-50 border-b border-red-100">
