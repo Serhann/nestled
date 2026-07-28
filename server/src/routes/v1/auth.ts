@@ -18,6 +18,7 @@ import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
 import { uniqueSlug, slugIsAvailable } from '../../lib/slug.js';
 import { sendEmail } from '../../services/email.js';
+import { checkSecondFactor, countUnusedRecoveryCodes } from '../../services/twoFactor.js';
 import { randomUUID } from 'node:crypto';
 import { settings } from '../../services/platform/settings.js';
 
@@ -214,7 +215,15 @@ export async function authV1Routes(app: FastifyInstance): Promise<void> {
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
     async (req, reply) => {
       const body = parseBody(
-        z.object({ email: z.string().email().max(200), password: z.string().min(1).max(200) }),
+        z.object({
+          email: z.string().email().max(200),
+          password: z.string().min(1).max(200),
+          // Both optional: the client cannot know whether an account has a second
+          // factor until it has offered a correct password, so login is a single
+          // round trip for most people and two for the rest.
+          totp: z.string().min(4).max(20).optional(),
+          recovery_code: z.string().min(4).max(20).optional(),
+        }),
         req.body,
         reply,
       );
@@ -222,12 +231,56 @@ export async function authV1Routes(app: FastifyInstance): Promise<void> {
 
       const user = await unscopedPrisma.users.findUnique({
         where: { email: body.email.toLowerCase() },
-        select: { id: true, password_hash: true, deleted_at: true },
+        select: {
+          id: true,
+          password_hash: true,
+          deleted_at: true,
+          totp_enabled: true,
+          totp_secret: true,
+          totp_last_step: true,
+        },
       });
       // One generic message and one code path for "no such user" and "wrong
       // password", so login cannot be used to enumerate accounts.
       if (!user || user.deleted_at || !(await verifyPassword(body.password, user.password_hash))) {
         return reply.code(401).send({ error: 'Invalid email or password' });
+      }
+
+      /*
+        The second factor, only once the password is known to be right.
+
+        Asking for it earlier — or answering "this account has 2FA" to a wrong
+        password — would turn login into an oracle for which accounts are worth
+        attacking. Past this line the caller already holds the password, so telling
+        them a factor is required gives away nothing they did not have.
+      */
+      if (user.totp_enabled) {
+        const check = await checkSecondFactor(user, body);
+        if (!check.ok) {
+          if (check.reason === 'missing') {
+            return reply
+              .code(401)
+              .send({ error: 'Enter the code from your authenticator app', code: 'totp_required' });
+          }
+          return reply.code(401).send({
+            error:
+              check.reason === 'replayed'
+                ? 'That code has already been used. Wait for the next one.'
+                : 'That code is not valid',
+            code: 'totp_invalid',
+          });
+        }
+        if (check.usedRecoveryCode) {
+          // Worth an audit line of its own: a recovery code being spent is either a
+          // lost phone or somebody who got hold of the list, and both are things you
+          // want to see afterwards with a timestamp against them.
+          await audit(req, {
+            action: 'auth.recovery_code_used',
+            targetType: 'user',
+            targetId: user.id,
+            details: { remaining: await countUnusedRecoveryCodes(user.id) },
+          });
+        }
       }
 
       await unscopedPrisma.users.update({

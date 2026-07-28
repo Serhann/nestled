@@ -218,7 +218,15 @@ export function Select({
   };
 
   return (
-    <div ref={root} className={`relative ${className}`}>
+    /*
+      `min-w-0` is not cosmetic. A native <select> shrinks below its longest option
+      when a flex row runs out of room; this one is a button whose automatic minimum
+      size is the label's full width, so three of them in a 320px column pushed the
+      last one straight through the edge of the inbox list and over the thread beside
+      it. Anything that replaces a native control has to keep its layout behaviour too,
+      or the swap is only transparent until the container gets narrow.
+    */
+    <div ref={root} className={`relative min-w-0 ${className}`}>
       <button
         type="button"
         disabled={disabled}

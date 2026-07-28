@@ -19,8 +19,20 @@ interface Tokens {
 const anon = <T>(path: string, body: unknown): Promise<T> =>
   api<T>(path, { method: 'POST', body, anonymous: true });
 
-export async function login(email: string, password: string): Promise<Tokens> {
-  const tokens = await anon<Tokens>('/api/v1/auth/login', { email, password });
+/**
+ * `second` is absent on the first attempt and present on the retry.
+ *
+ * The client cannot know whether an account has two-step verification before it has
+ * offered a correct password — asking everyone for a code up front, or probing first,
+ * would both tell an attacker which accounts are worth their time. So the server
+ * answers 401 `totp_required` and the login form asks then.
+ */
+export async function login(
+  email: string,
+  password: string,
+  second?: { totp?: string; recovery_code?: string },
+): Promise<Tokens> {
+  const tokens = await anon<Tokens>('/api/v1/auth/login', { email, password, ...second });
   setSession(tokens);
   return tokens;
 }

@@ -24,6 +24,7 @@ const UNSCOPED_MODELS: Record<string, string> = {
   users: 'login is global; role/seat live on workspace_members',
   refresh_tokens: 'a session belongs to the user and spans workspaces',
   user_tokens: 'email verification / password reset are user-level',
+  user_recovery_codes: 'the second factor protects the login, which precedes any workspace',
   push_subscriptions: 'a device belongs to the user; routing resolved at send time',
 
   // The tenant root itself, and reference data shared by all tenants.

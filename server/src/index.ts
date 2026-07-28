@@ -14,6 +14,7 @@ import { registerAuthPlugin } from './plugins/auth.js';
 import { registerRealtime } from './realtime/gateway.js';
 import { authV1Routes } from './routes/v1/auth.js';
 import { meV1Routes } from './routes/v1/me.js';
+import { twoFactorV1Routes } from './routes/v1/twoFactor.js';
 import { workspaceV1Routes } from './routes/v1/workspaces.js';
 import { teamV1Routes } from './routes/v1/team.js';
 import { widgetV1Routes } from './routes/v1/widget.js';
@@ -130,6 +131,7 @@ export async function buildServer() {
   // is a path segment rather than ambient state — see auth/tokens.ts for why.
   await app.register(authV1Routes);
   await app.register(meV1Routes);
+  await app.register(twoFactorV1Routes);
   await app.register(workspaceV1Routes);
   await app.register(teamV1Routes);
   await app.register(conversationV1Routes);

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, dateTime, patchStoredUser } from '../api';
 import { refreshSession, setSession, useSession } from '../session';
 import { Badge, Button, Card, Empty, ErrorBox, Field, Spinner, Table, Td, inputClass } from '../ui';
-import { QrCode } from '../QrCode';
+import { QrCode } from '../../ui/QrCode';
 
 interface MeResponse {
   user: { id: string; email: string; name: string; role: string; totp_enabled: boolean; created_at: string };

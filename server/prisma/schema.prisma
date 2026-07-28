@@ -113,6 +113,13 @@ model users {
   default_workspace_id String?   @db.Uuid
   timezone             String?
   last_login_at        DateTime? @db.Timestamptz(6)
+  /// Present once enrolment STARTS; `totp_enabled` is what a login gate reads.
+  /// CHECK (NOT totp_enabled OR totp_secret IS NOT NULL)
+  totp_secret          String?
+  totp_enabled         Boolean   @default(false)
+  totp_enrolled_at     DateTime? @db.Timestamptz(6)
+  /// Last accepted time step — RFC 6238 §5.2 replay protection.
+  totp_last_step       BigInt?
   deleted_at           DateTime? @db.Timestamptz(6)
   created_at           DateTime  @default(now()) @db.Timestamptz(6)
   updated_at           DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
@@ -120,6 +127,7 @@ model users {
   memberships    workspace_members[]
   refresh_tokens refresh_tokens[]
   tokens         user_tokens[]
+  recovery_codes user_recovery_codes[]
   push           push_subscriptions[]
   sent_invites   invites[]            @relation("invite_author")
   notes          conversation_notes[]
@@ -207,6 +215,25 @@ model user_tokens {
   user users @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([user_id, kind])
+}
+
+/// Single-use codes that stand in for the second factor when the phone is gone.
+///
+/// Hashed at rest by the same function as the tokens above, for the same reason: a
+/// recovery code bypasses TOTP, so it is a password equivalent and a leaked database
+/// must not hand anyone a working one. Spent rows are kept rather than deleted — "you
+/// used a recovery code on the 4th" is worth being able to say.
+model user_recovery_codes {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String    @db.Uuid
+  code_hash  String    @unique
+  used_at    DateTime? @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  user users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  // A partial index on the unused ones is added in the migration SQL — those are
+  // the only rows either the login check or the remaining-count ever looks at.
 }
 
 /// Refresh tokens: only a SHA-256 hash is stored. Deliberately NOT workspace

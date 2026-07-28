@@ -438,8 +438,14 @@ cd server
 export DATABASE_URL='postgres://nestled:nestled@localhost:5546/nestled_test'
 export JWT_ACCESS_SECRET=test-secret-min-16-chars JWT_REFRESH_SECRET=test-secret-min-16-chars
 export NODE_ENV=test
+# Required, not optional. Without it, settings are written to the database in
+# plaintext (which is the correct behaviour for an install whose operator has not
+# set a key) and the tests asserting encryption at rest fail — on a DATABASE that
+# then holds plaintext rows, so the next run fails differently. Set it, and if you
+# ever change it, clear `platform_settings` first.
+export SETTINGS_KEY=test-settings-key
 npx prisma migrate deploy
-npm test        # 220 tests, serial (they share one database)
+npm test        # 301 tests, serial (they share one database)
 ```
 
 From the repo root: `npm run typecheck && npx eslint . && npm run build`.

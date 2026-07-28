@@ -23,6 +23,7 @@ export type EmailTemplate =
   | 'verify_email'
   | 'password_reset'
   | 'password_changed'
+  | 'two_factor_changed'
   | 'workspace_invite'
   | 'website_installed';
 
@@ -126,6 +127,23 @@ function render(template: EmailTemplate, v: Record<string, string>): Rendered {
           { label: 'Go to Nestled', url: settings().urls.app },
         ),
         text: `Your Nestled password was changed and all other sessions were signed out. If this wasn't you, reset your password immediately.`,
+      };
+    /*
+      Sent on both directions of the change, and sent even though the person who made
+      it is looking at the screen. The recipient of interest is the one who did NOT
+      make it: turning the second factor off is what an attacker with a live session
+      does first, and this email is the only place that surfaces outside the session.
+    */
+    case 'two_factor_changed':
+      return {
+        subject: `Two-step verification was ${v.action ?? 'changed'}`,
+        html: layout(
+          `Two-step verification was ${esc(v.action ?? 'changed')}`,
+          `<p>Two-step verification on your Nestled account was just ${esc(v.action ?? 'changed')}.</p>
+           <p><b>If this wasn't you</b>, change your password straight away — whoever did it was signed in as you.</p>`,
+          { label: 'Review your security settings', url: `${settings().urls.app}/account/security` },
+        ),
+        text: `Two-step verification on your Nestled account was ${v.action ?? 'changed'}. If this wasn't you, change your password immediately.`,
       };
     case 'workspace_invite':
       return {

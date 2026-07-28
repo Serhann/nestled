@@ -177,7 +177,18 @@ export default function Inbox() {
               <option value="unread">Unread</option>
             </Select>
           </div>
-          <div className="flex gap-1.5">
+          {/*
+            Two per row, not one row of three.
+
+            Three of these side by side need 331px of a 295px column. They used to solve
+            that by overflowing it — the assignee control sat on top of the thread beside
+            it — and once they were made to shrink they read "O…", "All chan…", "Any…".
+            Both are the same mistake: a row that was never wide enough. Two columns give
+            each one 144px, which is more than the longest label needs, and a fourth
+            control (the website filter, when there is more than one) completes the grid
+            instead of breaking it.
+          */}
+          <div className="grid grid-cols-2 gap-1.5">
             <Select
               value={filters.status ?? 'open'}
               onChange={(e) => setFilter('status', e.target.value)}

@@ -47,6 +47,7 @@ export async function meV1Routes(app: FastifyInstance): Promise<void> {
         name: true,
         email: true,
         email_verified_at: true,
+        totp_enabled: true,
         timezone: true,
         default_workspace_id: true,
         avatar_file_id: true,
@@ -177,6 +178,9 @@ export async function meV1Routes(app: FastifyInstance): Promise<void> {
          * banner can say the true thing instead.
          */
         can_send_email: Boolean(platformSettings().mail.host),
+        // So the account menu can carry a nudge without the security page having to
+        // be opened to find out there is nothing protecting the account.
+        two_factor_enabled: user.totp_enabled,
         timezone: user.timezone,
         avatar_url: user.avatar_file_id ? `/api/v1/files/${user.avatar_file_id}` : null,
         default_workspace_id: user.default_workspace_id,

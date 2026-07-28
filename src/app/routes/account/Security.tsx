@@ -6,6 +6,7 @@ import { Button } from '../../../ui/Button';
 import { Section } from '../../../ui/Card';
 import { Field, TextInput } from '../../../ui/Form';
 import { Page, PageHeader } from '../../../ui/Page';
+import { TwoFactorSection } from './TwoFactor';
 
 export default function Security() {
   const [current, setCurrent] = useState('');
@@ -29,6 +30,10 @@ export default function Security() {
           </Link>
         }
       />
+      {/* First, because it is the one thing on this page that changes what an
+          attacker with the password can do. */}
+      <TwoFactorSection />
+
       <Section
         title="Change your password"
         description="Every other session is signed out when you do — that is the point of changing it."

@@ -136,31 +136,52 @@ export interface VerifyOptions extends TotpOptions {
  * auth path should treat "unparseable" and "wrong" identically.
  */
 export function verifyTotp(secretBase32: string, code: string, opts: VerifyOptions = {}): boolean {
+  return verifyTotpStep(secretBase32, code, opts) !== null;
+}
+
+/**
+ * The same check, returning WHICH step matched so the caller can refuse a replay.
+ *
+ * A code stays valid for the whole acceptance window — three steps, ninety seconds
+ * at the defaults. RFC 6238 §5.2 requires the verifier to accept each one only once,
+ * because otherwise anyone who observes a code (over a shoulder, through a phishing
+ * proxy) can spend it again before it expires. Storing the returned step and
+ * rejecting anything at or below it is what closes that.
+ *
+ * Every candidate step is still compared after a match, so the time this takes does
+ * not reveal which one it was; the loop records rather than returns early.
+ */
+export function verifyTotpStep(
+  secretBase32: string,
+  code: string,
+  opts: VerifyOptions = {},
+): bigint | null {
   const { digits, stepSeconds } = { ...DEFAULTS, ...opts };
   const window = opts.window ?? 1;
   const presented = code.replace(/\s/g, '');
-  if (!new RegExp(`^\\d{${digits}}$`).test(presented)) return false;
+  if (!new RegExp(`^\\d{${digits}}$`).test(presented)) return null;
 
   let key: Buffer;
   try {
     key = base32Decode(secretBase32);
   } catch {
-    return false;
+    return null;
   }
-  if (key.length === 0) return false;
+  if (key.length === 0) return null;
 
   const now = Math.floor((opts.at ?? new Date()).getTime() / 1000);
   const base = counterAt(now, stepSeconds);
   const presentedBuf = Buffer.from(presented);
 
-  let matched = false;
+  let matched: bigint | null = null;
   for (let drift = -window; drift <= window; drift++) {
-    const candidate = Buffer.from(hotp(key, base + BigInt(drift), opts));
+    const step = base + BigInt(drift);
+    const candidate = Buffer.from(hotp(key, step, opts));
     if (
       candidate.length === presentedBuf.length &&
       crypto.timingSafeEqual(candidate, presentedBuf)
     ) {
-      matched = true;
+      matched = step;
     }
   }
   return matched;
