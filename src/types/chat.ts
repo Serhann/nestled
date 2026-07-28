@@ -52,6 +52,11 @@ export interface BootTheme {
   launcher_size: number;
   launcher_icon: 'chat' | 'question' | 'sparkle' | 'envelope' | 'wave';
   header_style: 'solid' | 'soft' | 'minimal';
+  bubble_style: 'brand' | 'neutral';
+  panel_width: number;
+  launcher_pulse: boolean;
+  /** Null = use `primary_color` in dark mode too. */
+  primary_color_dark: string | null;
   brand_avatar_url: string | null;
   show_branding: boolean;
 }

@@ -38,7 +38,7 @@ export function Panel({
   notice?: string | null;
 }) {
   return (
-    <div className="n-panel">
+    <div className="n-panel" data-bubbles={theme?.bubble_style ?? 'brand'}>
       {/*
         `data-style` rather than three header components. The difference between solid,
         soft and minimal is entirely which colours are used — the structure, the buttons

@@ -26,6 +26,16 @@ const themeBody = z.object({
   launcher_size: z.number().int().min(40).max(96).optional(),
   launcher_icon: z.enum(['chat', 'question', 'sparkle', 'envelope', 'wave']).optional(),
   header_style: z.enum(['solid', 'soft', 'minimal']).optional(),
+  bubble_style: z.enum(['brand', 'neutral']).optional(),
+  panel_width: z.number().int().min(320).max(520).optional(),
+  launcher_pulse: z.boolean().optional(),
+  // Empty string clears it back to "use the light colour" — the same gesture the
+  // platform settings use, so '' and absent stay different things.
+  primary_color_dark: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .or(z.literal(''))
+    .optional(),
   // A URL the customer already hosts. https only: an http image on an https page is
   // blocked as mixed content and simply does not appear, which reads as our bug.
   brand_avatar_url: z

@@ -114,7 +114,18 @@ export interface Palette {
  * chose the colour.
  */
 export function derivePalette(theme: BootTheme | undefined, scheme: Scheme): Palette {
-  const primary = (theme && parseHex(theme.primary_color)) || FALLBACK_PRIMARY;
+  /**
+   * The brand colour, and the separate one a customer may have set for dark mode.
+   *
+   * A single colour cannot satisfy both backgrounds: the contrast warning on the
+   * appearance screen is computed against one surface, so a brand that reads perfectly
+   * on white can be unreadable on a dark panel with no way to fix it that does not
+   * ruin the light theme. Falls back to the light colour when unset, which is what
+   * every existing website has.
+   */
+  const light = (theme && parseHex(theme.primary_color)) || FALLBACK_PRIMARY;
+  const dark = (theme && theme.primary_color_dark && parseHex(theme.primary_color_dark)) || light;
+  const primary = scheme === 'dark' ? dark : light;
   const n = scheme === 'dark' ? DARK : LIGHT;
 
   const onWhite = contrast(primary, WHITE);

@@ -130,7 +130,12 @@ export function Widget({
   useEffect(() => {
     const state = !open ? 'closed' : minimized ? 'minimized' : 'open';
     if (state !== 'closed') {
-      const [width, height] = SIZES[state];
+      const [, height] = SIZES[state];
+      // The customer's width, not the constant. The IFRAME is what has to be this
+      // wide — a panel styled wider inside a 384px frame is a panel with its right
+      // edge cut off, which is how every frame-sized setting on this screen has
+      // failed so far.
+      const width = Math.max(320, Math.min(520, boot.theme?.panel_width ?? SIZES.open[0]));
       bridge.resize(state, width, height);
       bridge.emit('open');
       return;
@@ -140,15 +145,30 @@ export function Widget({
       const el = launcherRef.current;
       const [fallbackW, fallbackH] = SIZES.closed;
       const rect = el?.getBoundingClientRect();
-      // SHADOW_ROOM on each side: the button draws a drop shadow outside its own box,
-      // and a frame sized to the button alone clips it into a hard square.
-      const width = rect && rect.width > 0 ? Math.ceil(rect.width) + SHADOW_ROOM * 2 : fallbackW;
-      const height = rect && rect.height > 0 ? Math.ceil(rect.height) + SHADOW_ROOM * 2 : fallbackH;
+      // Room on each side for what the button draws OUTSIDE its own box: a drop shadow
+      // always, and the attention ring when it is on. The ring reaches 1.55x, so at the
+      // large launcher size a fixed 18px would clip it into a square — the same
+      // mistake as sizing the frame to the button and cropping the shadow.
+      const pulsing = boot.theme?.launcher_pulse === true;
+      const room = pulsing
+        ? Math.max(SHADOW_ROOM, Math.ceil((rect?.height ?? 60) * 0.3))
+        : SHADOW_ROOM;
+      const width = rect && rect.width > 0 ? Math.ceil(rect.width) + room * 2 : fallbackW;
+      const height = rect && rect.height > 0 ? Math.ceil(rect.height) + room * 2 : fallbackH;
       bridge.resize('closed', Math.max(width, 48), Math.max(height, 48));
     });
     bridge.emit('close');
     return () => cancelAnimationFrame(frame);
-  }, [bridge, open, minimized, boot.theme?.launcher_style, copy.launcherLabel]);
+  }, [
+    bridge,
+    open,
+    minimized,
+    boot.theme?.launcher_style,
+    boot.theme?.launcher_size,
+    boot.theme?.panel_width,
+    boot.theme?.launcher_pulse,
+    copy.launcherLabel,
+  ]);
 
   useEffect(() => {
     if (unread > 0) bridge.emit('unread', { count: unread });
@@ -343,5 +363,8 @@ function previewOffsets(
   return {
     '--n-preview-offset-x': `${boot.theme?.offset_x ?? 20}px`,
     '--n-preview-offset-y': `${boot.theme?.offset_y ?? 20}px`,
+    // The panel width too: on a real page the iframe carries it, and the preview has
+    // to stand in for the iframe.
+    '--n-preview-panel-w': `${boot.theme?.panel_width ?? 384}px`,
   } as React.CSSProperties;
 }

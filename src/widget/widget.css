@@ -112,7 +112,7 @@ textarea {
   /* Viewport units, not percentages: inside this iframe 100vh IS the frame, and a
      percentage height needs a definite containing height that an absolutely positioned
      child of a fixed root does not reliably have — it resolved to zero. */
-  width: min(384px, calc(100vw - 24px));
+  width: min(var(--n-preview-panel-w, 384px), calc(100vw - 24px));
   height: min(640px, calc(100vh - 24px));
 }
 .n-root[data-preview='true'][data-position='left'] .n-panel {
@@ -795,4 +795,52 @@ textarea {
   object-fit: cover;
   border-radius: inherit;
   display: block;
+}
+
+
+/* ── Visitor bubble colour ─────────────────────────────────────────────────
+ *
+ * Brand-coloured is the default and usually right, but on a saturated or very light
+ * brand it makes the CUSTOMER'S OWN words the loudest thing in the transcript — and
+ * the words worth reading are the ones coming back. Neutral keeps the colour for the
+ * header and the buttons, where it is doing work.
+ */
+.n-panel[data-bubbles='neutral'] .n-bubble[data-own='true'] {
+  background: color-mix(in srgb, var(--n-color-text) 10%, var(--n-color-surface));
+  color: var(--n-color-text);
+  border-color: var(--n-color-border);
+}
+.n-panel[data-bubbles='neutral'] .n-bubble[data-own='true'] a {
+  color: var(--n-color-primary);
+}
+
+/* ── Launcher attention pulse ──────────────────────────────────────────────
+ *
+ * A ring that expands out of the button rather than scaling the button itself:
+ * scaling moves the click target, and a control that drifts under the cursor is worse
+ * than one nobody noticed.
+ *
+ * `prefers-reduced-motion` removes it entirely. A looping animation is exactly what
+ * that preference exists for, and honouring it is not optional.
+ */
+@keyframes n-pulse {
+  0% { transform: scale(1); opacity: 0.45; }
+  70% { transform: scale(1.55); opacity: 0; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+.n-launcher[data-pulse='true']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--n-color-primary);
+  animation: n-pulse 2.4s ease-out infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .n-launcher[data-pulse='true']::after {
+    animation: none;
+    opacity: 0;
+  }
 }

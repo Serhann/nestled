@@ -309,6 +309,9 @@ model website_settings {
 
   // ── Theme. Explicit columns: few, validated, rendered into CSS variables. ──
   primary_color    String  @default("#4f46e5")
+  /// NULL = use `primary_color`. A colour that reads on white can be unreadable on a
+  /// dark surface, and the contrast warning is computed against one background.
+  primary_color_dark String?
   color_mode       String  @default("light") // CHECK (light|dark|auto)
   radius_px        Int     @default(16)
   font_family      String  @default("system")
@@ -325,6 +328,12 @@ model website_settings {
   header_style     String  @default("solid")
   /// A picture the customer already hosts. Not an upload — see migration 0008.
   brand_avatar_url String?
+  /// CHECK (brand|neutral). Whose colour the visitor's own message bubbles use.
+  bubble_style     String  @default("brand")
+  /// 320–520. Reaches embed.js too: the host page owns the iframe.
+  panel_width      Int     @default(384)
+  /// Off by default. Effective and irritating in equal measure — the customer decides.
+  launcher_pulse   Boolean @default(false)
   launcher_file_id String? @db.Uuid
   avatar_file_id   String? @db.Uuid
   logo_file_id     String? @db.Uuid

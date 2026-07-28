@@ -154,6 +154,41 @@ export default function Appearance() {
                 </Select>
               )}
             </Field>
+            <Field
+              label="Dark mode colour"
+              hint="Optional. A colour that reads well on white is often unreadable on a dark panel — set a lighter one here and the light theme keeps yours."
+            >
+              {(a) => (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={settings.primary_color_dark ?? settings.primary_color}
+                    onChange={(e) => save({ primary_color_dark: e.target.value })}
+                    className="w-11 h-11 rounded-xl border border-gray-200 bg-white p-1 cursor-pointer shrink-0"
+                    aria-label="Dark mode colour"
+                  />
+                  <TextInput
+                    {...a}
+                    value={settings.primary_color_dark ?? ''}
+                    placeholder={`Same as ${settings.primary_color}`}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '' || /^#[0-9a-fA-F]{6}$/.test(value)) {
+                        save({ primary_color_dark: value });
+                      }
+                    }}
+                  />
+                  {settings.primary_color_dark && (
+                    <button
+                      onClick={() => save({ primary_color_dark: '' })}
+                      className="text-xs font-semibold text-gray-500 hover:text-gray-700 shrink-0"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              )}
+            </Field>
           </div>
         </Section>
 
@@ -262,6 +297,18 @@ export default function Appearance() {
                 </div>
               )}
             </Field>
+            <Field
+              label="Attention pulse"
+              hint="A slow ring around the closed bubble. Effective, and irritating in equal measure — off unless you want it. Respects a visitor's reduced-motion setting."
+            >
+              {() => (
+                <Toggle
+                  checked={settings.launcher_pulse}
+                  onChange={(value) => save({ launcher_pulse: value })}
+                  label="Draw attention to the bubble"
+                />
+              )}
+            </Field>
           </div>
         </Section>
 
@@ -279,7 +326,7 @@ export default function Appearance() {
           )}
         </Section>
 
-      <Section title="Header" description="How much of your brand colour sits above every conversation.">
+      <Section title="The panel" description="The conversation itself: how much of your colour it carries, and how much room it takes.">
           <div className="space-y-4">
             <Field label="Style">
               {() => (
@@ -321,6 +368,48 @@ export default function Appearance() {
                   value={settings.brand_avatar_url ?? ''}
                   placeholder="https://your-site.com/logo.png"
                   onChange={(e) => save({ brand_avatar_url: e.target.value })}
+                />
+              )}
+            </Field>
+
+            <Field label="Your customers’ own messages">
+              {() => (
+                <div className="flex gap-1.5">
+                  {(
+                    [
+                      ['brand', 'Your colour'],
+                      ['neutral', 'Neutral grey'],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => save({ bubble_style: value })}
+                      className={`flex-1 border-[1.5px] px-3 py-2 text-xs font-semibold transition rounded-xl ${
+                        settings.bubble_style === value
+                          ? 'border-blue-500 text-blue-700 bg-blue-50/50'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Field>
+
+            <Field
+              label="Width"
+              hint="How wide the open panel is, in pixels. Wider suits long answers and screenshots; narrower covers less of the page underneath."
+            >
+              {(a) => (
+                <TextInput
+                  {...a}
+                  type="number"
+                  min={320}
+                  max={520}
+                  step={8}
+                  value={settings.panel_width}
+                  onChange={(e) => save({ panel_width: Number(e.target.value) })}
                 />
               )}
             </Field>
@@ -372,6 +461,18 @@ export default function Appearance() {
         <p className="text-[11px] text-gray-400 mt-2">
           This is the real widget, showing your unsaved changes.
         </p>
+        {/*
+          Said out loud, because otherwise it reads as the setting not working. The
+          preview column is fixed at 360px, so a panel wider than that is shown
+          narrowed — and a customer who sets 460, sees 334 and concludes the control
+          is broken is exactly the failure this whole screen keeps having.
+        */}
+        {device === 'desktop' && settings.panel_width > 330 && (
+          <p className="text-[11px] text-amber-700 mt-1">
+            Your panel is {settings.panel_width}px wide — wider than this preview column,
+            so it is shown narrowed here. On your site it will be the full width.
+          </p>
+        )}
       </div>
     </div>
   );

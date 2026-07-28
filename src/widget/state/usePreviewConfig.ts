@@ -65,6 +65,13 @@ function bootFromDraft(message: PreviewMessage): BootPayload {
     launcher_size: num('launcher_size', 60),
     launcher_icon: str<BootTheme['launcher_icon']>('launcher_icon', 'chat'),
     header_style: str<BootTheme['header_style']>('header_style', 'solid'),
+    bubble_style: str<BootTheme['bubble_style']>('bubble_style', 'brand'),
+    panel_width: num('panel_width', 384),
+    launcher_pulse: draft.launcher_pulse === true,
+    primary_color_dark:
+      typeof draft.primary_color_dark === 'string' && draft.primary_color_dark
+        ? draft.primary_color_dark
+        : null,
     brand_avatar_url:
       typeof draft.brand_avatar_url === 'string' && draft.brand_avatar_url
         ? draft.brand_avatar_url

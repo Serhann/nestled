@@ -31,6 +31,7 @@ export const Launcher = forwardRef<
       ref={ref}
       className="n-launcher"
       data-style={style}
+      data-pulse={theme?.launcher_pulse ? 'true' : undefined}
       onClick={onOpen}
       aria-label={label}
       // Inline, because it is a per-website number and a CSS variable set on the root
