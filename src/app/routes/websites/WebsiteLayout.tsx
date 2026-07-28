@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import { NavLink, Outlet, useParams } from 'react-router';
+import { AlertTriangle } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMutation } from '@tanstack/react-query';
 import { useWorkspace } from '../../providers/WorkspaceProvider';
@@ -115,8 +116,53 @@ export default function WebsiteLayout() {
             </NavLink>
           ))}
         </nav>
+        {/*
+          A rejected save, said out loud.
+          
+          Every control on these tabs saves optimistically on change and rolls back on
+          failure, and the rollback was silent — so a refused value looked exactly like
+          a control that does not work. Adding a pre-chat question was the clearest
+          case: the row appeared and vanished on the next frame, with a 400 nobody saw.
+          
+          Rendered here rather than on each tab so a page added later cannot forget it.
+        */}
+        {save.error && (
+          <div
+            role="alert"
+            className="mb-4 flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          >
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden />
+            <span className="flex-1">
+              <b>That change was not saved.</b> {messageFor(save.error)}
+            </span>
+            <button onClick={() => save.reset()} className="font-semibold underline shrink-0">
+              Dismiss
+            </button>
+          </div>
+        )}
         <Outlet />
       </Page>
     </Ctx.Provider>
   );
+}
+
+/**
+ * The server's own words where it has any.
+ *
+ * A validation failure names the field that was refused, and that is exactly what the
+ * person looking at the form needs. "Something went wrong" would make them try the
+ * same thing again.
+ */
+function messageFor(error: unknown): string {
+  // On `body`, not on the error: ApiError keeps the parsed payload there, and the
+  // validation shape is `{ error, details: [{ path, message }] }`.
+  const body = (error as { body?: unknown } | null)?.body;
+  const details = (body as { details?: { path?: string; message?: string }[] } | null)?.details;
+  if (Array.isArray(details) && details.length > 0) {
+    return details
+      .map((d) => (d.path ? `${d.path}: ${d.message ?? 'invalid'}` : (d.message ?? 'invalid')))
+      .join('; ');
+  }
+  const message = (error as { message?: string } | null)?.message;
+  return message && message !== 'Invalid request' ? message : 'The server refused the value.';
 }

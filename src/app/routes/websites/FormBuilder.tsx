@@ -15,6 +15,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useEffect, useRef, useState } from 'react';
 import { GripVertical, Plus, Trash2 } from 'lucide-react';
 import { Button, IconButton } from '../../../ui/Button';
 import { Select, TextInput } from '../../../ui/Form';
@@ -38,6 +39,36 @@ export function FormBuilder({
   onChange: (fields: PreChatField[]) => void;
   allowTypes?: boolean;
 }) {
+  /**
+   * A local copy, because the server will not accept a half-typed question.
+   *
+   * `label` is required server-side — an unlabelled input is a box a visitor cannot
+   * answer — and this panel saves on every keystroke. Pushing every intermediate value
+   * upward therefore meant that backspacing a label to empty produced a 400, the
+   * optimistic update rolled back, and the whole row reverted mid-edit. Adding a
+   * question did the same thing on the first frame: it was created with an empty label,
+   * rejected, and vanished instantly.
+   *
+   * So typing is local and instant, and only a VALID set is handed up to be saved.
+   * Clearing a label simply means nothing is saved until it has one again.
+   */
+  const [draft, setDraft] = useState(fields);
+  const lastPushed = useRef(fields);
+
+  // Follow the server when it changes underneath us — another tab, or a value the
+  // server normalised — but not while the local copy is the newer of the two.
+  useEffect(() => {
+    if (fields !== lastPushed.current) setDraft(fields);
+  }, [fields]);
+
+  const commit = (next: PreChatField[]) => {
+    setDraft(next);
+    if (next.every((f) => f.label.trim().length > 0 && f.name.trim().length > 0)) {
+      lastPushed.current = next;
+      onChange(next);
+    }
+  };
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -46,20 +77,20 @@ export function FormBuilder({
   const onDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const from = fields.findIndex((f) => f.name === active.id);
-    const to = fields.findIndex((f) => f.name === over.id);
+    const from = draft.findIndex((f) => f.name === active.id);
+    const to = draft.findIndex((f) => f.name === over.id);
     if (from === -1 || to === -1) return;
-    onChange(arrayMove(fields, from, to));
+    commit(arrayMove(draft, from, to));
   };
 
   const update = (index: number, patch: Partial<PreChatField>) =>
-    onChange(fields.map((f, i) => (i === index ? { ...f, ...patch } : f)));
+    commit(draft.map((f, i) => (i === index ? { ...f, ...patch } : f)));
 
   return (
     <div className="space-y-2">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-        <SortableContext items={fields.map((f) => f.name)} strategy={verticalListSortingStrategy}>
-          {fields.map((field, index) => (
+        <SortableContext items={draft.map((f) => f.name)} strategy={verticalListSortingStrategy}>
+          {draft.map((field, index) => (
             <SortableRow key={field.name} id={field.name}>
               <div className="flex-1 grid gap-2 sm:grid-cols-2">
                 <TextInput
@@ -137,18 +168,7 @@ export function FormBuilder({
       <Button
         variant="ghost"
         size="sm"
-        onClick={() =>
-          onChange([
-            ...fields,
-            {
-              name: `field_${fields.length + 1}`,
-              label: '',
-              type: 'text',
-              required: false,
-              placeholder: '',
-            },
-          ])
-        }
+        onClick={() => commit([...draft, newField(draft)])}
       >
         <Plus className="w-4 h-4" aria-hidden />
         Add a question
@@ -178,4 +198,31 @@ function SortableRow({ id, children }: { id: string; children: React.ReactNode }
       {children}
     </div>
   );
+}
+
+/**
+ * A new question that is valid the moment it exists.
+ *
+ * Two things it must get right, and the old one-liner got both wrong:
+ *
+ *   - **A real label.** The server requires one, so a field created with `label: ''`
+ *     is rejected on the very first save and the row disappears as fast as it
+ *     appeared. A placeholder the customer immediately overwrites is far better than
+ *     a control that looks broken.
+ *   - **A name nothing else is using.** The name is the React key AND the drag id, and
+ *     it was `field_${length + 1}` — so adding three, deleting the second and adding
+ *     another produced two fields called `field_3`. Duplicate keys drop rows on
+ *     re-render and duplicate drag ids make reordering pick the wrong one.
+ */
+function newField(existing: PreChatField[]): PreChatField {
+  const taken = new Set(existing.map((f) => f.name));
+  let n = existing.length + 1;
+  while (taken.has(`field_${n}`)) n += 1;
+  return {
+    name: `field_${n}`,
+    label: 'New question',
+    type: 'text',
+    required: false,
+    placeholder: '',
+  };
 }
