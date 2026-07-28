@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { settings as platformSettings } from '../../services/platform/settings.js';
 import { z } from 'zod';
 // /me is cross-workspace BY DEFINITION — it lists every workspace the user
 // belongs to, so a client scoped to one of them could not answer it.
@@ -166,6 +167,16 @@ export async function meV1Routes(app: FastifyInstance): Promise<void> {
         name: user.name,
         email: user.email,
         email_verified: Boolean(user.email_verified_at),
+        /**
+         * Whether this installation can send mail at all.
+         *
+         * Without it the verification banner is a dead end nobody can see the bottom
+         * of: it says "check your inbox", no SMTP is configured, no email is ever
+         * sent, and the account stays unverified — which in turn blocks invitations,
+         * so the owner concludes that managing their team is broken. Reported so the
+         * banner can say the true thing instead.
+         */
+        can_send_email: Boolean(platformSettings().mail.host),
         timezone: user.timezone,
         avatar_url: user.avatar_file_id ? `/api/v1/files/${user.avatar_file_id}` : null,
         default_workspace_id: user.default_workspace_id,

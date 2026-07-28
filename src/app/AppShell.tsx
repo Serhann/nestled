@@ -273,6 +273,25 @@ function VerificationBanner() {
   const { me } = useSession();
   const [sent, setSent] = useState(false);
   if (me.user.email_verified) return null;
+
+  /**
+   * The version of this banner that is true on an install with no mail.
+   *
+   * "Check your inbox" when nothing was ever sent is a loop with no exit: unverified
+   * blocks invitations, so the owner concludes team management is broken and has no
+   * way to find out why. Naming the actual cause turns it into a five-minute fix by
+   * whoever runs the install.
+   */
+  if (me.user.can_send_email === false) {
+    return (
+      <div className="shrink-0 flex flex-wrap items-center justify-center gap-2 bg-amber-100 text-amber-900 text-xs font-medium px-4 py-2">
+        Your email is unconfirmed, and this installation has no mail server set up — so
+        no confirmation can be sent. Until it is, invitations cannot go out. An operator
+        can add SMTP in the ops panel under Settings → Email.
+      </div>
+    );
+  }
+
   return (
     <div className="shrink-0 flex flex-wrap items-center justify-center gap-2 bg-amber-100 text-amber-900 text-xs font-medium px-4 py-2">
       Confirm your email to start sending invitations and serving your widget.

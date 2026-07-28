@@ -1,4 +1,4 @@
-import { lazy } from 'react';
+import { Suspense, lazy } from 'react';
 import { createBrowserRouter, Navigate, Outlet } from 'react-router';
 import { APP_BASENAME } from '../lib/origins';
 import { getSession } from '../lib/tokens';
@@ -23,8 +23,25 @@ import { Spinner, ErrorState } from '../ui/Page';
  *   free.
  */
 
+/**
+ * A code-split route, with its own boundary.
+ *
+ * The Suspense wrapper is here rather than around the route tree deliberately. A bare
+ * `React.lazy` suspends, and if nothing above it catches that, React throws "a
+ * component suspended while responding to synchronous input" and replaces the page
+ * with an error screen. Routes nested under a layout were fine because the layout
+ * happened to provide a boundary; `/account/profile` sits directly under the auth
+ * gate and had none, so loading it directly — a bookmark, a reload, a link in an
+ * email — crashed. Putting the boundary in the factory means a route added tomorrow
+ * in a new position cannot reintroduce that.
+ */
 const lazyRoute = (loader: () => Promise<{ default: React.ComponentType }>) => {
-  const Component = lazy(loader);
+  const Lazy = lazy(loader);
+  const Component = () => (
+    <Suspense fallback={<Spinner />}>
+      <Lazy />
+    </Suspense>
+  );
   return { Component };
 };
 
@@ -88,8 +105,15 @@ export const router = createBrowserRouter(
         { path: '/workspaces', ...lazyRoute(() => import('./routes/WorkspacePicker')) },
         { path: '/workspaces/new', ...lazyRoute(() => import('./routes/setup/CreateWorkspace')) },
         { path: '/setup/workspace', ...lazyRoute(() => import('./routes/setup/CreateWorkspace')) },
-        { path: '/account/profile', ...lazyRoute(() => import('./routes/account/Profile')) },
-        { path: '/account/security', ...lazyRoute(() => import('./routes/account/Security')) },
+        {
+          path: '/account',
+          ...lazyRoute(() => import('./routes/account/AccountLayout')),
+          children: [
+            { index: true, element: <Navigate to="profile" replace /> },
+            { path: 'profile', ...lazyRoute(() => import('./routes/account/Profile')) },
+            { path: 'security', ...lazyRoute(() => import('./routes/account/Security')) },
+          ],
+        },
 
         {
           path: '/w/:workspaceSlug',

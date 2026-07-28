@@ -47,7 +47,7 @@ export default function Reports() {
         <Select
           value={String(days)}
           onChange={(e) => setDays(Number(e.target.value))}
-          className="!py-1.5 !text-xs !w-auto"
+          className="w-40 shrink-0"
           aria-label="Period"
         >
           <option value="7">Last 7 days</option>
@@ -65,13 +65,13 @@ export default function Reports() {
             <Tile
               label="Typical wait"
               value={fmt(report.data.first_response_minutes.p50)}
-              hint="Half of your customers waited less than this."
+              hint="Half your customers waited less than this."
               icon={Clock}
             />
             <Tile
               label="Slowest one in ten"
               value={fmt(report.data.first_response_minutes.p90)}
-              hint="The number your least patient customers actually experience."
+              hint="What your least patient customers experience."
               icon={Clock}
             />
             <Tile
@@ -84,7 +84,7 @@ export default function Reports() {
             <Tile
               label="Missed a target"
               value={String(report.data.breached)}
-              hint="Counted even if someone answered later — a breach that vanishes is one nobody learns from."
+              hint="Still counted if someone answered late."
               icon={AlertTriangle}
               tone={report.data.breached > 0 ? 'red' : undefined}
             />
@@ -96,7 +96,7 @@ export default function Reports() {
           >
             {report.data.by_channel.length === 0 ? (
               <p className="text-sm text-gray-500">
-                Nothing answered in this period yet.
+                Nothing has been answered in this period yet, so there is nothing to compare.
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -126,7 +126,7 @@ export default function Reports() {
             )}
           </Section>
 
-          <p className="text-xs text-gray-400 leading-relaxed">
+          <p className="text-xs text-gray-500 leading-relaxed">
             {report.data.total} conversation{report.data.total === 1 ? '' : 's'} started in the
             last {report.data.days} days, {report.data.answered} of which have had a reply.
             Percentiles are taken from actual response times rather than interpolated, so
@@ -167,13 +167,20 @@ function Tile({
     red: 'text-red-700',
   };
   return (
-    <Card>
+    // `Card` deliberately carries no padding — it is used for full-bleed content
+    // elsewhere — so a tile has to supply its own. Without it the hint text ran to the
+    // rounded edge and read as overflowing the card.
+    <Card className="p-4 flex flex-col">
       <div className="flex items-start justify-between gap-2">
-        <p className="text-xs uppercase tracking-wide text-gray-400 font-semibold">{label}</p>
+        <p className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold leading-tight">
+          {label}
+        </p>
         <Icon className={`w-4 h-4 shrink-0 ${tone ? tones[tone] : 'text-gray-300'}`} aria-hidden />
       </div>
-      <p className={`font-display text-2xl mt-2 ${tone ? tones[tone] : 'text-gray-900'}`}>{value}</p>
-      <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">{hint}</p>
+      <p className={`font-display text-3xl mt-2 ${tone ? tones[tone] : 'text-gray-900'}`}>{value}</p>
+      {/* `mt-auto` pins the hint to the bottom, so four tiles of unequal text still
+          line their numbers up with each other. */}
+      <p className="text-xs text-gray-500 mt-2 leading-relaxed">{hint}</p>
     </Card>
   );
 }

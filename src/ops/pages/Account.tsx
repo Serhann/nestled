@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, dateTime, patchStoredUser } from '../api';
 import { refreshSession, setSession, useSession } from '../session';
 import { Badge, Button, Card, Empty, ErrorBox, Field, Spinner, Table, Td, inputClass } from '../ui';
+import { QrCode } from '../QrCode';
 
 interface MeResponse {
   user: { id: string; email: string; name: string; role: string; totp_enabled: boolean; created_at: string };
@@ -167,18 +168,36 @@ function FactorEnrollment() {
       )}
 
       {enrollment && (
-        <div className="space-y-3">
-          {/* No QR image: rendering one would mean either a dependency or an
-              external service, and the ops panel talks to neither. The URI can be
-              pasted into any authenticator, and the raw secret typed by hand. */}
-          <Field label="Setup URI" hint="Paste into your authenticator app.">
-            <textarea readOnly className={`${inputClass} h-20 font-mono text-xs`} value={enrollment.otpauth_uri} />
-          </Field>
-          <Field label="Or type this secret">
-            <code className="block rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm tracking-widest">
-              {enrollment.secret.match(/.{1,4}/g)?.join(' ')}
-            </code>
-          </Field>
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row gap-4 sm:items-start">
+            {/*
+              Generated in this process, never fetched. A QR from a public chart URL
+              would hand the otpauth:// URI — which contains the TOTP secret — to a
+              third party on every enrolment, which defeats the point of the factor.
+            */}
+            <QrCode value={enrollment.otpauth_uri} size={168} className="shrink-0 p-2" />
+            <div className="min-w-0 flex-1 space-y-3">
+              <p className="text-sm text-gray-300">
+                Scan this with your authenticator app. If you cannot scan it, type the
+                secret below instead.
+              </p>
+              <Field label="Or type this secret">
+                <code className="block rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm tracking-widest break-all">
+                  {enrollment.secret.match(/.{1,4}/g)?.join(' ')}
+                </code>
+              </Field>
+              <details className="text-xs text-gray-400">
+                <summary className="cursor-pointer select-none hover:text-gray-300">
+                  Show the setup URI
+                </summary>
+                <textarea
+                  readOnly
+                  className={`${inputClass} mt-2 h-16 font-mono text-[11px]`}
+                  value={enrollment.otpauth_uri}
+                />
+              </details>
+            </div>
+          </div>
           <Field label="Confirm with a code">
             <input
               className={`${inputClass} w-32`}

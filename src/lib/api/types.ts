@@ -89,6 +89,8 @@ export interface Me {
     name: string;
     email: string;
     email_verified: boolean;
+  /** False when the installation has no SMTP host — no verification mail can arrive. */
+  can_send_email?: boolean;
     timezone: string;
     avatar_url: string | null;
     default_workspace_id: string | null;
