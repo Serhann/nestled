@@ -21,6 +21,8 @@ export type ConfigState =
   | {
       status: 'ready';
       params: EmbedParams;
+      /** Which device the appearance editor is previewing. 'desktop' otherwise. */
+      previewDevice: 'desktop' | 'mobile';
       api: WidgetApi;
       boot: BootPayload;
       copy: Copy;
@@ -39,7 +41,7 @@ export function useWidgetConfig(): ConfigState {
    * for postMessage, so on a normal visitor load it costs one event listener and
    * returns null forever.
    */
-  const previewBoot = usePreviewConfig();
+  const preview = usePreviewConfig();
   const [theme, setTheme] = useState<ThemeState>({ scheme: 'light', contrastWarning: null });
   const disposeTheme = useRef<() => void>(() => undefined);
 
@@ -60,7 +62,7 @@ export function useWidgetConfig(): ConfigState {
   }, [params]);
 
   // In preview the draft IS the boot payload.
-  const effective = params.preview ? previewBoot : boot;
+  const effective = params.preview ? preview.boot : boot;
 
   useEffect(() => {
     if (!effective) return;
@@ -74,5 +76,5 @@ export function useWidgetConfig(): ConfigState {
   // `failed` cannot be set in preview, because nothing was attempted.
   if (failed) return { status: 'disabled' };
   if (!effective) return { status: 'loading' };
-  return { status: 'ready', params, api, boot: effective, copy, theme };
+  return { status: 'ready', params, previewDevice: preview.device, api, boot: effective, copy, theme };
 }

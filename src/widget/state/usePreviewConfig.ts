@@ -35,6 +35,8 @@ interface PreviewMessage {
   copy?: Record<string, string>;
   /** The editor's light/dark toggle, which overrides the saved scheme. */
   color_mode?: 'light' | 'dark';
+  /** Which device the editor is previewing. Mobile is a different presentation. */
+  device?: 'desktop' | 'mobile';
 }
 
 function bootFromDraft(message: PreviewMessage): BootPayload {
@@ -93,8 +95,9 @@ function bootFromDraft(message: PreviewMessage): BootPayload {
   };
 }
 
-export function usePreviewConfig(): BootPayload | null {
+export function usePreviewConfig(): { boot: BootPayload | null; device: 'desktop' | 'mobile' } {
   const [boot, setBoot] = useState<BootPayload | null>(null);
+  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
 
   useEffect(() => {
     const onMessage = (event: MessageEvent): void => {
@@ -105,6 +108,7 @@ export function usePreviewConfig(): BootPayload | null {
       // paints itself. It carries no token, reaches no API and is never persisted.
       // Pinning an origin would also break the single-domain layout, where the editor
       // and the widget share one.
+      if (data.device) setDevice(data.device);
       setBoot(bootFromDraft(data));
     };
     window.addEventListener('message', onMessage);
@@ -120,5 +124,5 @@ export function usePreviewConfig(): BootPayload | null {
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
-  return boot;
+  return { boot, device };
 }

@@ -69,6 +69,17 @@
    */
   var offsetX = 16;
   var offsetY = 16;
+  /*
+   * The panel's corner radius, also a default until `nestled:placement` arrives.
+   *
+   * It has to live out here rather than in the widget's own stylesheet, because the
+   * rounding that a visitor sees belongs to the IFRAME: the document inside it is
+   * square, and only clipping the frame rounds the corners of what is actually on the
+   * page. Which is why this was a hardcoded 16 and the "Corners" control on the
+   * appearance screen did nothing whatsoever, exactly like the side and distance
+   * fields did nothing before them.
+   */
+  var panelRadius = 16;
 
   /*
    * ONE storage key, not one per website.
@@ -322,8 +333,8 @@
     // that rounded shape. The closed launcher keeps neither — the round button
     // draws its own shadow, and a shadow on the box would show as a square.
     var panel = msg.state === 'open' || msg.state === 'minimized';
-    iframe.style.borderRadius = panel ? '16px' : '0';
-    s.borderRadius = panel ? '16px' : '0';
+    iframe.style.borderRadius = panel ? panelRadius + 'px' : '0';
+    s.borderRadius = panel ? panelRadius + 'px' : '0';
     s.boxShadow = panel ? '0 12px 48px rgba(0,0,0,0.18)' : 'none';
   }
 
@@ -501,6 +512,7 @@
         if (data.position === 'left' || data.position === 'right') position = data.position;
         if (typeof data.offsetX === 'number') offsetX = Math.max(0, data.offsetX);
         if (typeof data.offsetY === 'number') offsetY = Math.max(0, data.offsetY);
+        if (typeof data.radius === 'number') panelRadius = Math.max(0, Math.min(48, data.radius));
         if (container) {
           var previous = container.style.transition;
           container.style.transition = 'none';

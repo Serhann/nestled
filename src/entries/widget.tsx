@@ -23,6 +23,7 @@ function Root() {
   return (
     <Widget
       params={config.params}
+      previewDevice={config.previewDevice}
       api={config.api}
       boot={config.boot}
       copy={config.copy}

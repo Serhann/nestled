@@ -21,12 +21,15 @@ const SIZES = { closed: [96, 96], minimized: [384, 68], open: [384, 640] } as co
 
 export function Widget({
   params,
+  previewDevice,
   api,
   boot,
   copy,
   theme,
 }: {
   params: EmbedParams;
+  /** Only meaningful in the appearance editor; 'desktop' everywhere else. */
+  previewDevice?: 'desktop' | 'mobile';
   api: WidgetApi;
   boot: BootPayload;
   copy: Copy;
@@ -156,6 +159,8 @@ export function Widget({
       savedPlacement.position ?? 'right',
       savedPlacement.offset_x ?? 16,
       savedPlacement.offset_y ?? 16,
+      // The corner radius belongs to the iframe, not to this document — see embed.js.
+      savedPlacement.radius_px ?? 16,
     );
   }, [placement, params.embedded, params.preview, savedPlacement]);
 
@@ -182,6 +187,7 @@ export function Widget({
         className="n-root"
         data-embedded={params.embedded}
         data-preview={params.preview}
+        data-preview-device={previewDevice}
         data-position={boot.theme?.position ?? params.position}
         style={previewOffsets(params, boot)}
       >
@@ -243,6 +249,7 @@ export function Widget({
       className="n-root"
       data-embedded={params.embedded}
       data-preview={params.preview}
+      data-preview-device={previewDevice}
       data-position={boot.theme?.position ?? params.position}
       style={previewOffsets(params, boot)}
     >

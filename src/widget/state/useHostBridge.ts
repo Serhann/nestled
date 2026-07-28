@@ -65,7 +65,7 @@ export interface HostBridge {
    * in their dashboard last week. Without this the "side" and "distance" controls on
    * the appearance screen did nothing whatsoever.
    */
-  placement(position: 'left' | 'right', offsetX: number, offsetY: number): void;
+  placement(position: 'left' | 'right', offsetX: number, offsetY: number, radius: number): void;
 }
 
 export function useHostBridge(
@@ -155,8 +155,8 @@ export function useHostBridge(
       emit: (name, payload) => post({ type: 'nestled:event', name, payload: payload ?? {} }),
       resize: (state, width, height) => post({ type: 'nestled:resize', state, width, height }),
       session: (token) => post({ type: 'nestled:session', token }),
-      placement: (position, offsetX, offsetY) =>
-        post({ type: 'nestled:placement', position, offsetX, offsetY }),
+      placement: (position, offsetX, offsetY, radius) =>
+        post({ type: 'nestled:placement', position, offsetX, offsetY, radius }),
     }),
     [post],
   );

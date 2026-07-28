@@ -49,10 +49,10 @@ export default function Appearance() {
    */
   const push = useCallback(() => {
     frame.current?.contentWindow?.postMessage(
-      { source: 'nestled-preview', theme: settings, copy: settings.copy, color_mode: mode },
+      { source: 'nestled-preview', theme: settings, copy: settings.copy, color_mode: mode, device },
       '*',
     );
-  }, [settings, mode]);
+  }, [settings, mode, device]);
 
   useEffect(() => {
     push();

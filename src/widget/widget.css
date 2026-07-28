@@ -120,6 +120,37 @@ textarea {
   left: 12px;
 }
 
+/*
+ * The corners, which are otherwise invisible here.
+ *
+ * On a real page the rounding is the IFRAME's — embed.js clips the frame, because the
+ * document inside it is square. The preview has no embed.js, so without this the
+ * "Corners" control changed a variable nothing rendered and the panel was always a
+ * hard rectangle. The shadow comes along for the same reason.
+ */
+.n-root[data-preview='true'] .n-panel {
+  border-radius: var(--n-radius-panel);
+  box-shadow: var(--n-shadow-panel);
+}
+
+/*
+ * Mobile, as the visitor actually gets it.
+ *
+ * Narrowing the frame is not a mobile preview. Below 480px embed.js calls
+ * applyMobileFull(): the widget takes the whole viewport, with no radius, no shadow
+ * and no offsets — a full-screen sheet, not a small floating card. Showing a shrunken
+ * desktop card instead would tell the customer their corners and offsets apply on a
+ * phone, and they do not.
+ */
+.n-root[data-preview='true'][data-preview-device='mobile'] .n-panel {
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  box-shadow: none;
+}
+/* The launcher keeps its offsets on mobile — only the OPEN panel goes full-screen. */
+
 /* Standalone (/widget opened directly): a floating card, not a full takeover. */
 .n-root[data-embedded='false'] {
   inset: auto 0 0 0;
