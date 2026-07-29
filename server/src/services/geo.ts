@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import maxmind, { type Reader, type CityResponse, type CountryResponse } from 'maxmind';
-import { env } from '../env.js';
+import { settings } from './platform/settings.js';
 
 export interface GeoLocation {
   country: string | null;
@@ -43,7 +43,7 @@ const CACHE_MAX = 5000;
 async function getReader(): Promise<Reader<CityResponse | CountryResponse> | null> {
   if (readerPromise) return readerPromise;
   readerPromise = (async () => {
-    const path = env.GEOLITE2_DB_PATH;
+    const path = settings().geo.dbPath;
     if (!path || !existsSync(path)) {
       if (!warned) {
         // eslint-disable-next-line no-console
@@ -82,10 +82,14 @@ function isPrivateIp(ip: string): boolean {
   );
 }
 
-const maxmindEnabled = Boolean(env.MAXMIND_ACCOUNT_ID && env.MAXMIND_LICENSE_KEY);
-if (maxmindEnabled) {
-  // eslint-disable-next-line no-console
-  console.log(`[geo] MaxMind web service enabled → ${env.MAXMIND_ENDPOINT}`);
+/**
+ * Evaluated per call rather than once at import: credentials now come from the
+ * ops panel, so an operator pasting a licence key must not have to restart the
+ * process to have it noticed.
+ */
+function maxmindEnabled(): boolean {
+  const { maxmindAccountId, maxmindLicenseKey } = settings().geo;
+  return Boolean(maxmindAccountId && maxmindLicenseKey);
 }
 let webErrorLogs = 0;
 
@@ -95,9 +99,10 @@ let webErrorLogs = 0;
  * (401 auth, wrong endpoint) is visible in the app logs.
  */
 async function lookupGeoWeb(ip: string): Promise<GeoLocation | null> {
-  const auth = Buffer.from(`${env.MAXMIND_ACCOUNT_ID}:${env.MAXMIND_LICENSE_KEY}`).toString('base64');
+  const { maxmindAccountId, maxmindLicenseKey, maxmindEndpoint } = settings().geo;
+  const auth = Buffer.from(`${maxmindAccountId}:${maxmindLicenseKey}`).toString('base64');
   // Base endpoint, tolerant of a trailing slash or a copied `?pretty` query.
-  const base = env.MAXMIND_ENDPOINT.split('?')[0]!.replace(/\/+$/, '');
+  const base = maxmindEndpoint.split('?')[0]!.replace(/\/+$/, '');
   const url = `${base}/${encodeURIComponent(ip)}`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 4000);
@@ -143,7 +148,7 @@ export async function lookupGeo(ip: string): Promise<GeoLocation | null> {
   if (cache.has(ip)) return cache.get(ip) ?? null;
 
   // Prefer the MaxMind web service when configured (skip un-geolocatable IPs).
-  if (maxmindEnabled) {
+  if (maxmindEnabled()) {
     const result = isPrivateIp(ip) ? null : await lookupGeoWeb(ip);
     if (cache.size >= CACHE_MAX) cache.clear();
     cache.set(ip, result);

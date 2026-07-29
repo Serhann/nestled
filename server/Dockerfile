@@ -20,5 +20,10 @@ COPY package.json package-lock.json* ./
 COPY prisma ./prisma
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
-EXPOSE 4000
+# No EXPOSE.
+#
+# This service is reached only over the compose network, by `web`. Declaring the
+# port makes orchestrators — Coolify among them — offer to give it a public
+# domain, and a backend that is publicly routable alongside the proxy is a way to
+# reach the API with the proxy's rules skipped. It listens on 4000 regardless.
 CMD ["node", "dist/index.js"]

@@ -1,0 +1,846 @@
+/*
+ * Widget styling.
+ *
+ * Every colour, radius and font here is a variable written by theme/applyTheme.
+ * There is no colour arithmetic in this file and none in any component — that is
+ * the whole point of the token system, and it is what lets a customer's brand
+ * colour reach thirty places without thirty independent `color-mix()` calls
+ * drifting apart.
+ *
+ * Tailwind is deliberately absent: its config in this repo remaps blue-* and
+ * gray-* onto Nestled's own brand ramp, and the widget's neutrals belong to the
+ * customer.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+}
+
+body {
+  font-family: var(--n-font);
+  color: var(--n-color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+.n-root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/*
+ * Preview (the appearance editor's iframe).
+ *
+ * On a real page embed.js sizes its iframe to the launcher and positions THAT in the
+ * corner, so the widget document only ever has to centre itself in a 96px box —
+ * which is why `.n-launcher` uses `margin: auto`. In the editor's 520px iframe that
+ * same rule parks the bubble in the middle of an empty white square, and the side and
+ * distance controls on that very screen appear to do nothing.
+ *
+ * So the preview plays the part of embed.js: anchor to the chosen corner, using the
+ * offsets as the inline custom properties the widget sets in preview mode.
+ */
+.n-root[data-preview='true'] {
+  /* `position: fixed` is inherited from .n-root and must STAY fixed. Setting it to
+     relative here gave a block with `inset: 0` and no content flow a height of zero,
+     so `bottom: 12px` on the panel resolved against nothing and put it off the top of
+     the frame — a preview that measured correctly and rendered nowhere. */
+  inset: 0;
+  display: block;
+  padding: 0;
+}
+
+/*
+ * The launcher honours the offsets, absolutely positioned, exactly as embed.js
+ * positions its iframe on a real page. Padding on the root cannot do this job: an
+ * 80px offset would then also be 80px of padding either side of the PANEL, which on a
+ * 358px preview frame left it 198px wide — half its real width, with the body
+ * collapsed. Measured, not guessed.
+ */
+.n-root[data-preview='true'] .n-launcher {
+  position: absolute;
+  margin: 0;
+  bottom: var(--n-preview-offset-y, 20px);
+  right: var(--n-preview-offset-x, 20px);
+}
+.n-root[data-preview='true'][data-position='left'] .n-launcher {
+  right: auto;
+  left: var(--n-preview-offset-x, 20px);
+}
+
+/*
+ * The panel at the size embed.js gives it — 384x640 — because the document itself
+ * never states a size: on a real page the IFRAME is that size and the panel just fills
+ * it. `flex: none` is required, not decorative; the panel's own `flex: 1 1 0%` makes a
+ * specified width do nothing at all.
+ *
+ * A fixed small inset rather than the customer's offsets. Those are measured against a
+ * whole viewport on a real page, and inside a 360px preview a 60px offset would push
+ * the panel off the frame — showing something that happens on nobody's screen.
+ */
+.n-root[data-preview='true'] .n-panel {
+  position: absolute;
+  flex: none;
+  bottom: 12px;
+  right: 12px;
+  /* Viewport units, not percentages: inside this iframe 100vh IS the frame, and a
+     percentage height needs a definite containing height that an absolutely positioned
+     child of a fixed root does not reliably have — it resolved to zero. */
+  width: min(var(--n-preview-panel-w, 384px), calc(100vw - 24px));
+  height: min(640px, calc(100vh - 24px));
+}
+.n-root[data-preview='true'][data-position='left'] .n-panel {
+  right: auto;
+  left: 12px;
+}
+
+/*
+ * The corners, which are otherwise invisible here.
+ *
+ * On a real page the rounding is the IFRAME's — embed.js clips the frame, because the
+ * document inside it is square. The preview has no embed.js, so without this the
+ * "Corners" control changed a variable nothing rendered and the panel was always a
+ * hard rectangle. The shadow comes along for the same reason.
+ */
+.n-root[data-preview='true'] .n-panel {
+  border-radius: var(--n-radius-panel);
+  box-shadow: var(--n-shadow-panel);
+}
+
+/*
+ * Mobile, as the visitor actually gets it.
+ *
+ * Narrowing the frame is not a mobile preview. Below 480px embed.js calls
+ * applyMobileFull(): the widget takes the whole viewport, with no radius, no shadow
+ * and no offsets — a full-screen sheet, not a small floating card. Showing a shrunken
+ * desktop card instead would tell the customer their corners and offsets apply on a
+ * phone, and they do not.
+ */
+.n-root[data-preview='true'][data-preview-device='mobile'] .n-panel {
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  box-shadow: none;
+}
+/* The launcher keeps its offsets on mobile — only the OPEN panel goes full-screen. */
+
+/* Standalone (/widget opened directly): a floating card, not a full takeover. */
+.n-root[data-embedded='false'] {
+  inset: auto 0 0 0;
+  padding: 16px;
+  justify-content: flex-end;
+}
+.n-root[data-embedded='false'][data-position='left'] {
+  justify-content: flex-start;
+}
+
+/* ── Launcher ────────────────────────────────────────────────────────────── */
+
+.n-launcher {
+  position: relative;
+  margin: auto;
+  width: 60px;
+  height: 60px;
+  border-radius: var(--n-radius-pill);
+  background: var(--n-color-primary);
+  color: var(--n-color-on-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  transition: transform 0.18s ease;
+}
+.n-launcher:hover {
+  transform: scale(1.06);
+}
+.n-launcher:active {
+  transform: scale(0.95);
+}
+.n-launcher[data-style='pill'] {
+  width: auto;
+  /* The label never wraps. Its width is what the host frame is sized from, so a
+     wrapping label is a measurement that disagrees with itself: the frame is made wide
+     enough for one line, the button then fills that frame, and the text wraps inside it
+     anyway. One line, and the frame follows. */
+  white-space: nowrap;
+  flex: none;
+  align-self: center;
+  height: 48px;
+  padding: 0 20px;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.n-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: var(--n-radius-pill);
+  background: var(--n-color-danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px var(--n-color-surface);
+}
+
+/* ── Panel ───────────────────────────────────────────────────────────────── */
+
+.n-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--n-color-canvas);
+}
+.n-root[data-embedded='false'] .n-panel {
+  flex: 0 1 384px;
+  height: min(640px, calc(100vh - 32px));
+  border-radius: var(--n-radius-panel);
+  box-shadow: var(--n-shadow-panel);
+}
+
+.n-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 12px 14px 16px;
+  background: var(--n-color-primary);
+  color: var(--n-color-on-primary);
+  flex-shrink: 0;
+}
+.n-header-title {
+  font-size: 16px;
+  font-weight: 650;
+  margin: 0;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.n-header-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.9;
+}
+.n-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--n-radius-pill);
+  background: currentColor;
+  opacity: 0.5;
+}
+.n-dot[data-online='true'] {
+  background: var(--n-color-online);
+  opacity: 1;
+}
+.n-icon-button {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--n-radius-pill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  opacity: 0.85;
+}
+.n-icon-button:hover {
+  background: rgba(127, 127, 127, 0.22);
+  opacity: 1;
+}
+
+.n-warning {
+  padding: 8px 14px;
+  background: var(--n-color-danger-soft);
+  color: var(--n-color-danger);
+  font-size: 12px;
+  border-bottom: 1px solid var(--n-color-border);
+}
+
+.n-empty {
+  /* Centred in whatever height is left, so it reads as "ready" rather than as the
+     top of a list that failed to load. */
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px 20px;
+  color: var(--n-color-text-muted);
+}
+.n-empty p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  max-width: 26ch;
+}
+
+.n-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.n-grow {
+  flex: 1;
+}
+.n-spread {
+  flex: 1;
+  min-width: 0;
+}
+.n-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Thread ──────────────────────────────────────────────────────────────── */
+
+.n-bubble-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  max-width: 88%;
+}
+.n-bubble-row[data-own='true'] {
+  margin-left: auto;
+  flex-direction: row-reverse;
+}
+.n-bubble {
+  padding: 9px 13px;
+  border-radius: var(--n-radius-bubble);
+  background: var(--n-color-surface);
+  border: 1px solid var(--n-color-border);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.n-bubble a {
+  color: var(--n-color-primary);
+}
+.n-bubble[data-own='true'] {
+  background: var(--n-color-primary);
+  color: var(--n-color-on-primary);
+  border-color: transparent;
+}
+.n-bubble[data-own='true'] a {
+  color: inherit;
+}
+.n-bubble code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.16);
+}
+.n-meta {
+  font-size: 11px;
+  color: var(--n-color-text-muted);
+  margin-top: 3px;
+}
+.n-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--n-radius-pill);
+  background: var(--n-color-primary-soft);
+  color: var(--n-color-primary);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+.n-avatar[data-large='true'] {
+  width: 56px;
+  height: 56px;
+  font-size: 22px;
+  background: var(--n-color-primary);
+  color: var(--n-color-on-primary);
+}
+
+.n-typing {
+  display: flex;
+  gap: 4px;
+  padding: 12px 14px;
+}
+.n-typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--n-radius-pill);
+  background: var(--n-color-text-muted);
+  animation: n-bounce 1.1s infinite;
+}
+.n-typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.n-typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes n-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* ── Home ────────────────────────────────────────────────────────────────── */
+
+.n-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 12px 0 6px;
+}
+.n-hero-title {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin: 6px 0 0;
+}
+.n-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  color: var(--n-color-text-muted);
+  margin: 6px 2px 0;
+}
+.n-starter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  text-align: left;
+  border-radius: var(--n-radius-control);
+  border: 1px solid var(--n-color-border);
+  background: var(--n-color-surface);
+  font-weight: 600;
+  transition: border-color 0.15s ease;
+}
+.n-starter:hover {
+  border-color: var(--n-color-primary);
+}
+.n-starter:disabled {
+  opacity: 0.5;
+}
+.n-starter-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--n-radius-pill);
+  background: var(--n-color-primary-soft);
+  color: var(--n-color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ── Chips ───────────────────────────────────────────────────────────────── */
+
+.n-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.n-chip {
+  padding: 6px 12px;
+  border-radius: var(--n-radius-pill);
+  border: 1.5px solid var(--n-color-border);
+  background: var(--n-color-surface);
+  font-size: 13px;
+  font-weight: 600;
+  transition: border-color 0.15s ease;
+}
+.n-chip:hover,
+.n-chip[data-selected='true'] {
+  border-color: var(--n-color-primary);
+  background: var(--n-color-primary-softer);
+  color: var(--n-color-primary);
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────── */
+
+.n-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.n-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.n-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.n-required {
+  color: var(--n-color-danger);
+}
+.n-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--n-radius-control);
+  border: 1px solid var(--n-color-border);
+  background: var(--n-color-surface);
+  outline: none;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.n-input:focus {
+  border-color: var(--n-color-primary);
+  box-shadow: 0 0 0 3px var(--n-color-primary-ring);
+}
+.n-error {
+  font-size: 12px;
+  color: var(--n-color-danger);
+}
+
+.n-button {
+  width: 100%;
+  padding: 11px 16px;
+  border-radius: var(--n-radius-control);
+  background: var(--n-color-primary);
+  color: var(--n-color-on-primary);
+  font-weight: 650;
+  transition: background 0.15s ease;
+}
+.n-button:hover:not(:disabled) {
+  background: var(--n-color-primary-hover);
+}
+.n-button:disabled {
+  opacity: 0.45;
+}
+.n-button[data-variant='ghost'] {
+  background: transparent;
+  color: var(--n-color-text-muted);
+  font-weight: 500;
+}
+.n-button[data-variant='ghost']:hover:not(:disabled) {
+  background: var(--n-color-raised);
+}
+
+/* ── Composer ────────────────────────────────────────────────────────────── */
+
+.n-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--n-color-surface);
+  border-top: 1px solid var(--n-color-border);
+  flex-shrink: 0;
+}
+.n-composer textarea {
+  flex: 1;
+  resize: none;
+  max-height: 96px;
+  padding: 9px 12px;
+  border-radius: var(--n-radius-control);
+  border: 1px solid var(--n-color-border);
+  background: var(--n-color-canvas);
+  outline: none;
+}
+.n-composer textarea:focus {
+  border-color: var(--n-color-primary);
+  box-shadow: 0 0 0 3px var(--n-color-primary-ring);
+}
+.n-send {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: var(--n-radius-pill);
+  background: var(--n-color-primary);
+  color: var(--n-color-on-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.n-send:disabled {
+  opacity: 0.4;
+}
+
+.n-footer {
+  padding: 6px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--n-color-text-muted);
+  background: var(--n-color-surface);
+  flex-shrink: 0;
+}
+
+.n-notice {
+  padding: 8px 12px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--n-color-text-muted);
+  background: var(--n-color-raised);
+}
+.n-notice[data-tone='error'] {
+  color: var(--n-color-danger);
+  background: var(--n-color-danger-soft);
+}
+
+/* ── Context card ────────────────────────────────────────────────────────── */
+
+.n-card {
+  border: 1px solid var(--n-color-border);
+  border-radius: var(--n-radius-control);
+  background: var(--n-color-surface);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.n-card-title {
+  font-weight: 650;
+}
+.n-card-sub {
+  font-size: 12px;
+  color: var(--n-color-text-muted);
+}
+.n-card-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+.n-card-fields dt {
+  color: var(--n-color-text-muted);
+}
+.n-card-fields dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.n-progress {
+  display: flex;
+  gap: 4px;
+}
+.n-progress-step {
+  flex: 1;
+  height: 4px;
+  border-radius: var(--n-radius-pill);
+  background: var(--n-color-border);
+}
+.n-progress-step[data-done='true'] {
+  background: var(--n-color-primary);
+}
+.n-progress-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--n-color-text-muted);
+}
+.n-tag {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: var(--n-radius-pill);
+  font-size: 11px;
+  font-weight: 650;
+  background: var(--n-color-raised);
+  color: var(--n-color-text-muted);
+}
+.n-tag[data-tone='positive'] {
+  background: var(--n-color-primary-soft);
+  color: var(--n-color-primary);
+}
+.n-tag[data-tone='warning'],
+.n-tag[data-tone='danger'] {
+  background: var(--n-color-danger-soft);
+  color: var(--n-color-danger);
+}
+
+/* ── Rating ──────────────────────────────────────────────────────────────── */
+
+.n-stars {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+.n-star {
+  color: var(--n-color-border);
+  transition: transform 0.12s ease;
+}
+.n-star[data-on='true'] {
+  color: var(--n-color-primary);
+}
+.n-star:active {
+  transform: scale(0.9);
+}
+
+/* ── Confirm-close sheet ─────────────────────────────────────────────────── */
+
+.n-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  background: var(--n-color-scrim);
+}
+.n-sheet {
+  width: 100%;
+  padding: 18px;
+  background: var(--n-color-surface);
+  border-radius: var(--n-radius-panel) var(--n-radius-panel) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: n-rise 0.18s ease-out;
+}
+@keyframes n-rise {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+
+/* ── Header weight ─────────────────────────────────────────────────────────
+ *
+ * 'solid' is the original: a full-bleed block of the brand colour. It is loud, and
+ * on a saturated brand it is the first thing anyone criticises — so the other two
+ * exist to let a customer keep a bright brand without a slab of it above every
+ * conversation.
+ *
+ * `color-mix` rather than a second stored colour: derived tints stay in step when
+ * the brand colour changes, and a customer who picks one colour should not have to
+ * pick three.
+ */
+.n-header[data-style='soft'] {
+  background: color-mix(in srgb, var(--n-color-primary) 12%, var(--n-color-surface));
+  color: var(--n-color-text);
+  border-bottom: 1px solid color-mix(in srgb, var(--n-color-primary) 22%, transparent);
+}
+.n-header[data-style='minimal'] {
+  background: var(--n-color-surface);
+  color: var(--n-color-text);
+  border-bottom: 1px solid var(--n-color-border);
+}
+/* On the lighter headers the avatar needs the brand colour back, or the only trace
+   of it above the fold disappears entirely. */
+.n-header[data-style='soft'] .n-avatar,
+.n-header[data-style='minimal'] .n-avatar {
+  background: var(--n-color-primary);
+  color: var(--n-color-on-primary);
+}
+
+/* The customer's own image, cropped to the circle rather than distorted into it. */
+.n-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
+}
+
+
+/* ── Visitor bubble colour ─────────────────────────────────────────────────
+ *
+ * Brand-coloured is the default and usually right, but on a saturated or very light
+ * brand it makes the CUSTOMER'S OWN words the loudest thing in the transcript — and
+ * the words worth reading are the ones coming back. Neutral keeps the colour for the
+ * header and the buttons, where it is doing work.
+ */
+.n-panel[data-bubbles='neutral'] .n-bubble[data-own='true'] {
+  background: color-mix(in srgb, var(--n-color-text) 10%, var(--n-color-surface));
+  color: var(--n-color-text);
+  border-color: var(--n-color-border);
+}
+.n-panel[data-bubbles='neutral'] .n-bubble[data-own='true'] a {
+  color: var(--n-color-primary);
+}
+
+/* ── Launcher attention pulse ──────────────────────────────────────────────
+ *
+ * A ring that expands out of the button rather than scaling the button itself:
+ * scaling moves the click target, and a control that drifts under the cursor is worse
+ * than one nobody noticed.
+ *
+ * `prefers-reduced-motion` removes it entirely. A looping animation is exactly what
+ * that preference exists for, and honouring it is not optional.
+ */
+@keyframes n-pulse {
+  0% { transform: scale(1); opacity: 0.45; }
+  70% { transform: scale(1.55); opacity: 0; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+.n-launcher[data-pulse='true']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--n-color-primary);
+  animation: n-pulse 2.4s ease-out infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .n-launcher[data-pulse='true']::after {
+    animation: none;
+    opacity: 0;
+  }
+}

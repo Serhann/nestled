@@ -21,3 +21,16 @@ dist-ssr
 *.sln
 *.sw?
 .env
+.claude/worktrees/
+
+# Scratch from driving the app in a headless browser: Chrome profiles, screenshots
+# and one-off CDP scripts. Three of these once reached a commit, which is why they
+# are named here rather than remembered.
+.chrome-cdp/
+.chrome.log
+.vite.log
+.server.log
+.p-*.png
+.r-*.png
+.drive*.mjs
+.seed*.mjs

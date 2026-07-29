@@ -1,28 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { AIProvider, AIReplyInput } from './types.js';
-import { buildContext, keywordAnswer, topRelevant } from './knowledge.js';
+import type { AIProvider } from './types.js';
+import { keywordAnswer } from './knowledge.js';
+// Prompt assembly (website prompt → KB → verified facts → customer rules →
+// style/grounding/handoff) lives in prompt.ts so the <<HANDOFF>> contract stays
+// last and independent of the domain guardrails. See that file.
+import { systemWithContext } from './prompt.js';
 
 const MAX_TOKENS = 1024; // support replies are short; keep latency/cost low
 const TIMEOUT_MS = 20_000;
-
-// Appended to the admin's system prompt so every provider gets the same
-// guardrails + a machine-detectable handoff signal.
-const PROTOCOL = `
-
-Rules:
-- Only answer questions about this business and its services (see the instructions above for who you work for). Reply in English, concisely.
-- Never invent or guess order statuses, delivery times, refunds, or cancellations. Order facts may only come from the verified customer context above; if it is absent or says there is no active order, say you cannot see an active order and ask for the order number — never describe a status.
-- When you cannot fully help — anything about a specific order, refund, cancellation, complaint, or a request outside the knowledge base above — do NOT guess. Write one short sentence telling the visitor you're connecting them to a team member, then end your reply with the token <<HANDOFF>> on its own line.`;
-
-function systemWithContext(input: AIReplyInput): string {
-  const relevant = topRelevant(input.message, input.knowledge, 5);
-  const context = buildContext(relevant);
-  const base = context
-    ? `${input.settings.system_prompt}\n\nRelevant knowledge base entries:\n${context}`
-    : input.settings.system_prompt;
-  const visitor = input.visitorContext ? `\n\n${input.visitorContext}` : '';
-  return base + visitor + PROTOCOL;
-}
 
 function withTimeout(signal?: AbortSignal): AbortSignal {
   if (signal) return signal;
@@ -45,7 +30,7 @@ export const knowledgeBaseProvider: AIProvider = {
  */
 export const anthropicProvider: AIProvider = {
   async generateReply(input) {
-    const apiKey = input.settings.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
+    const apiKey = input.settings.anthropic_api_key;
     if (!apiKey) return { text: keywordAnswer(input.message, input.knowledge) };
 
     const client = new Anthropic({ apiKey, timeout: TIMEOUT_MS });
@@ -70,7 +55,7 @@ export const anthropicProvider: AIProvider = {
 /** OpenAI adapter, kept behind the same interface. */
 export const openaiProvider: AIProvider = {
   async generateReply(input) {
-    const apiKey = input.settings.openai_api_key || process.env.OPENAI_API_KEY;
+    const apiKey = input.settings.openai_api_key;
     if (!apiKey) return { text: keywordAnswer(input.message, input.knowledge) };
 
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -101,7 +86,7 @@ export const openaiProvider: AIProvider = {
 /** Self-hosted Ollama adapter. */
 export const ollamaProvider: AIProvider = {
   async generateReply(input) {
-    const url = input.settings.ollama_url || process.env.OLLAMA_URL;
+    const url = input.settings.ollama_url;
     if (!url) return { text: keywordAnswer(input.message, input.knowledge) };
 
     const res = await fetch(`${url.replace(/\/$/, '')}/api/generate`, {

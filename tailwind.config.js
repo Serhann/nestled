@@ -1,5 +1,5 @@
 /** @type {import('tailwindcss').Config} */
-// "Organic" design system (imported from Claude Design — JetChat Design.dc.html).
+// "Organic" design system (imported from Claude Design — Nestled Design.dc.html).
 // Warm terracotta accent + olive secondary on a cream canvas, Caprasimo display
 // headings + Figtree body, pill-shaped controls. The app uses `blue-*` as its
 // primary and `gray-*`/`green-*` semantically, so we remap those palettes to the

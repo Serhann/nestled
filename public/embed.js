@@ -1,66 +1,125 @@
 /*
- * JetChat embed (Phase 4). Loads asynchronously and never blocks or style-leaks
- * into the host page.
+ * Nestled embed.
  *
- * THE FIX for the old click-swallowing bug: instead of a full-viewport
- * transparent iframe with pointer-events hacks, the iframe is sized to exactly
- * what's visible. Closed → a ~76×76 launcher that covers only the button; open →
- * resized to the chat panel. The widget inside postMessages its desired size, so
- * the rest of the host page's bottom-right corner is always clickable.
+ * Loads asynchronously, never blocks the host page, and leaks no styles into it.
+ * The snippet a customer pastes:
  *
- * Configure via the script tag:
- *   <script src="https://widget.jetfood.com/embed.js"
- *           data-api-base="https://api.jetfood.com"
- *           data-position="right"></script>
- * `data-api-base` is the backend (REST + WS). The widget app is served from the
- * embed's own origin unless `data-widget-origin` overrides it.
+ *   <script>
+ *     window.Nestled = window.Nestled || function(){(Nestled.q=Nestled.q||[]).push(arguments)};
+ *     window.NestledId = "nst_xxxxxxxxxxxxxxxxxxxxxxxx";
+ *   </script>
+ *   <script async src="https://widget.nestled.chat/embed.js"></script>
+ *
+ * `window.NestledId` (or `data-website-id`) is the website's public key. It is
+ * unguessable by design: a readable tenant selector — the pre-tenant build used
+ * `mode=food` — lets any visitor enumerate other customers' widget config, copy,
+ * starters and domain lists.
+ *
+ * Two behaviours in here are load-bearing and have been broken before:
+ *
+ *  1. TWO-STATE IFRAME SIZING. The container is exactly launcher-sized while
+ *     closed and expands to the panel when open. The obvious alternative — a
+ *     full-viewport transparent iframe with pointer-events juggling — swallows
+ *     clicks in the host page's bottom-right corner, which is where sites put
+ *     their cookie banners and back-to-top buttons.
+ *
+ *  2. visualViewport TRACKING ON MOBILE. When the on-screen keyboard opens,
+ *     100vh and even 100dvh do not shrink, so the composer ends up underneath
+ *     the keyboard. Following visualViewport's offset/size is the only thing
+ *     that keeps the input visible while someone is typing into it.
  */
 (function () {
   'use strict';
-  if (window.__jetchatLoaded) return;
-  window.__jetchatLoaded = true;
+  if (window.__nestledLoaded) return;
+  window.__nestledLoaded = true;
 
   var self = document.currentScript;
+  var attr = function (name) {
+    return (self && self.getAttribute(name)) || '';
+  };
   var scriptOrigin = self ? new URL(self.src).origin : window.location.origin;
-  var apiBase = (self && self.getAttribute('data-api-base')) || scriptOrigin;
-  var widgetOrigin = (self && self.getAttribute('data-widget-origin')) || scriptOrigin;
-  var position = (self && self.getAttribute('data-position')) === 'left' ? 'left' : 'right';
-  // Scenario pack for this site: 'food' (default) or 'saas' (tryjet.io).
-  var mode = (self && self.getAttribute('data-mode')) === 'saas' ? 'saas' : 'food';
+  var apiBase = attr('data-api-base') || scriptOrigin;
+  var widgetOrigin = attr('data-widget-origin') || scriptOrigin;
+  var websiteKey = attr('data-website-id') || window.NestledId || '';
 
-  var LAUNCHER = 76;
-
-  // Persistent visitor id — the same id feeds presence (host page) and the
-  // widget (iframe). Namespaced by mode so two of our sites sharing one origin
-  // (e.g. the local demo host at /demo and /tryjet) don't collapse into one
-  // visitor. In production the sites are separate origins anyway.
-  var VISITOR_KEY = 'jetchat_visitor_id_' + mode;
-  function getVisitorId() {
-    try {
-      var id = localStorage.getItem(VISITOR_KEY);
-      if (!id) {
-        id = 'v_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
-        localStorage.setItem(VISITOR_KEY, id);
-      }
-      return id;
-    } catch (e) {
-      return 'v_ephemeral_' + Math.random().toString(36).slice(2, 12);
+  if (!websiteKey) {
+    if (window.console && console.warn) {
+      console.warn('[nestled] no website key — set window.NestledId or data-website-id on the embed script.');
     }
+    return;
   }
-  var visitorId = getVisitorId();
 
-  // ── Cross-site device fingerprint ──────────────────────────────────────────
-  // The visitor id lives in this site's first-party localStorage, so the same
-  // human on another of our customer sites (different origin) mints a brand-new
-  // id. To pool them we compute a device-level fingerprint that is identical
-  // across origins (UA, languages, platform, screen, timezone, canvas, WebGL)
-  // and hand it to the backend, which fuses matching visitors into one person.
-  // Kept lightweight and synchronous; the server only ever sees the hash.
+  var LAUNCHER = 96;
+  var MOBILE_MAX = 480;
+  var position = attr('data-position') === 'left' ? 'left' : 'right';
+  /*
+   * Placement, and where it comes from.
+   *
+   * These are DEFAULTS. The real values live in the customer's website settings and
+   * arrive from the widget as `nestled:placement` once /boot has answered — because
+   * the snippet is pasted once and never edited again, while the dashboard is edited
+   * whenever somebody wants the bubble somewhere else.
+   *
+   * Before that message this was hardcoded at 16 with no way in, which meant the
+   * "side" and "distance" controls on the appearance screen did nothing at all: a
+   * customer moved the sliders, saved, and their bubble stayed exactly where it was.
+   *
+   * `data-position` on the script tag still wins as the pre-boot guess, so the
+   * launcher does not visibly jump corners on a slow connection.
+   */
+  var offsetX = 16;
+  var offsetY = 16;
+  /*
+   * The panel's corner radius, also a default until `nestled:placement` arrives.
+   *
+   * It has to live out here rather than in the widget's own stylesheet, because the
+   * rounding that a visitor sees belongs to the IFRAME: the document inside it is
+   * square, and only clipping the frame rounds the corners of what is actually on the
+   * page. Which is why this was a hardcoded 16 and the "Corners" control on the
+   * appearance screen did nothing whatsoever, exactly like the side and distance
+   * fields did nothing before them.
+   */
+  var panelRadius = 16;
+
+  /*
+   * ONE storage key, not one per website.
+   *
+   * The pre-tenant embed namespaced this by website key while presence.js used
+   * the bare name, so the host page and the iframe were two different visitors
+   * and a proactive chat never reached the widget. Sharing it is also correct:
+   * the server keys presence and conversations by (website, visitor), so two
+   * customers on one origin cannot collide even with the same id.
+   */
+  var VISITOR_KEY = 'nestled_vid';
+
+  function storage(key, value) {
+    try {
+      if (value === undefined) return localStorage.getItem(key);
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    } catch (e) {
+      /* private mode */
+    }
+    return null;
+  }
+
+  function newVisitorId() {
+    return 'v_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+  }
+
+  var visitorId = storage(VISITOR_KEY) || newVisitorId();
+  storage(VISITOR_KEY, visitorId);
+
+  // ── Cross-site device fingerprint ────────────────────────────────────────
+  // The visitor id lives in first-party storage, so the same human on another of
+  // our customers' sites mints a fresh id. A device-level hash that is identical
+  // across origins lets the server fuse those into one person. Only the hash
+  // ever leaves the browser.
   function cyrb53(str) {
-    var h1 = 0xdeadbeef,
-      h2 = 0x41c6ce57;
-    for (var i = 0, ch; i < str.length; i++) {
-      ch = str.charCodeAt(i);
+    var h1 = 0xdeadbeef;
+    var h2 = 0x41c6ce57;
+    for (var i = 0; i < str.length; i++) {
+      var ch = str.charCodeAt(i);
       h1 = Math.imul(h1 ^ ch, 2654435761);
       h2 = Math.imul(h2 ^ ch, 1597334677);
     }
@@ -68,6 +127,7 @@
     h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
     return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
   }
+
   function canvasSignal() {
     try {
       var c = document.createElement('canvas');
@@ -80,171 +140,119 @@
       ctx.fillStyle = '#f60';
       ctx.fillRect(125, 1, 62, 20);
       ctx.fillStyle = '#069';
-      ctx.fillText('JetChat 🚀 fp', 2, 15);
+      ctx.fillText('Nestled fp', 2, 15);
       ctx.fillStyle = 'rgba(102,204,0,0.7)';
-      ctx.fillText('JetChat 🚀 fp', 4, 17);
+      ctx.fillText('Nestled fp', 4, 17);
       return c.toDataURL();
     } catch (e) {
       return '';
     }
   }
+
   function webglSignal() {
     try {
-      var c = document.createElement('canvas');
-      var gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+      var gl = document.createElement('canvas').getContext('webgl');
       if (!gl) return '';
       var dbg = gl.getExtension('WEBGL_debug_renderer_info');
-      var vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
-      var renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
-      return String(vendor) + '~' + String(renderer);
+      return dbg
+        ? String(gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL)) + '~' + String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL))
+        : String(gl.getParameter(gl.VENDOR));
     } catch (e) {
       return '';
     }
   }
-  function computeFingerprint() {
+
+  function fingerprintOf() {
     try {
       var n = navigator;
       var s = window.screen;
       var tz = '';
       try {
         tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-      } catch (e) {}
-      var parts = [
-        n.userAgent || '',
-        (n.languages || [n.language]).join(','),
-        n.platform || '',
-        n.hardwareConcurrency || '',
-        n.deviceMemory || '',
-        n.maxTouchPoints || '',
-        s ? s.width + 'x' + s.height + 'x' + s.colorDepth : '',
-        window.devicePixelRatio || '',
-        tz,
-        new Date().getTimezoneOffset(),
-        canvasSignal(),
-        webglSignal(),
-      ];
-      return cyrb53(parts.join('||'));
+      } catch (e) {
+        /* ignore */
+      }
+      return cyrb53(
+        [
+          n.userAgent || '',
+          (n.languages || [n.language]).join(','),
+          n.platform || '',
+          n.hardwareConcurrency || '',
+          n.deviceMemory || '',
+          n.maxTouchPoints || '',
+          s ? s.width + 'x' + s.height + 'x' + s.colorDepth : '',
+          window.devicePixelRatio || '',
+          tz,
+          new Date().getTimezoneOffset(),
+          canvasSignal(),
+          webglSignal(),
+        ].join('||'),
+      );
     } catch (e) {
       return '';
     }
   }
-  var fingerprint = computeFingerprint();
 
-  // Visitor identity (Crisp's user:email / user:nickname equivalent). Sources,
-  // in order: script data attributes, host URL params, and the JetChat() API.
-  function readIdentity() {
-    var id = {};
-    var params = new URLSearchParams(window.location.search);
-    var pick = function (attr, param) {
-      var v = (self && self.getAttribute(attr)) || params.get(param);
-      return v || null;
-    };
-    var email = pick('data-user-email', 'user_email');
-    var name = pick('data-user-name', 'user_name');
-    var phone = pick('data-user-phone', 'user_phone');
-    var userId = pick('data-user-id', 'user_id');
-    var orderId = pick('data-order-id', 'order_id');
-    if (email) id.email = email;
-    if (name) id.name = name;
-    if (phone) id.phone = phone;
-    if (userId) id.user_id = userId;
-    if (orderId) id.order_id = orderId;
-    return id;
+  var fingerprint = fingerprintOf();
+  var contextToken = attr('data-context') || window.NestledContext || '';
+  if (typeof contextToken !== 'string') contextToken = '';
+
+  // ── Frame ────────────────────────────────────────────────────────────────
+
+  var reduceMotion = false;
+  try {
+    reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (e) {
+    /* ignore */
   }
-  var identity = readIdentity();
+  var TRANSITION = reduceMotion ? 'none' : 'width 0.25s ease, height 0.25s ease';
 
-  // The visitor's current order context (JetFood-specific). The host site feeds
-  // this so the widget can show order-aware quick actions (track / late / issue
-  // with a delivered order, etc.). Sources: data-order-* attributes / URL params
-  // at load, then live updates via JetChat('order', {...}).
-  function readOrder() {
-    var o = {};
-    var params = new URLSearchParams(window.location.search);
-    var pick = function (attr, param) {
-      var v = (self && self.getAttribute(attr)) || params.get(param);
-      return v || null;
-    };
-    var id = pick('data-order-id', 'order_id');
-    var status = pick('data-order-status', 'order_status');
-    var eta = pick('data-order-eta', 'order_eta');
-    var restaurant = pick('data-order-restaurant', 'order_restaurant');
-    var url = pick('data-order-url', 'order_url');
-    var total = pick('data-order-total', 'order_total');
-    if (id) o.id = id;
-    if (status) o.status = status;
-    if (eta) o.eta = eta;
-    if (restaurant) o.restaurant = restaurant;
-    if (url) o.url = url;
-    if (total) o.total = total;
-    return o;
-  }
-  var order = readOrder();
+  var container = null;
+  var iframe = null;
+  var ready = false;
+  var pending = [];
+  var listeners = {};
 
-  // Signed visitor context (JWT) — the host's server (e.g. JetFood PHP) signs the
-  // logged-in customer + orders and hands us the token. It is verified server-side
-  // with the site's shared secret, so the data is trusted (not spoofable). Sources:
-  // data-context attribute, window.JetChatContext global, or JetChat('context', token).
-  function readContextToken() {
-    var t = (self && self.getAttribute('data-context')) || window.JetChatContext || '';
-    return typeof t === 'string' ? t : '';
-  }
-  var contextToken = readContextToken();
-
-  function identityParams() {
-    var p = '';
-    if (identity.email) p += '&ue=' + encodeURIComponent(identity.email);
-    if (identity.name) p += '&un=' + encodeURIComponent(identity.name);
-    if (identity.phone) p += '&up=' + encodeURIComponent(identity.phone);
-    if (identity.user_id) p += '&uid=' + encodeURIComponent(identity.user_id);
-    if (identity.order_id) p += '&oid=' + encodeURIComponent(identity.order_id);
-    if (order.id) p += '&o_id=' + encodeURIComponent(order.id);
-    if (order.status) p += '&o_status=' + encodeURIComponent(order.status);
-    if (order.eta) p += '&o_eta=' + encodeURIComponent(order.eta);
-    if (order.restaurant) p += '&o_rest=' + encodeURIComponent(order.restaurant);
-    if (order.url) p += '&o_url=' + encodeURIComponent(order.url);
-    if (order.total) p += '&o_total=' + encodeURIComponent(order.total);
-    return p;
+  // No identity in the URL. Name, email and phone arrive over postMessage once
+  // the widget announces itself ready; a URL keeps them for the page's lifetime.
+  // `reset` is a marker, not data: the widget's stored conversation lives in the
+  // widget origin's localStorage, which this page cannot reach cross-origin.
+  function frameSrc(reset) {
+    return (
+      widgetOrigin +
+      '/widget?key=' + encodeURIComponent(websiteKey) +
+      '&api=' + encodeURIComponent(apiBase) +
+      '&vid=' + encodeURIComponent(visitorId) +
+      '&fp=' + encodeURIComponent(fingerprint) +
+      '&pos=' + position +
+      '&href=' + encodeURIComponent(window.location.href) +
+      (reset ? '&reset=1' : '')
+    );
   }
 
   function build() {
-    var container = document.createElement('div');
-    container.id = 'jetchat-container';
+    container = document.createElement('div');
+    container.id = 'nestled-root';
     var s = container.style;
     s.position = 'fixed';
-    s.bottom = '16px';
-    s[position] = '16px';
+    s.bottom = offsetY + 'px';
+    s[position] = offsetX + 'px';
     s.width = LAUNCHER + 'px';
     s.height = LAUNCHER + 'px';
-    s.maxWidth = 'calc(100vw - 32px)';
-    s.maxHeight = 'calc(100vh - 32px)';
+    s.maxWidth = 'calc(100vw - ' + offsetX * 2 + 'px)';
+    s.maxHeight = 'calc(100vh - ' + offsetY * 2 + 'px)';
     s.zIndex = '2147483647';
     s.border = 'none';
     s.background = 'transparent';
-    s.transition = 'width 0.25s ease, height 0.25s ease';
-    // No pointer-events hacks: the container only occupies the launcher when
-    // closed, so it can't swallow clicks elsewhere.
+    s.transition = TRANSITION;
+    // No pointer-events tricks needed: while closed the container occupies only
+    // the launcher, so it cannot swallow clicks anywhere else.
 
-    var iframe = document.createElement('iframe');
-    iframe.id = 'jetchat-iframe';
+    iframe = document.createElement('iframe');
+    iframe.id = 'nestled-frame';
     iframe.title = 'Chat';
     iframe.setAttribute('allow', 'clipboard-write');
-    iframe.src =
-      widgetOrigin +
-      '/chat?api=' +
-      encodeURIComponent(apiBase) +
-      '&vid=' +
-      encodeURIComponent(visitorId) +
-      '&fp=' +
-      encodeURIComponent(fingerprint) +
-      '&pos=' +
-      position +
-      '&mode=' +
-      mode +
-      // Host page URL, so the widget can evaluate page-based triggers.
-      '&href=' +
-      encodeURIComponent(window.location.href) +
-      (contextToken ? '&ctx=' + encodeURIComponent(contextToken) : '') +
-      identityParams();
+    iframe.src = frameSrc(false);
     var is = iframe.style;
     is.width = '100%';
     is.height = '100%';
@@ -254,18 +262,22 @@
 
     container.appendChild(iframe);
     document.body.appendChild(container);
-    return { container: container, iframe: iframe };
   }
 
-  // On mobile the open chat should be true full-screen AND track the visual
-  // viewport so it shrinks above the on-screen keyboard (100vh/dvh don't shrink
-  // when the keyboard opens, which otherwise hides the composer).
-  var vvHandler = null;
+  // ── Sizing ───────────────────────────────────────────────────────────────
 
-  function applyMobileFull(container) {
+  var viewportHandler = null;
+
+  /*
+   * Full-screen on a phone, following the visual viewport.
+   *
+   * The transition is switched off here: this runs on every keyboard resize and
+   * scroll event, and animating those makes the panel lag behind the keyboard.
+   */
+  function applyMobileFull() {
     var vv = window.visualViewport;
     var s = container.style;
-    s.transition = 'none'; // no animation while following the keyboard
+    s.transition = 'none';
     s.top = (vv ? vv.offsetTop : 0) + 'px';
     s.left = (vv ? vv.offsetLeft : 0) + 'px';
     s.right = 'auto';
@@ -275,139 +287,270 @@
     s.maxWidth = 'none';
     s.maxHeight = 'none';
     s.borderRadius = '0';
+    s.boxShadow = 'none';
+    iframe.style.borderRadius = '0';
   }
 
-  function restoreDefault(container, msg) {
+  function trackViewport(on) {
+    var vv = window.visualViewport;
+    if (!vv) return;
+    if (on && !viewportHandler) {
+      viewportHandler = function () {
+        if (window.innerWidth <= MOBILE_MAX) applyMobileFull();
+      };
+      vv.addEventListener('resize', viewportHandler);
+      vv.addEventListener('scroll', viewportHandler);
+    } else if (!on && viewportHandler) {
+      vv.removeEventListener('resize', viewportHandler);
+      vv.removeEventListener('scroll', viewportHandler);
+      viewportHandler = null;
+    }
+  }
+
+  function resize(msg) {
+    if (!container) return;
+    if (window.innerWidth <= MOBILE_MAX && msg.state === 'open') {
+      applyMobileFull();
+      trackViewport(true);
+      return;
+    }
+    trackViewport(false);
+
     var s = container.style;
-    s.transition = 'width 0.25s ease, height 0.25s ease';
+    s.transition = TRANSITION;
     s.top = 'auto';
     s.left = 'auto';
     s.right = 'auto';
-    s.bottom = '16px';
-    s[position] = '16px';
+    s.bottom = offsetY + 'px';
+    s[position] = offsetX + 'px';
     s.width = (msg.width || LAUNCHER) + 'px';
     s.height = (msg.height || LAUNCHER) + 'px';
-    s.maxWidth = 'calc(100vw - 32px)';
-    s.maxHeight = 'calc(100vh - 32px)';
-    s.borderRadius = '';
+    s.maxWidth = 'calc(100vw - ' + offsetX * 2 + 'px)';
+    s.maxHeight = 'calc(100vh - ' + offsetY * 2 + 'px)';
+
+    // The panel is a rounded floating card: border-radius on the iframe clips its
+    // square content, and the shadow sits on the transparent container so it hugs
+    // that rounded shape. The closed launcher keeps neither — the round button
+    // draws its own shadow, and a shadow on the box would show as a square.
+    var panel = msg.state === 'open' || msg.state === 'minimized';
+    iframe.style.borderRadius = panel ? panelRadius + 'px' : '0';
+    s.borderRadius = panel ? panelRadius + 'px' : '0';
+    s.boxShadow = panel ? '0 12px 48px rgba(0,0,0,0.18)' : 'none';
   }
 
-  function resize(built, msg) {
-    var container = built.container;
-    var iframe = built.iframe;
-    var mobileFull = window.innerWidth <= 480 && msg.state === 'open';
-    if (mobileFull) {
-      applyMobileFull(container);
-      // True full-screen: no rounding/shadow on mobile.
-      container.style.boxShadow = 'none';
-      iframe.style.borderRadius = '0';
-      if (!vvHandler && window.visualViewport) {
-        vvHandler = function () {
-          if (window.innerWidth <= 480) applyMobileFull(container);
-        };
-        window.visualViewport.addEventListener('resize', vvHandler);
-        window.visualViewport.addEventListener('scroll', vvHandler);
+  // ── Public API ───────────────────────────────────────────────────────────
+
+  function post(type, extra) {
+    var msg = { type: type };
+    for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) msg[k] = extra[k];
+    if (!ready) {
+      pending.push(msg);
+      return;
+    }
+    iframe.contentWindow.postMessage(msg, '*');
+  }
+
+  function flush() {
+    for (var i = 0; i < pending.length; i++) iframe.contentWindow.postMessage(pending[i], '*');
+    pending = [];
+  }
+
+  function emit(name, payload) {
+    var subs = listeners[name] || [];
+    for (var i = 0; i < subs.length; i++) {
+      try {
+        subs[i](payload);
+      } catch (e) {
+        /* a host callback must never break the widget */
       }
-    } else {
-      if (vvHandler && window.visualViewport) {
-        window.visualViewport.removeEventListener('resize', vvHandler);
-        window.visualViewport.removeEventListener('scroll', vvHandler);
-        vvHandler = null;
-      }
-      restoreDefault(container, msg);
-      // The open/minimized panel is a rounded floating card. border-radius on the
-      // iframe clips its (square) content to rounded corners; the shadow sits on
-      // the (transparent) container so it hugs that rounded shape. The closed
-      // launcher stays unrounded/shadowless — the round button carries its own.
-      var panel = msg.state === 'open' || msg.state === 'minimized';
-      iframe.style.borderRadius = panel ? '16px' : '0';
-      container.style.borderRadius = panel ? '16px' : '0';
-      container.style.boxShadow = panel ? '0 12px 48px rgba(0,0,0,0.18)' : 'none';
     }
   }
 
-  var presence = null; // the live JetChatPresence instance (host-page context)
+  var presence = null;
 
-  function loadPresence(onProactive) {
-    var apply = function () {
-      if (window.JetChatPresence) {
-        presence = window.JetChatPresence.init({
-          apiBase: apiBase,
-          visitorId: visitorId,
-          fingerprint: fingerprint,
-          contextToken: contextToken,
-          mode: mode,
-          onProactive: onProactive,
-          // rrweb recorder is served from the widget origin (host-page context).
-          recordScriptUrl: widgetOrigin + '/vendor/rrweb-record.min.js',
-        });
-      }
+  function handle(cmd, payload, extra) {
+    switch (cmd) {
+      case 'identify':
+        if (payload && typeof payload === 'object') post('nestled:identify', { traits: payload });
+        break;
+      case 'data':
+        if (payload && typeof payload === 'object') {
+          post('nestled:data', { attributes: payload });
+          if (presence) presence.setData(payload);
+        }
+        break;
+      case 'context':
+        // A freshly signed host context (a login, or any state change). It goes
+        // to the widget for the conversation's verified attributes AND to
+        // presence for the agent's Live Visitors card.
+        if (typeof payload === 'string' && payload) {
+          contextToken = payload;
+          post('nestled:context', { token: payload });
+          if (presence) presence.setContext(payload);
+        }
+        break;
+      case 'config':
+        // Placement only. Everything else is website settings, served by /boot —
+        // letting a host page override copy or behaviour from JavaScript would
+        // put the customer's dashboard and their own snippet in disagreement.
+        if (payload && typeof payload === 'object') {
+          if (payload.position === 'left' || payload.position === 'right') position = payload.position;
+          // `offset` sets both axes, and is kept because it is the shape older cached
+          // copies of this file and any customer already calling Nestled('config') use.
+          if (typeof payload.offset === 'number') {
+            offsetX = offsetY = Math.max(0, payload.offset);
+          }
+          if (typeof payload.offsetX === 'number') offsetX = Math.max(0, payload.offsetX);
+          if (typeof payload.offsetY === 'number') offsetY = Math.max(0, payload.offsetY);
+          resize({ state: 'closed' });
+        }
+        break;
+      case 'reset':
+        // A new visitor as far as this browser is concerned: new id, no stored
+        // conversation, a fresh presence session and a reloaded iframe.
+        visitorId = newVisitorId();
+        storage(VISITOR_KEY, visitorId);
+        if (presence) presence.stop();
+        presence = null;
+        ready = false;
+        pending = [];
+        iframe.src = frameSrc(true);
+        break;
+      case 'open':
+      case 'close':
+      case 'toggle':
+        post('nestled:' + cmd);
+        break;
+      case 'show':
+        if (container) container.style.display = '';
+        break;
+      case 'hide':
+        if (container) container.style.display = 'none';
+        break;
+      case 'sendMessage':
+        if (typeof payload === 'string' && payload.trim()) post('nestled:send', { text: payload });
+        break;
+      case 'startBot':
+        if (typeof payload === 'string' && payload) post('nestled:bot', { flow: payload });
+        break;
+      case 'on':
+        if (typeof payload === 'string' && typeof extra === 'function') {
+          (listeners[payload] = listeners[payload] || []).push(extra);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  /*
+   * Presence needs a SIGNED session token: /ws/presence reads the visitor id and
+   * website out of it and refuses a bare visitor_id outright.
+   *
+   * The token is minted by the WIDGET IFRAME and handed to us, not fetched from
+   * here. `POST /widget/session` from this page would be a cross-origin request
+   * from a customer's own domain, and a CORS allowlist can never enumerate every
+   * customer's website; the widget's origin is one known host. It also means one
+   * session, so the presence socket and the conversation agree on who this
+   * visitor is — which is what makes a proactive claim redeemable.
+   */
+  function loadPresence(sessionToken, record) {
+    if (presence || !sessionToken) return;
+    var start = function () {
+      if (!window.NestledPresence) return;
+      presence = window.NestledPresence.init({
+        apiBase: apiBase,
+        sessionToken: sessionToken,
+        fingerprint: fingerprint,
+        contextToken: contextToken,
+        recordScriptUrl: widgetOrigin + '/vendor/rrweb-record.min.js',
+        /*
+         * This is what actually turns live view on, and it was missing.
+         *
+         * presence.js gates recording on `options.record === true`, so passing only
+         * the script URL loaded nothing: rrweb was never fetched, no frames were
+         * ever sent, and an agent who clicked Watch got a permanently empty screen.
+         * Every other part of the feature — the plan gate, the website setting, the
+         * server-side buffer, the viewer — was in place and waiting on a flag that
+         * never crossed the frame boundary.
+         *
+         * It comes from the widget rather than from the snippet because it is the
+         * customer's saved setting, and the snippet was pasted once and never
+         * edited again.
+         */
+        record: record === true,
+        onProactive: function (data) {
+          /*
+           * A proactive chat carries a single-use CLAIM token, never the
+           * conversation's visitor token. The widget exchanges it — with its own
+           * session — for the real credential. Putting the visitor token on this
+           * wire is exactly the takeover that presenceSecurity.test.ts pins shut.
+           */
+          post('nestled:proactive', {
+            conversation_id: data.conversation_id,
+            claim_token: data.claim_token,
+            message: data.message,
+            agent_name: data.agent_name,
+          });
+          emit('proactive', { message: data.message, agent_name: data.agent_name });
+        },
+      });
     };
-    if (window.JetChatPresence) return apply();
-    var ps = document.createElement('script');
-    ps.src = widgetOrigin + '/presence.js';
-    ps.async = true;
-    ps.onload = apply;
-    document.head.appendChild(ps);
+    if (window.NestledPresence) return start();
+    var script = document.createElement('script');
+    script.src = widgetOrigin + '/presence.js';
+    script.async = true;
+    script.onload = start;
+    document.head.appendChild(script);
   }
 
   function start() {
-    var built = build();
+    build();
 
-    // The widget tells us how big it wants to be.
     window.addEventListener('message', function (event) {
-      if (event.source !== built.iframe.contentWindow) return;
+      if (!iframe || event.source !== iframe.contentWindow) return;
       var data = event.data;
-      if (data && data.type === 'jetchat:resize') resize(built, data);
+      if (!data || typeof data.type !== 'string') return;
+      if (data.type === 'nestled:resize') resize(data);
+      else if (data.type === 'nestled:ready') {
+        ready = true;
+        flush();
+        emit('ready');
+      } else if (data.type === 'nestled:placement') {
+        /*
+         * The saved placement, arriving from the widget after /boot.
+         *
+         * Applied without an animation on the first message: the launcher is already
+         * painted in the pre-boot corner, and sliding it across the screen on every
+         * page load looks like a bug rather than a setting.
+         */
+        if (data.position === 'left' || data.position === 'right') position = data.position;
+        if (typeof data.offsetX === 'number') offsetX = Math.max(0, data.offsetX);
+        if (typeof data.offsetY === 'number') offsetY = Math.max(0, data.offsetY);
+        if (typeof data.radius === 'number') panelRadius = Math.max(0, Math.min(48, data.radius));
+        if (container) {
+          var previous = container.style.transition;
+          container.style.transition = 'none';
+          resize({ state: 'closed' });
+          // Read back to flush the style change before restoring the transition,
+          // otherwise the browser coalesces both and animates anyway.
+          void container.offsetWidth;
+          container.style.transition = previous;
+        }
+      } else if (data.type === 'nestled:session') loadPresence(data.token, data.record === true);
+      else if (data.type === 'nestled:event') emit(data.name, data.payload);
     });
 
-    // Public JS API: JetChat('identify', { email, name, user_id, order_id, ... })
-    // — the runtime equivalent of Crisp's user:email push, for post-login apps.
-    function handle(cmd, payload) {
-      if (cmd === 'identify' && payload && typeof payload === 'object') {
-        for (var k in payload) if (payload[k] != null) identity[k] = payload[k];
-        built.iframe.contentWindow.postMessage({ type: 'jetchat:identify', traits: payload }, '*');
-      } else if (cmd === 'order' && payload && typeof payload === 'object') {
-        // Live order update from the host site (status changed, delivered, …).
-        for (var ok in payload) if (payload[ok] != null) order[ok] = payload[ok];
-        built.iframe.contentWindow.postMessage({ type: 'jetchat:order', order: payload }, '*');
-      } else if (cmd === 'orders' && Array.isArray(payload)) {
-        // Full list of the visitor's recent orders (drives the order picker).
-        built.iframe.contentWindow.postMessage({ type: 'jetchat:orders', orders: payload }, '*');
-      } else if (cmd === 'context' && typeof payload === 'string') {
-        // Signed context token issued/refreshed at runtime (e.g. after login, or
-        // a new order status). Goes to the widget (conversation context) AND to
-        // presence (Live Visitors card / identified visitor).
-        contextToken = payload;
-        built.iframe.contentWindow.postMessage({ type: 'jetchat:context', token: payload }, '*');
-        if (presence && presence.setContext) presence.setContext(payload);
-      }
-    }
-    var queued = window.JetChat && window.JetChat.q ? window.JetChat.q : [];
-    window.JetChat = function () {
-      handle.apply(null, arguments);
+    var queued = window.Nestled && window.Nestled.q ? window.Nestled.q : [];
+    window.Nestled = function (cmd, payload, extra) {
+      handle(cmd, payload, extra);
     };
-    for (var i = 0; i < queued.length; i++) handle.apply(null, queued[i]);
-
-    // Presence (host page) → forward a proactive chat into the widget iframe so
-    // it can adopt the conversation (with its token) and open.
-    loadPresence(function (payload) {
-      built.iframe.contentWindow.postMessage(
-        {
-          type: 'jetchat:proactive',
-          conversation_id: payload.conversation_id,
-          visitor_token: payload.visitor_token,
-          message: payload.message,
-          agent_name: payload.agent_name,
-        },
-        '*',
-      );
-    });
+    for (var i = 0; i < queued.length; i++) {
+      handle(queued[i][0], queued[i][1], queued[i][2]);
+    }
+    // Presence starts when the widget hands us its session — see loadPresence.
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start);
-  } else {
-    start();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
 })();

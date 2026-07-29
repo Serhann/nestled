@@ -1,23 +1,33 @@
-import { prisma } from '../db/prisma.js';
+// The people graph is written from the presence socket and the widget plane with a
+// workspace resolved from a signed token, and merges rewrite rows the caller never
+// selected.
+// eslint-disable-next-line no-restricted-imports -- graph merges for a caller-supplied workspace
+import { unscopedPrisma as prisma } from '../db/unscoped.js';
 
 /**
- * Cross-site people pool.
+ * Cross-website people pool.
  *
  * A `visitor_id` is minted in each host page's first-party localStorage, so the
- * same human on two customer sites (different origins) arrives as two unrelated
- * ids. We fuse them into one canonical *person* from device fingerprints (stable
- * across origins) and email.
+ * same human on two of a customer's sites arrives as two unrelated ids. They are
+ * fused into one canonical *person* using device fingerprints (stable across
+ * origins) and verified email.
  *
- * SECURITY: this graph is admin-only. Nothing here is ever surfaced to a visitor
- * endpoint — a visitor can still only reach a conversation they hold the token
- * for. Fingerprints can collide or be spoofed, so they must never be a path to
- * another visitor's history (security rule #7).
+ * SECURITY, two parts:
+ *  - The graph is WORKSPACE-SCOPED. A global graph would tell one customer that a
+ *    visitor also chatted with another, and would fuse unrelated customers' people
+ *    by device fingerprint. Cross-WEBSITE fusion inside one workspace is the
+ *    legitimate feature, and is what this does.
+ *  - It is agent-facing only. Nothing here is surfaced to a visitor endpoint: a
+ *    visitor still reaches only the conversation they hold a token for.
+ *    Fingerprints can collide or be spoofed, so they must never become a path into
+ *    another visitor's history.
  */
 
 export interface IdentitySignals {
   fingerprint?: string | null;
   email?: string | null;
-  mode?: string | null;
+  /** The website the visitor id was minted on (replaces the old site `mode`). */
+  websiteId?: string | null;
 }
 
 function normEmail(email?: string | null): string | null {
@@ -27,19 +37,22 @@ function normEmail(email?: string | null): string | null {
 
 function normFingerprint(fp?: string | null): string | null {
   const f = (fp ?? '').trim();
-  // Guard against junk / trivially-common values (all-zero, too short).
+  // Reject junk and trivially-common values: an all-zero or 4-character
+  // "fingerprint" would fuse every visitor who failed to compute one into a single
+  // person, which is worse than no fusion at all.
   if (!f || f.length < 8 || /^0+$/.test(f)) return null;
   return f.slice(0, 128);
 }
 
 /**
- * Merge several persons into the oldest one and return its id. Reassigns all
- * visitor links and signals; deletes the now-empty duplicates. Runs in a
- * transaction so a partial merge never orphans rows.
+ * Merge several persons into the oldest and return its id. Reassigns links and
+ * signals, then deletes the emptied duplicates. Transactional, so a partial merge
+ * never orphans rows — and scoped to one workspace, so a fingerprint collision
+ * across customers can never merge their people.
  */
-async function mergePersons(personIds: string[]): Promise<string> {
+async function mergePersons(workspaceId: string, personIds: string[]): Promise<string> {
   const persons = await prisma.persons.findMany({
-    where: { id: { in: personIds } },
+    where: { id: { in: personIds }, workspace_id: workspaceId },
     orderBy: { created_at: 'asc' },
     select: { id: true, display_name: true, primary_email: true },
   });
@@ -48,17 +61,20 @@ async function mergePersons(personIds: string[]): Promise<string> {
   if (persons.length === 1) return canonical.id;
 
   const losers = persons.slice(1).map((p) => p.id);
-  // Fill canonical's name/email from a loser if it is missing one.
   const donorName = persons.find((p) => p.display_name)?.display_name ?? null;
   const donorEmail = persons.find((p) => p.primary_email)?.primary_email ?? null;
 
   await prisma.$transaction([
     prisma.visitor_links.updateMany({
-      where: { person_id: { in: losers } },
+      where: { person_id: { in: losers }, workspace_id: workspaceId },
       data: { person_id: canonical.id },
     }),
     prisma.person_signals.updateMany({
-      where: { person_id: { in: losers } },
+      where: { person_id: { in: losers }, workspace_id: workspaceId },
+      data: { person_id: canonical.id },
+    }),
+    prisma.conversations.updateMany({
+      where: { person_id: { in: losers }, workspace_id: workspaceId },
       data: { person_id: canonical.id },
     }),
     prisma.persons.update({
@@ -69,21 +85,22 @@ async function mergePersons(personIds: string[]): Promise<string> {
         updated_at: new Date(),
       },
     }),
-    prisma.persons.deleteMany({ where: { id: { in: losers } } }),
+    prisma.persons.deleteMany({ where: { id: { in: losers }, workspace_id: workspaceId } }),
   ]);
   return canonical.id;
 }
 
 /**
- * Resolve a visitor id (+ any identity signals) to a canonical person id,
- * creating / linking / merging as needed. Best-effort: returns null on failure
- * rather than throwing into the request path.
+ * Resolve (and fuse) the person behind a visitor id. Returns the person id, or
+ * null on any failure — identity resolution is an enrichment, so it must never
+ * break the conversation it is enriching.
  */
 export async function resolveIdentity(
-  visitorId: string | null | undefined,
-  signals: IdentitySignals = {},
+  workspaceId: string,
+  visitorId: string,
+  signals: IdentitySignals,
 ): Promise<string | null> {
-  if (!visitorId) return null;
+  if (!workspaceId || !visitorId) return null;
   try {
     const fingerprint = normFingerprint(signals.fingerprint);
     const email = normEmail(signals.email);
@@ -91,15 +108,17 @@ export async function resolveIdentity(
     if (fingerprint) sigPairs.push({ kind: 'fingerprint', value: fingerprint });
     if (email) sigPairs.push({ kind: 'email', value: email });
 
-    // Persons implied by (a) this visitor's existing link and (b) the signals.
     const [existingLink, matchedSignals] = await Promise.all([
       prisma.visitor_links.findUnique({
-        where: { visitor_id: visitorId },
+        where: { workspace_id_visitor_id: { workspace_id: workspaceId, visitor_id: visitorId } },
         select: { person_id: true },
       }),
       sigPairs.length
         ? prisma.person_signals.findMany({
-            where: { OR: sigPairs.map((s) => ({ kind: s.kind, value: s.value })) },
+            where: {
+              workspace_id: workspaceId,
+              OR: sigPairs.map((s) => ({ kind: s.kind, value: s.value })),
+            },
             select: { person_id: true },
           })
         : Promise.resolve([] as { person_id: string }[]),
@@ -111,27 +130,40 @@ export async function resolveIdentity(
 
     let personId: string;
     if (candidates.size === 0) {
-      const person = await prisma.persons.create({ data: {}, select: { id: true } });
+      const person = await prisma.persons.create({
+        data: { workspace_id: workspaceId },
+        select: { id: true },
+      });
       personId = person.id;
     } else if (candidates.size === 1) {
       personId = [...candidates][0] as string;
     } else {
-      personId = await mergePersons([...candidates]);
+      personId = await mergePersons(workspaceId, [...candidates]);
     }
 
     const now = new Date();
     await prisma.visitor_links.upsert({
-      where: { visitor_id: visitorId },
-      create: { visitor_id: visitorId, person_id: personId, mode: signals.mode ?? null },
-      update: { person_id: personId, last_seen: now, ...(signals.mode ? { mode: signals.mode } : {}) },
+      where: { workspace_id_visitor_id: { workspace_id: workspaceId, visitor_id: visitorId } },
+      create: {
+        workspace_id: workspaceId,
+        visitor_id: visitorId,
+        person_id: personId,
+        website_id: signals.websiteId ?? null,
+      },
+      update: {
+        person_id: personId,
+        ...(signals.websiteId ? { website_id: signals.websiteId } : {}),
+      },
     });
 
     for (const s of sigPairs) {
       await prisma.person_signals
         .upsert({
-          where: { kind_value: { kind: s.kind, value: s.value } },
-          create: { person_id: personId, kind: s.kind, value: s.value },
-          update: { person_id: personId, hits: { increment: 1 }, last_seen: now },
+          where: {
+            workspace_id_kind_value: { workspace_id: workspaceId, kind: s.kind, value: s.value },
+          },
+          create: { workspace_id: workspaceId, person_id: personId, kind: s.kind, value: s.value },
+          update: { person_id: personId, hits: { increment: 1 } },
         })
         .catch(() => undefined);
     }
@@ -153,15 +185,16 @@ export interface PersonProfile {
   primary_email: string | null;
   created_at: Date;
   visitor_ids: string[];
-  sites: string[]; // distinct modes / site keys seen
+  /** Distinct websites this person has been seen on, within the workspace. */
+  website_ids: string[];
   emails: string[];
-  fingerprints: number; // count of distinct device signals
+  fingerprints: number;
   conversations: {
     id: string;
     visitor_id: string;
     visitor_name: string | null;
     status: string;
-    mode: string | null;
+    website_id: string;
     message_count: number;
     updated_at: Date;
   }[];
@@ -169,50 +202,52 @@ export interface PersonProfile {
 }
 
 /**
- * Full cross-site profile for a person — every visitor id, site, email, IP and
- * conversation fused under this identity. Admin-only.
+ * The full profile for a person: every visitor id, website, email, IP and
+ * conversation fused under this identity. Agent-facing, and never reachable
+ * without a `workspaceId` the caller's membership was verified against.
  */
-export async function getPersonProfile(personId: string): Promise<PersonProfile | null> {
-  const person = await prisma.persons.findUnique({
-    where: { id: personId },
+export async function getPersonProfile(
+  workspaceId: string,
+  personId: string,
+): Promise<PersonProfile | null> {
+  const person = await prisma.persons.findFirst({
+    where: { id: personId, workspace_id: workspaceId },
     select: {
       id: true,
       display_name: true,
       primary_email: true,
       created_at: true,
-      visitors: { select: { visitor_id: true, mode: true } },
-      signals: { select: { kind: true, value: true } },
+      visitor_links: { select: { visitor_id: true, website_id: true } },
+      person_signals: { select: { kind: true, value: true } },
     },
   });
   if (!person) return null;
 
-  const visitorIds = person.visitors.map((v) => v.visitor_id);
-  const sites = [...new Set(person.visitors.map((v) => v.mode).filter(Boolean) as string[])];
-  const emails = [
-    ...new Set(person.signals.filter((s) => s.kind === 'email').map((s) => s.value)),
-  ];
-  const fingerprints = person.signals.filter((s) => s.kind === 'fingerprint').length;
+  const visitorIds = person.visitor_links.map((v) => v.visitor_id);
+  const websiteIds = [...new Set(person.visitor_links.map((v) => v.website_id).filter(Boolean))] as string[];
+  const emails = person.person_signals.filter((s) => s.kind === 'email').map((s) => s.value);
+  const fingerprints = person.person_signals.filter((s) => s.kind === 'fingerprint').length;
 
   const [conversations, ips] = await Promise.all([
     visitorIds.length
       ? prisma.conversations.findMany({
-          where: { visitor_id: { in: visitorIds } },
+          where: { workspace_id: workspaceId, visitor_id: { in: visitorIds } },
           orderBy: { updated_at: 'desc' },
-          take: 100,
+          take: 50,
           select: {
             id: true,
             visitor_id: true,
             visitor_name: true,
             status: true,
+            website_id: true,
             message_count: true,
             updated_at: true,
-            metadata: true,
           },
         })
       : Promise.resolve([]),
     visitorIds.length
       ? prisma.visitor_ips.findMany({
-          where: { visitor_id: { in: visitorIds } },
+          where: { workspace_id: workspaceId, visitor_id: { in: visitorIds } },
           orderBy: { last_seen: 'desc' },
           take: 50,
           select: { ip: true, geo: true, hits: true, last_seen: true },
@@ -226,26 +261,21 @@ export async function getPersonProfile(personId: string): Promise<PersonProfile 
     primary_email: person.primary_email,
     created_at: person.created_at,
     visitor_ids: visitorIds,
-    sites,
+    website_ids: websiteIds,
     emails,
     fingerprints,
-    conversations: conversations.map((c) => ({
-      id: c.id,
-      visitor_id: c.visitor_id,
-      visitor_name: c.visitor_name,
-      status: c.status,
-      mode: ((c.metadata as Record<string, unknown> | null)?.widget_mode as string) ?? null,
-      message_count: c.message_count,
-      updated_at: c.updated_at,
-    })),
+    conversations,
     ips,
   };
 }
 
-/** Look up the person a given visitor id currently resolves to (or null). */
-export async function personIdForVisitor(visitorId: string): Promise<string | null> {
+/** The person a visitor id currently resolves to within a workspace, or null. */
+export async function personIdForVisitor(
+  workspaceId: string,
+  visitorId: string,
+): Promise<string | null> {
   const link = await prisma.visitor_links.findUnique({
-    where: { visitor_id: visitorId },
+    where: { workspace_id_visitor_id: { workspace_id: workspaceId, visitor_id: visitorId } },
     select: { person_id: true },
   });
   return link?.person_id ?? null;
