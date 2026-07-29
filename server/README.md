@@ -14,7 +14,10 @@ npm install
 export DATABASE_URL='postgres://nestled:nestled@localhost:5544/nestled'
 export JWT_ACCESS_SECRET=dev-secret-min-16-chars
 export JWT_REFRESH_SECRET=dev-secret-min-16-chars
-npm run migrate     # apply the schema
+npx prisma migrate deploy     # apply the schema
+# (`npm run migrate` is the same thing through db/migrate.ts, which also
+#  percent-encodes the credentials — it runs from dist/, so it needs a build.
+#  That is the entry point the compose release step uses.)
 npm run seed        # a demo workspace with sample content (optional)
 npm run dev         # tsx watch on :4000
 ```

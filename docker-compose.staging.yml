@@ -46,8 +46,12 @@ services:
     command: ['npm', 'run', 'migrate']
     environment:
       NODE_ENV: production
+      # A password containing "/", "?" or "#" would end this URL's host portion
+      # early; `npm run migrate` percent-encodes the credentials before Prisma
+      # sees them (server/src/db/url.ts).
       DATABASE_URL: postgres://${POSTGRES_USER:-nestled}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nestled_staging}
-      # The env schema demands these even for a migration run.
+      # Not read by a migration run — it does not load the env schema — but set
+      # here so this service's environment matches the app's.
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
 

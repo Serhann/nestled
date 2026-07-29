@@ -105,12 +105,30 @@ Copy `.env.staging.example` and fill it in. **Every secret in it is a
 placeholder:**
 
 ```bash
-openssl rand -base64 48   # JWT secrets, POSTGRES_PASSWORD, SETTINGS_KEY
+openssl rand -base64 48   # JWT secrets, SETTINGS_KEY
+openssl rand -hex 32      # POSTGRES_PASSWORD — hex, not base64; see below
 ```
+
+**Why `POSTGRES_PASSWORD` is different.** Compose interpolates it into
+`DATABASE_URL`, and `/` is in the base64 alphabet — about two in three 48-byte
+passwords contain one. A `/`, `?` or `#` ends the host portion of a URL, so
+`db:5432` lands in the path and Prisma reports
+`P1013 … invalid port number in database URL`, which names neither the password
+nor the character; the stack trace it prints points at our migration runner.
+Every container in the stack then crash-loops. **This happened on a real
+production deploy**, and it is why this file used to recommend the wrong
+generator.
+
+The server now percent-encodes the credentials itself before handing the URL to
+Prisma (`server/src/db/url.ts`, covered by `src/test/databaseUrl.test.ts`), so an
+existing base64 password no longer breaks a deploy and **nothing needs rotating**
+— redeploying is the whole fix. Prefer hex for anything new anyway: it stays
+copy-pasteable into psql, pgAdmin and every other tool that takes a URL and does
+not do that encoding for you.
 
 | Variable | Notes |
 |---|---|
-| `DATABASE_URL` | Postgres 16. The schema uses `ON DELETE SET NULL (col)`, which needs **PG 15+**. Compose builds it from `POSTGRES_*`. |
+| `DATABASE_URL` | Postgres 16. The schema uses `ON DELETE SET NULL (col)`, which needs **PG 15+**. Compose builds it from `POSTGRES_*`; the credentials are percent-encoded at boot if the password contains URL-reserved characters. |
 | `JWT_ACCESS_SECRET` | ≥16 chars. Cannot move into the database — it is what proves a request may reach the database. Rotating it signs out every agent AND invalidates every live widget session. |
 | `JWT_REFRESH_SECRET` | ≥16 chars. |
 | `ALLOWED_ORIGINS` | The **private** origins: app, ops, widget, marketing. Deployment topology, not a setting. Customer domains do NOT belong here — where a widget may run is per-website, in `websites.allowed_domains`. **Leaving out the widget origin makes every widget call fail in the browser with a CORS error that looks like the API is down.** The public URLs used in outbound email are derived from this list unless you set them in the ops panel. |

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { normalizeDatabaseUrl, redactDatabaseUrl } from './db/url.js';
 
 /**
  * The environment.
@@ -104,7 +105,36 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const env = parsed.data;
+/**
+ * The credentials are percent-encoded here if the operator did not do it.
+ *
+ * A password containing `/`, `?` or `#` — which `openssl rand -base64 48` hands
+ * out more often than not — makes a connection string that no URL parser
+ * accepts, and the error Prisma raises for it (`P1013 … invalid port number`)
+ * points at the port rather than the password. See db/url.ts. A string that
+ * already parses is passed through untouched.
+ */
+const database = ((): { url: string; repaired: boolean } => {
+  try {
+    return normalizeDatabaseUrl(parsed.data.DATABASE_URL);
+  } catch (err) {
+    // Printed the same way as a schema failure: the message is the diagnosis, and
+    // a stack trace pointing into the migration runner is what made this hard to
+    // read the first time it happened.
+    // eslint-disable-next-line no-console
+    console.error(`\nInvalid environment configuration:\n  ${(err as Error).message}\n`);
+    process.exit(1);
+  }
+})();
+if (database.repaired) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[env] DATABASE_URL credentials contained characters that must be percent-encoded; ` +
+      `using the encoded form (${redactDatabaseUrl(database.url)}).`,
+  );
+}
+
+export const env = { ...parsed.data, DATABASE_URL: database.url };
 
 export const allowedOrigins = env.ALLOWED_ORIGINS.split(',')
   .map((o) => o.trim())
