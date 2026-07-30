@@ -10,6 +10,7 @@ import { ensureSeedAdmin } from './db/seedAdmin.js';
 import { ensureSeedPlatformUser } from './db/seedPlatform.js';
 import { startBackgroundJobs } from './lib/jobs.js';
 import { registerClientIp } from './lib/clientIp.js';
+import { installCrashGuard } from './lib/crashGuard.js';
 import { assertTenantModelsRegistered } from './db/tenant.js';
 import { registerAuthPlugin } from './plugins/auth.js';
 import { registerRealtime } from './realtime/gateway.js';
@@ -174,6 +175,11 @@ export async function buildServer() {
 }
 
 async function main() {
+  // Before anything else can reject: a fire-and-forget call that throws must not take
+  // the process — and every request in flight with it — down. See lib/crashGuard.ts for
+  // the 502 that made this necessary.
+  installCrashGuard();
+
   // Refuse to start if any model carrying workspace_id is missing from
   // TENANT_MODELS. That registry is what makes db/tenant.ts inject scoping, so an
   // unregistered tenant table would run UNSCOPED and leak across customers. A

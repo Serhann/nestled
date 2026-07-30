@@ -35,6 +35,16 @@ export function Health() {
           <Stat label="Environment" value={data.process.node_env} />
           <Stat label="Uptime" value={`${uptimeHours} h`} />
           <Stat label="Started" value={dateTime(data.process.started_at)} />
+          {/*
+            Nonzero means a fire-and-forget call is failing. The process survived — which
+            is the point of the crash guard — but something is broken, and before that
+            guard existed this state was a 502 for whoever was mid-request.
+          */}
+          <Stat
+            label="Contained crashes"
+            value={data.process.contained_rejections}
+            tone={data.process.contained_rejections > 0 ? 'warn' : undefined}
+          />
         </div>
       </Card>
 
@@ -62,12 +72,21 @@ export function Health() {
         title="Web Push"
         check={data.push}
         stats={[
-          ['Configured', data.push.configured ? 'yes' : 'no VAPID keys'],
+          [
+            'Configured',
+            // Three states, not two. A REFUSED pair used to be indistinguishable from a
+            // working one here while every notification attempt crashed the process.
+            data.push.key_error ? 'keys rejected' : data.push.configured ? 'yes' : 'no VAPID keys',
+          ],
           ['Stored devices', data.push.stored_subscriptions],
           ['Delivery errors', data.push.errors],
           ['Total failures', data.push.failures],
         ]}
-        footnote="A pruned device is housekeeping; a delivery error is the push service refusing us."
+        footnote={
+          data.push.key_error
+            ? `The configured VAPID pair is invalid, so push is OFF: ${data.push.key_error} Settings → Web Push.`
+            : 'A pruned device is housekeeping; a delivery error is the push service refusing us.'
+        }
       />
 
       <Section

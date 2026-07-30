@@ -38,7 +38,7 @@ export DATABASE_URL='postgres://nestled:nestled@localhost:5546/nestled_test'
 export JWT_ACCESS_SECRET=test-secret-min-16-chars JWT_REFRESH_SECRET=test-secret-min-16-chars
 export NODE_ENV=test
 npx prisma migrate deploy
-npm test        # 352 tests, serial — they share one database
+npm test        # 357 tests, serial — they share one database
 ```
 
 They run with `--test-concurrency=1` on purpose: each file `TRUNCATE`s in its

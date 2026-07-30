@@ -4,8 +4,14 @@ import { stat } from 'node:fs/promises';
 import { unscopedPrisma } from '../../db/unscoped.js';
 import { env } from '../../env.js';
 import { socketStats, type SocketStats } from '../../realtime/hub.js';
-import { isPushEnabled } from '../push.js';
-import { counter, lastJobRun, processStartedAt, type JobRun } from './metrics.js';
+import { isPushEnabled, pushKeyError } from '../push.js';
+import {
+  counter,
+  lastJobRun,
+  lastUnhandledRejection,
+  processStartedAt,
+  type JobRun,
+} from './metrics.js';
 import { settings } from './settings.js';
 
 /**
@@ -32,11 +38,24 @@ export interface HealthCheck {
 
 export interface HealthReport {
   generated_at: string;
-  process: { started_at: string; uptime_seconds: number; node_env: string };
+  process: {
+    started_at: string;
+    uptime_seconds: number;
+    node_env: string;
+    /**
+     * Promise rejections lib/crashGuard.ts contained rather than died on. Nonzero means a
+     * fire-and-forget call is failing — the process survived, which is the point, but
+     * something is broken and the log line names it.
+     */
+    contained_rejections: number;
+    last_contained_rejection: { at: string; message: string } | null;
+  };
   database: HealthCheck & { latency_ms: number | null };
   realtime: HealthCheck & SocketStats;
   push: HealthCheck & {
     configured: boolean;
+    /** Present when keys ARE set but web-push refuses them — a different job to fix. */
+    key_error: string | null;
     failures: number;
     expired_subscriptions: number;
     errors: number;
@@ -180,6 +199,11 @@ export async function healthReport(): Promise<HealthReport> {
       started_at: started.toISOString(),
       uptime_seconds: Math.floor((Date.now() - started.getTime()) / 1000),
       node_env: env.NODE_ENV,
+      contained_rejections: counter('process.unhandled_rejections'),
+      last_contained_rejection: (() => {
+        const last = lastUnhandledRejection();
+        return last ? { at: last.at.toISOString(), message: last.message } : null;
+      })(),
     },
     database,
     realtime: {
@@ -189,16 +213,30 @@ export async function healthReport(): Promise<HealthReport> {
     },
     push: {
       configured: isPushEnabled(),
+      key_error: pushKeyError(),
       failures: pushFailures,
       expired_subscriptions: counter('push.expired'),
       errors: pushErrors,
       stored_subscriptions: pushSubs,
       // Expired subscriptions are housekeeping — a replaced phone. Real errors are
       // the push service refusing us, which is the thing worth waking up for.
-      status: !isPushEnabled() ? 'warn' : pushErrors > 50 ? 'fail' : pushErrors > 0 ? 'warn' : 'ok',
-      detail: !isPushEnabled()
-        ? 'VAPID keys are not configured — notifications are stored but never sent'
-        : `${pushErrors} delivery error(s) and ${counter('push.expired')} pruned device(s) since boot`,
+      // A REFUSED key pair is a fail rather than a warn: somebody configured push
+      // expecting it to work, and until 0012 this exact state was crashing the process on
+      // every message. "Not configured" stays a warn — that is a choice, not a fault.
+      status: pushKeyError()
+        ? 'fail'
+        : !isPushEnabled()
+          ? 'warn'
+          : pushErrors > 50
+            ? 'fail'
+            : pushErrors > 0
+              ? 'warn'
+              : 'ok',
+      detail: pushKeyError()
+        ? `The configured VAPID pair is invalid, so push is OFF: ${pushKeyError()}`
+        : !isPushEnabled()
+          ? 'VAPID keys are not configured — notifications are stored but never sent'
+          : `${pushErrors} delivery error(s) and ${counter('push.expired')} pruned device(s) since boot`,
     },
     geoip,
     retention: retentionCheck(),

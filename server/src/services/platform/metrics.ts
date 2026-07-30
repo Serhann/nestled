@@ -53,6 +53,25 @@ export function recordPushFailure(status: number | undefined): void {
   else bump('push.error');
 }
 
+/**
+ * An unhandled promise rejection that lib/crashGuard.ts contained.
+ *
+ * Counted rather than only logged because the whole risk of surviving one is that nobody
+ * notices. The most recent message is kept too: "12 of these happened" sends somebody to
+ * the logs, "12, the last was `Vapid private key should be 32 bytes long`" sends them to
+ * the setting.
+ */
+export function recordUnhandledRejection(message: string): void {
+  bump('process.unhandled_rejections');
+  lastRejection = { at: new Date(), message: message.slice(0, 300) };
+}
+
+let lastRejection: { at: Date; message: string } | null = null;
+
+export function lastUnhandledRejection(): { at: Date; message: string } | null {
+  return lastRejection;
+}
+
 export function processStartedAt(): Date {
   return startedAt;
 }
@@ -61,4 +80,5 @@ export function processStartedAt(): Date {
 export function resetMetrics(): void {
   jobRuns.clear();
   counters.clear();
+  lastRejection = null;
 }
