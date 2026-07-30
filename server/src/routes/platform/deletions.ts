@@ -9,7 +9,7 @@ import {
   restoreDeletion,
   softDelete,
 } from '../../lib/deletions.js';
-import { platformRead, platformWrite } from './guards.js';
+import { platformCan, platformRead } from './guards.js';
 
 /**
  * Deletion, its record, and the way back.
@@ -20,13 +20,16 @@ import { platformRead, platformWrite } from './guards.js';
  *
  * ── Who may delete ──────────────────────────────────────────────────────────────
  *
- * `superadmin` only, which is stricter than the rest of this surface: extending a
- * trial or lifting a suspension is reversible by pulling the same lever the other way,
- * and support pulls those daily. Deletion is reversible for ninety days and then it is
- * not, so it sits with the role that is already trusted with role changes. Restore is
- * open to support as well — undoing is the safe direction, and making someone hunt for
- * a superadmin to recover a customer's inbox is how a five-minute problem becomes an
- * afternoon.
+ * `deletion:create`, which only `superadmin` carries by default — stricter than the rest
+ * of this surface, because extending a trial or lifting a suspension is reversible by
+ * pulling the same lever the other way, and this is reversible for ninety days and then
+ * is not. `deletion:restore` is separate and support has it: undoing is the safe
+ * direction, and making somebody hunt for a superadmin to recover a customer's inbox is
+ * how a five-minute problem becomes an afternoon.
+ *
+ * Both are scopes rather than roles, so a support lead who should be able to close
+ * accounts is one grant rather than a promotion to superadmin — which is what this
+ * choice used to cost.
  *
  * ── Why the reason is mandatory ────────────────────────────────────────────────
  *
@@ -59,7 +62,7 @@ const auditQuery = z.object({
 });
 
 export async function platformDeletionRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/platform/deletions', { preHandler: platformWrite('superadmin') }, async (req, reply) => {
+  app.post('/platform/deletions', { preHandler: platformCan('deletion:create') }, async (req, reply) => {
     const body = parseBody(deleteBody, req.body, reply);
     if (!body) return;
 
@@ -105,7 +108,7 @@ export async function platformDeletionRoutes(app: FastifyInstance): Promise<void
 
   app.post(
     '/platform/deletions/:id/restore',
-    { preHandler: platformWrite('support', 'billing') },
+    { preHandler: platformCan('deletion:restore') },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = parseBody(z.object({ reason: z.string().min(3).max(500) }), req.body, reply);

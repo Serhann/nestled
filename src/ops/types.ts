@@ -297,3 +297,36 @@ export interface ClientIpDiagnostics {
   headers: Record<string, string | null>;
   socket: string;
 }
+
+/** GET /platform/users */
+export interface StaffAccount {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  /** Scopes beyond the role's bundle. */
+  granted_scopes: string[];
+  /** Scopes removed from it. Deny wins, superadmin included. */
+  denied_scopes: string[];
+  /** role ∪ granted − denied, resolved by the server so the panel never recomputes it. */
+  capabilities: string[];
+  totp_enabled: boolean;
+  must_change_password: boolean;
+  disabled_at: string | null;
+  created_at: string;
+  _count: { sessions: number; impersonations: number };
+}
+
+export interface StaffListResponse {
+  users: StaffAccount[];
+  /**
+   * The vocabulary, from the server. `by_role` is what each role grants on its own,
+   * which is what lets the UI show a tick as "added beyond the role" rather than as a
+   * bare tick — without it, changing the role tells you nothing about what it did.
+   */
+  catalog: {
+    capabilities: string[];
+    roles: string[];
+    by_role: Record<string, string[]>;
+  };
+}

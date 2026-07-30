@@ -38,6 +38,7 @@ export function Audit() {
   });
 
   const pages = data ? Math.max(1, Math.ceil(data.total / data.per_page)) : 1;
+  const canRestore = session?.user.capabilities?.includes('deletion:restore') ?? false;
 
   return (
     <div className="space-y-3">
@@ -130,7 +131,17 @@ export function Audit() {
                 <Td>
                   {entry.restore && (
                     <Button
-                      disabled={!session?.user.can_write}
+                      // Two different reasons this can be unavailable, and the title says
+                      // which: no factor enrolled, or no restore permission. A disabled
+                      // button with no explanation is the same as a broken one.
+                      disabled={!canRestore || !session?.user.can_write}
+                      title={
+                        canRestore
+                          ? session?.user.can_write
+                            ? undefined
+                            : 'Enroll an authenticator first'
+                          : 'Needs the deletion:restore permission'
+                      }
                       onClick={() => setRestoring(entry)}
                     >
                       Undo · {entry.restore.days_left}d left

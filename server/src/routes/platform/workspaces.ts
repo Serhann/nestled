@@ -5,7 +5,7 @@ import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
 import { USAGE_METRICS, periodStart } from '../../lib/limits.js';
 import { invalidateWorkspaceCache } from '../../plugins/auth.js';
-import { platformRead, platformWrite } from './guards.js';
+import { platformCan, platformRead } from './guards.js';
 
 /**
  * Workspace list and detail — the panel's spine.
@@ -444,7 +444,7 @@ export async function platformWorkspaceRoutes(app: FastifyInstance): Promise<voi
     return reply.send({ notes });
   });
 
-  app.post('/platform/workspaces/:id/notes', { preHandler: platformWrite() }, async (req, reply) => {
+  app.post('/platform/workspaces/:id/notes', { preHandler: platformCan('note:write') }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parseBody(z.object({ body: z.string().min(1).max(4000) }), req.body, reply);
     if (!body) return;
@@ -466,7 +466,7 @@ export async function platformWorkspaceRoutes(app: FastifyInstance): Promise<voi
    */
   app.post(
     '/platform/workspaces/:id/lifecycle',
-    { preHandler: platformWrite('support', 'billing') },
+    { preHandler: platformCan('workspace:lifecycle') },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = parseBody(
@@ -568,7 +568,7 @@ export async function platformWorkspaceRoutes(app: FastifyInstance): Promise<voi
    */
   app.post(
     '/platform/workspaces/:id/plan',
-    { preHandler: platformWrite('billing') },
+    { preHandler: platformCan('workspace:plan') },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = parseBody(
@@ -664,7 +664,7 @@ export async function platformWorkspaceRoutes(app: FastifyInstance): Promise<voi
    */
   app.post(
     '/platform/users/:userId/confirm-email',
-    { preHandler: platformWrite('support') },
+    { preHandler: platformCan('user:confirm_email') },
     async (req, reply) => {
       const { userId } = req.params as { userId: string };
       const body = parseBody(z.object({ reason: z.string().min(3).max(500) }), req.body, reply);

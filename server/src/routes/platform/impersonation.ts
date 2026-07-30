@@ -4,7 +4,7 @@ import { unscopedPrisma } from '../../db/unscoped.js';
 import { signAccessToken } from '../../auth/tokens.js';
 import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
-import { platformRead, platformWrite } from './guards.js';
+import { platformCan, platformRead } from './guards.js';
 
 /**
  * Impersonation.
@@ -56,13 +56,24 @@ const startBody = z.object({
 export async function platformImpersonationRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/platform/workspaces/:id/impersonate',
-    // `full` scope is a write capability by definition, so this needs a verified
-    // second factor — a stolen staff password must not be able to act as a customer.
-    { preHandler: platformWrite('support') },
+    // Starting ANY session needs the weaker of the two scopes and a verified second
+    // factor — a stolen staff password must not be able to act as a customer. Asking
+    // for `full` is checked in the handler, because which scope is required depends on
+    // the body, which a preHandler has no business parsing.
+    { preHandler: platformCan('impersonate:read_only') },
     async (req, reply) => {
       const { id: workspaceId } = req.params as { id: string };
       const body = parseBody(startBody, req.body, reply);
       if (!body) return;
+
+      // Typing into a customer's inbox is a different permission from watching it.
+      if (body.scope === 'full' && !req.platform!.capabilities.has('impersonate:full')) {
+        return reply.code(403).send({
+          error: 'This account may only impersonate read-only.',
+          code: 'missing_capability',
+          capability: 'impersonate:full',
+        });
+      }
 
       const workspace = await unscopedPrisma.workspaces.findUnique({
         where: { id: workspaceId },
@@ -161,7 +172,7 @@ export async function platformImpersonationRoutes(app: FastifyInstance): Promise
   );
 
   /** End a session early. The row survives; only `ended_at` is set. */
-  app.post('/platform/impersonations/:id/end', { preHandler: platformWrite('support') }, async (req, reply) => {
+  app.post('/platform/impersonations/:id/end', { preHandler: platformCan('impersonate:end') }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const session = await unscopedPrisma.impersonation_sessions.findUnique({
       where: { id },

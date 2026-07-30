@@ -2,7 +2,7 @@
 
 All fourteen phases are merged, plus live translation, the email/SMS channels and
 response-time targets.
-**340 server tests pass, both typechecks are clean, ESLint reports zero errors,
+**352 server tests pass, both typechecks are clean, ESLint reports zero errors,
 and the production images have been built and exercised end to end** — signup, website creation, widget boot, a visitor
 message, an agent reply, the billing state, and both directions of the
 customer/staff auth wall.
@@ -364,6 +364,66 @@ direction, and making somebody hunt for a superadmin to recover a customer's inb
 turns five minutes into an afternoon. The sweep records itself on ops → Health like
 retention does, so "did it actually run?" has an answer.
 
+## Staff accounts and what they may do
+
+**Ops panel → Staff.** Add an account, change a role, adjust one person's permissions,
+disable somebody who has left.
+
+### The role is a bundle; the scopes are the adjustment
+
+There are four roles — `superadmin`, `support`, `billing`, `readonly` — and thirteen
+scopes (`PLATFORM_CAPABILITIES` in `server/src/permissions.ts`). A role is a named set
+of those scopes, and any account can be granted extras or have some removed.
+
+This replaced role-only checks because the old model had two answers to every request
+that fell between two roles: make them superadmin, which grants deleting customers'
+data, or add a fifth role. A support lead who should be able to close accounts is now
+one grant.
+
+| Role | What it carries by default |
+|---|---|
+| `readonly` | `panel:read` |
+| `support` | reads, notes, ending an impersonation, trial/grace/status levers, confirming an address, restoring a deletion, both impersonation scopes |
+| `billing` | reads, notes, ending an impersonation, the lifecycle levers, one customer's plan, the plan catalog, restoring a deletion |
+| `superadmin` | everything, including `deletion:create` and `staff:manage` |
+
+**Deny beats everything, superadmin included.** That is what makes these more than
+decoration: "administers the install but does not read customer conversations" is one
+row, and there was previously no way to express it — `platformRoleAllows` returned true
+for a superadmin whatever was asked.
+
+Three rules the server enforces, not the UI:
+
+- **You cannot grant a permission you do not hold.** Otherwise `staff:manage` is a path
+  to every other scope: create an account with the scopes you want, set its password
+  yourself, sign in as it. This is also why granting `staff:manage` to a non-superadmin
+  is safe.
+- **Nobody edits their own permissions**, in either direction. Granting is the
+  escalation everyone thinks of; denying is how somebody would drop the scope that makes
+  their own actions reviewable.
+- **A role or scope change signs the account out.** Capabilities are resolved per
+  request, so a change bites immediately — but revoking is the one action that is
+  certainly enough.
+
+A 403 from a scope check names the scope (`code: missing_capability`), so the answer to
+"why can't I do this" is a permission somebody can grant rather than a promotion.
+
+### Adding one, and the password
+
+The creator sets the initial password — there is no email-based reset on this plane —
+so a created account is flagged `must_change_password` and the panel tells its owner,
+plainly, that until they change it the person who created it can sign in as them and
+anything done under their name is deniable. Changing it (Account → Password) requires
+the current password and signs out every other session.
+
+A new account is **read-only until it enrols an authenticator**, whatever its role.
+That is unchanged and deliberate: a staff password is the single credential that reaches
+every customer at once, so possession of it alone buys looking and nothing else.
+
+The Staff list itself needs `staff:manage` to read, not just to change. It publishes
+which colleagues have no second factor enrolled, which is a map of which door is
+unlocked for anyone who already has one staff session.
+
 ## Billing a customer who does not pay through Stripe
 
 **Ops panel → workspace → Plan → Set plan by hand.** Bank transfer, an invoice
@@ -422,6 +482,13 @@ copy, rewrite it for the person reading it and put the cause in a log.
 
 Be aware of these before a launch. None is a known defect; each is something
 nobody has watched happen.
+
+**The Staff screen has not been opened in a browser.** The permission model itself is
+covered by 12 tests (`platformScopes.test.ts`) — deny beating superadmin, a granted scope
+buying exactly one extra action, the refusal to hand out a scope you do not hold, the
+refusal to edit your own, sessions dying on a scope change, and the password change. What
+nobody has watched: the permission matrix rendering, its three-state checkboxes, and the
+generated-password field.
 
 **The deletion and manual-billing screens have not been opened in a browser.** The
 server side is covered end to end — 17 tests across `deletions.test.ts` and
@@ -609,7 +676,7 @@ export NODE_ENV=test
 # ever change it, clear `platform_settings` first.
 export SETTINGS_KEY=test-settings-key
 npx prisma migrate deploy
-npm test        # 340 tests, serial (they share one database)
+npm test        # 352 tests, serial (they share one database)
 ```
 
 From the repo root: `npm run typecheck && npx eslint . && npm run build`.
