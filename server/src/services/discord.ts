@@ -58,7 +58,22 @@ async function post(url: string, body: unknown): Promise<void> {
   }
 }
 
-export async function notifyNewChat(workspaceId: string, conversationId: string): Promise<void> {
+/**
+ * The same containment as push.ts, for the same reason: these are called as
+ * `void notify…(…)`. `post()` below already swallows the webhook's own failures, but the
+ * `loadSettings` query in front of it does not, and an unawaited rejection terminates the
+ * process (Node ≥15). A Discord notification must never be able to do that.
+ */
+async function contained(what: string, run: () => Promise<void>): Promise<void> {
+  try {
+    await run();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[discord] ${what} failed`, err);
+  }
+}
+
+async function newChat(workspaceId: string, conversationId: string): Promise<void> {
   const settings = await loadSettings(workspaceId);
   if (!settings || !settings.discord_notify_new_chat) return;
   const url = resolveWebhook(settings);
@@ -95,7 +110,7 @@ export async function notifyNewChat(workspaceId: string, conversationId: string)
   });
 }
 
-export async function notifyNewMessage(
+async function newMessage(
   workspaceId: string,
   conversationId: string,
   content: string,
@@ -127,7 +142,7 @@ export async function notifyNewMessage(
  * asked to be kept in the dark about a broken promise. Those are different subscriptions
  * and conflating them is how the one alert that mattered gets filtered away.
  */
-export async function notifyBreach(
+async function breach(
   workspaceId: string,
   conversationId: string,
   visitorName: string | null,
@@ -162,3 +177,29 @@ export async function notifyBreach(
     ],
   });
 }
+
+// ── The fire-and-forget boundary ─────────────────────────────────────────────
+//
+// Thin wrappers rather than a try/catch threaded through each body above: the three
+// callers all use `void notify…(…)`, so containment belongs at the edge where the promise
+// is abandoned, and having it in one place is what makes it hard to add a fourth
+// notification that forgets.
+
+export const notifyNewChat = (workspaceId: string, conversationId: string): Promise<void> =>
+  contained('new-chat notification', () => newChat(workspaceId, conversationId));
+
+export const notifyNewMessage = (
+  workspaceId: string,
+  conversationId: string,
+  content: string,
+  from: 'visitor' | 'agent',
+): Promise<void> =>
+  contained('new-message notification', () => newMessage(workspaceId, conversationId, content, from));
+
+export const notifyBreach = (
+  workspaceId: string,
+  conversationId: string,
+  visitorName: string | null,
+  dueAt: Date | null,
+): Promise<void> =>
+  contained('breach notification', () => breach(workspaceId, conversationId, visitorName, dueAt));

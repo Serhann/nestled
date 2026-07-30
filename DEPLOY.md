@@ -2,7 +2,7 @@
 
 All fourteen phases are merged, plus live translation, the email/SMS channels and
 response-time targets.
-**352 server tests pass, both typechecks are clean, ESLint reports zero errors,
+**357 server tests pass, both typechecks are clean, ESLint reports zero errors,
 and the production images have been built and exercised end to end** — signup, website creation, widget boot, a visitor
 message, an agent reply, the billing state, and both directions of the
 customer/staff auth wall.
@@ -606,6 +606,55 @@ it for a day.
 
 ---
 
+## A 502 on the first message, and what it taught us
+
+Worth reading before the next unexplained 502, because the shape repeats.
+
+A visitor sent the first message in a conversation. The widget said "something went
+wrong"; the browser console showed `502 Bad Gateway`. Nothing in the request handler was
+wrong. The container log:
+
+```
+Error: Vapid private key should be 32 bytes long when decoded.
+    at validatePrivateKey (web-push/src/vapid-helper.js:132)
+    at ensureConfigured (dist/services/push.js:29)
+    at pushVisitorMessage (dist/services/push.js:105)
+Node.js v22.23.2
+```
+
+A malformed VAPID key had been saved in the ops panel. `webpush.setVapidDetails`
+validates and **throws**. The sender is called as `void pushVisitorMessage(…)` — correctly,
+since whether an agent's phone buzzes is not part of whether the message was accepted —
+and **an unhandled rejection terminates the process** in Node ≥15. So one bad settings
+value killed the container mid-request, taking every other customer's in-flight request
+with it. The 502 was nginx finding nobody upstream.
+
+**If you are seeing this right now:** clear the two fields under ops → Settings → Web
+Push, or replace them with a valid pair (`cd server && npm run vapid`). It takes effect
+without a restart. No deploy needed.
+
+Four things changed so this class of failure cannot do that again:
+
+1. **A bad key means "no push", not a crash** (`server/src/services/push.ts`). The pair is
+   remembered by all three fields — subject, public and private — so correcting only the
+   private key in the panel actually retries. (Keying it on the public key alone was a bug
+   a test caught: fixing the panel would have appeared to do nothing.)
+2. **Notifications contain their own failures.** Every exported push and Discord notifier
+   is wrapped at the fire-and-forget boundary, because that is where the promise is
+   abandoned.
+3. **The process survives an unhandled rejection** (`server/src/lib/crashGuard.ts`): logged,
+   counted, and kept serving. `uncaughtException` is still deliberately fatal — the stack
+   was interrupted somewhere unknowable — but a rejected promise has a value and a stack
+   and interrupted nothing, and exiting punishes every visitor on the install for one
+   broken notification.
+4. **The panel refuses the value** at the moment somebody pastes it, with the reason.
+
+**Where to look next time.** ops → Health now shows *Contained crashes* next to uptime.
+Nonzero means a fire-and-forget call is failing: the process survived, which is the point,
+but something is broken and the last message is printed with the count. Push reports three
+states rather than two — configured, not configured, and **keys rejected**, which is a
+`fail` because somebody set it up expecting it to work.
+
 ## Operational constraints you must know
 
 **Run exactly ONE app replica.** This is architectural, not tuning: agent
@@ -676,7 +725,7 @@ export NODE_ENV=test
 # ever change it, clear `platform_settings` first.
 export SETTINGS_KEY=test-settings-key
 npx prisma migrate deploy
-npm test        # 352 tests, serial (they share one database)
+npm test        # 357 tests, serial (they share one database)
 ```
 
 From the repo root: `npm run typecheck && npx eslint . && npm run build`.

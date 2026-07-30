@@ -4,7 +4,7 @@ import webpush from 'web-push';
 // eslint-disable-next-line no-restricted-imports -- routes across members and their devices
 import { unscopedPrisma } from '../db/unscoped.js';
 import { membersViewing } from '../realtime/hub.js';
-import { recordPushFailure } from './platform/metrics.js';
+import { bump, recordPushFailure } from './platform/metrics.js';
 import { settings } from './platform/settings.js';
 
 /**
@@ -23,20 +23,102 @@ import { settings } from './platform/settings.js';
  * a restart, and `configured = true` would have pinned the old pair forever.
  */
 let configuredWith: string | null = null;
+/** The pair we could not load, so the failure is reported once rather than per send. */
+let rejectedKey: { fingerprint: string; reason: string } | null = null;
 
+/**
+ * Identity of a key pair, for "is this the one we already loaded / already refused?".
+ *
+ * All three fields, not just the public key. Keying on the public key alone — which this
+ * did at first, and a test caught — means correcting a mistyped PRIVATE key in the ops
+ * panel changes nothing, because the memo still matches and the retry never happens. The
+ * same bug applied to `configuredWith`: rotating only the private key or the subject
+ * would not have taken effect.
+ */
+function fingerprint(subject: string, publicKey: string, privateKey: string): string {
+  return `${subject}\n${publicKey}\n${privateKey}`;
+}
+
+/**
+ * Hand the keys to web-push, or report that push is unavailable.
+ *
+ * `setVapidDetails` VALIDATES and THROWS — a private key that is not 32 bytes when
+ * decoded raises synchronously. This function used to let that through, and because
+ * every caller is invoked as `void pushSomething(…)`, the throw became an unhandled
+ * rejection and Node terminated the process. A visitor sending their first message got a
+ * 502, the widget said "something went wrong", and the cause was a mistyped key in the
+ * ops panel. See lib/crashGuard.ts.
+ *
+ * So a bad key means exactly what a missing key means: no push. It is remembered so the
+ * log gets one line rather than one per message, re-checked whenever the pair changes (so
+ * fixing it in the panel takes effect with no restart), and reported to ops → Health as
+ * MISCONFIGURED rather than as absent — those need different actions from an operator.
+ */
 function ensureConfigured(): boolean {
   const { publicKey, privateKey, subject } = settings().push;
   if (!publicKey || !privateKey) return false;
-  if (configuredWith !== publicKey) {
-    webpush.setVapidDetails(subject, publicKey, privateKey);
-    configuredWith = publicKey;
+
+  const id = fingerprint(subject, publicKey, privateKey);
+  if (rejectedKey?.fingerprint === id) return false;
+
+  if (configuredWith !== id) {
+    try {
+      webpush.setVapidDetails(subject, publicKey, privateKey);
+      configuredWith = id;
+      rejectedKey = null;
+    } catch (err) {
+      rejectedKey = { fingerprint: id, reason: (err as Error).message };
+      configuredWith = null;
+      // eslint-disable-next-line no-console
+      console.error(
+        `[push] the configured VAPID key pair was refused, so push is off: ${rejectedKey.reason} ` +
+          `Fix it in the ops panel under Settings → Web Push (\`npm run vapid\` prints a valid pair).`,
+      );
+      return false;
+    }
   }
   return true;
 }
 
+/** Configured AND loadable. A pair that cannot be loaded is not enabled. */
 export function isPushEnabled(): boolean {
   const { publicKey, privateKey } = settings().push;
-  return Boolean(publicKey && privateKey);
+  if (!publicKey || !privateKey) return false;
+  return ensureConfigured();
+}
+
+/**
+ * Why push is off, when it is off despite keys being present. For ops → Health: "not
+ * configured" and "configured wrongly" are the same symptom and different jobs.
+ */
+export function pushKeyError(): string | null {
+  const { publicKey, privateKey, subject } = settings().push;
+  if (!publicKey || !privateKey) return null;
+  ensureConfigured();
+  const id = fingerprint(subject, publicKey, privateKey);
+  return rejectedKey?.fingerprint === id ? rejectedKey.reason : null;
+}
+
+/**
+ * Does this pair load? Used by the ops panel to refuse a bad key at the point somebody
+ * pastes it, rather than storing a value that silently disables push.
+ */
+export function validateVapidPair(
+  subject: string,
+  publicKey: string,
+  privateKey: string,
+): { ok: true } | { ok: false; reason: string } {
+  try {
+    webpush.setVapidDetails(subject, publicKey, privateKey);
+    // Validating replaced the live details with the candidate pair, so put the loaded
+    // one back. Without this, a rejected save would leave the process holding keys it
+    // never accepted.
+    configuredWith = null;
+    return { ok: true };
+  } catch (err) {
+    configuredWith = null;
+    return { ok: false, reason: (err as Error).message };
+  }
 }
 
 export interface PushPayload {
@@ -119,18 +201,40 @@ async function slugOf(workspaceId: string): Promise<string> {
   return ws?.slug ?? '';
 }
 
+/**
+ * Every exported notification below is called as `void push…(…)`, which makes each one a
+ * promise nobody awaits. That is the right shape — whether an agent's phone buzzes is not
+ * part of whether a visitor's message was accepted — but it carries an obligation: a
+ * rejection from an unawaited promise terminates the process (Node ≥15). A malformed
+ * VAPID key once did exactly that, mid-request, to every customer at once.
+ *
+ * So the fire-and-forget boundary is where failure stops. `contained` is that boundary,
+ * applied at each entry point rather than trusted to every line inside them.
+ */
+async function contained(what: string, run: () => Promise<void>): Promise<void> {
+  try {
+    await run();
+  } catch (err) {
+    bump('push.error');
+    // eslint-disable-next-line no-console
+    console.error(`[push] ${what} failed`, err);
+  }
+}
+
 export async function pushNewConversation(
   workspaceId: string,
   websiteId: string,
   conversationId: string,
   visitorName: string | null,
 ): Promise<void> {
-  await pushToWorkspace(workspaceId, websiteId, {
-    type: 'conversation',
-    conversationId,
-    title: 'New conversation',
-    body: visitorName ? `${visitorName} started a chat` : 'A visitor started a chat',
-    url: inboxUrl(await slugOf(workspaceId), conversationId),
+  await contained('new-conversation notification', async () => {
+    await pushToWorkspace(workspaceId, websiteId, {
+      type: 'conversation',
+      conversationId,
+      title: 'New conversation',
+      body: visitorName ? `${visitorName} started a chat` : 'A visitor started a chat',
+      url: inboxUrl(await slugOf(workspaceId), conversationId),
+    });
   });
 }
 
@@ -141,12 +245,14 @@ export async function pushVisitorMessage(
   visitorName: string | null,
   content: string,
 ): Promise<void> {
-  await pushToWorkspace(workspaceId, websiteId, {
-    type: 'message',
-    conversationId,
-    title: visitorName ?? 'Visitor',
-    body: content.slice(0, 140),
-    url: inboxUrl(await slugOf(workspaceId), conversationId),
+  await contained('visitor-message notification', async () => {
+    await pushToWorkspace(workspaceId, websiteId, {
+      type: 'message',
+      conversationId,
+      title: visitorName ?? 'Visitor',
+      body: content.slice(0, 140),
+      url: inboxUrl(await slugOf(workspaceId), conversationId),
+    });
   });
 }
 
@@ -156,11 +262,13 @@ export async function pushHandoff(
   conversationId: string,
   summary: string | null,
 ): Promise<void> {
-  await pushToWorkspace(workspaceId, websiteId, {
-    type: 'message',
-    conversationId,
-    title: 'Handoff requested',
-    body: summary?.slice(0, 140) ?? 'A visitor needs a human.',
-    url: inboxUrl(await slugOf(workspaceId), conversationId),
+  await contained('handoff notification', async () => {
+    await pushToWorkspace(workspaceId, websiteId, {
+      type: 'message',
+      conversationId,
+      title: 'Handoff requested',
+      body: summary?.slice(0, 140) ?? 'A visitor needs a human.',
+      url: inboxUrl(await slugOf(workspaceId), conversationId),
+    });
   });
 }

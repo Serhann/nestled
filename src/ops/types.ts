@@ -219,7 +219,14 @@ export interface HealthCheck {
 
 export interface HealthReport {
   generated_at: string;
-  process: { started_at: string; uptime_seconds: number; node_env: string };
+  process: {
+    started_at: string;
+    uptime_seconds: number;
+    node_env: string;
+    /** Promise rejections the crash guard contained. Nonzero = a fire-and-forget bug. */
+    contained_rejections: number;
+    last_contained_rejection: { at: string; message: string } | null;
+  };
   database: HealthCheck & { latency_ms: number | null };
   realtime: HealthCheck & {
     workspacesWithAgents: number;
@@ -227,7 +234,14 @@ export interface HealthReport {
     visitorSockets: number;
     conversationsWithVisitors: number;
   };
-  push: HealthCheck & { configured: boolean; failures: number; errors: number; stored_subscriptions: number };
+  push: HealthCheck & {
+    configured: boolean;
+    /** Set when keys ARE present but web-push refuses them — a fault, not a choice. */
+    key_error: string | null;
+    failures: number;
+    errors: number;
+    stored_subscriptions: number;
+  };
   geoip: HealthCheck & { source: string; path: string | null; age_days: number | null };
   retention: HealthCheck & { enabled: boolean; last_run: { at: string; ok: boolean } | null };
   email: HealthCheck & { queued: number; failed: number; smtp_configured: boolean };

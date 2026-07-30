@@ -10,6 +10,7 @@ import {
   updateSettings,
 } from '../../services/platform/settings.js';
 import { sendEmail } from '../../services/email.js';
+import { validateVapidPair } from '../../services/push.js';
 
 /**
  * Install-wide settings.
@@ -109,6 +110,36 @@ export async function platformSettingsRoutes(app: FastifyInstance): Promise<void
     async (req, reply) => {
       const body = parseBody(settingsBody, req.body, reply);
       if (!body) return;
+
+      /**
+       * Refuse a VAPID pair that web-push will not load.
+       *
+       * Not politeness. `setVapidDetails` validates and throws, the senders are called as
+       * `void push…(…)`, and an unawaited rejection terminates the process — so a mistyped
+       * private key saved here used to 502 the next visitor who sent a message, and every
+       * request in flight with it. That is now contained twice over (services/push.ts and
+       * lib/crashGuard.ts), which makes this the third layer: refuse the value at the one
+       * moment a human is looking at the field, instead of storing something that silently
+       * turns push off.
+       */
+      const vapidPublic = body.vapid_public_key ?? settings().push.publicKey;
+      const vapidPrivate = body.vapid_private_key ?? settings().push.privateKey;
+      const vapidSubject = body.vapid_subject ?? settings().push.subject;
+      const touchesVapid =
+        body.vapid_public_key !== undefined ||
+        body.vapid_private_key !== undefined ||
+        body.vapid_subject !== undefined;
+      // A pair being CLEARED is valid — that is how push is turned off.
+      if (touchesVapid && vapidPublic && vapidPrivate) {
+        const check = validateVapidPair(vapidSubject, vapidPublic, vapidPrivate);
+        if (!check.ok) {
+          return reply.code(400).send({
+            error: `Web Push keys rejected: ${check.reason} Run \`npm run vapid\` in the server directory for a valid pair.`,
+            code: 'vapid_invalid',
+            field: 'vapid_private_key',
+          });
+        }
+      }
 
       await updateSettings(body, req.platform!.id);
 
