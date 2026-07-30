@@ -129,6 +129,8 @@ export interface Me {
     by_platform_user_id: string;
     scope: 'read_only' | 'full';
     workspace_id: string;
+    /** ISO. Drives the countdown in the banner; the server takes it from the session row. */
+    expires_at: string;
   } | null;
 }
 

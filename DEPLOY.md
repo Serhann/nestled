@@ -2,7 +2,7 @@
 
 All fourteen phases are merged, plus live translation, the email/SMS channels and
 response-time targets.
-**357 server tests pass, both typechecks are clean, ESLint reports zero errors,
+**362 server tests pass, both typechecks are clean, ESLint reports zero errors,
 and the production images have been built and exercised end to end** — signup, website creation, widget boot, a visitor
 message, an agent reply, the billing state, and both directions of the
 customer/staff auth wall.
@@ -483,6 +483,15 @@ copy, rewrite it for the person reading it and put the cause in a log.
 Be aware of these before a launch. None is a known defect; each is something
 nobody has watched happen.
 
+**The impersonation handover has not been driven in a browser.** The server side is
+covered — 19 tests in `impersonation.test.ts`, including that a code works exactly once, is
+refused after the window closes, is indistinguishable from a nonexistent one when it fails,
+inherits what remains of the session rather than a fresh TTL, and is dead once the session
+is ended. What nobody has watched: the new tab actually opening, the popup-blocked
+fallback, the per-tab session leaving the operator's own account alone in the tab next to
+it, and the banner counting down to zero and clearing itself. Do that once before relying
+on it — the whole feature is a browser behaviour.
+
 **The Staff screen has not been opened in a browser.** The permission model itself is
 covered by 12 tests (`platformScopes.test.ts`) — deny beating superadmin, a granted scope
 buying exactly one extra action, the refusal to hand out a scope you do not hold, the
@@ -704,6 +713,15 @@ site over billing.
   data export, and writes every action into the **customer's own** audit log,
   where it is labelled as ours. A read-only session throws on the first write at
   the database-client layer, not just at the permission check.
+- **The panel is never given the token.** Starting a session returns a URL carrying a
+  single-use, 60-second code, and the panel opens it in a new tab; the tab exchanges the
+  code over a POST for a token scoped to what remains of the session. The code is hashed
+  at rest and dropped once spent. This replaced a textarea that displayed the signed
+  bearer token with a Copy button — see migration 0013.
+  The borrowed session lives in **`sessionStorage`**, so it belongs to that one tab: the
+  operator's own account stays signed in everywhere else, and closing the tab ends their
+  side of it. The customer's banner counts down to the second and clears the session at
+  zero rather than letting the app produce a wall of 401s.
 - Anything that bypasses tenant scoping is greppable by design:
   `grep -rn "no-restricted-imports --" server/src` lists every such import with
   its stated reason.
@@ -725,7 +743,7 @@ export NODE_ENV=test
 # ever change it, clear `platform_settings` first.
 export SETTINGS_KEY=test-settings-key
 npx prisma migrate deploy
-npm test        # 357 tests, serial (they share one database)
+npm test        # 362 tests, serial (they share one database)
 ```
 
 From the repo root: `npm run typecheck && npx eslint . && npm run build`.

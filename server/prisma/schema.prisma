@@ -1226,6 +1226,13 @@ model impersonation_sessions {
   ip               String?
   expires_at       DateTime  @db.Timestamptz(6) // <= 30 min
   ended_at         DateTime? @db.Timestamptz(6)
+  /// Single-use, 60-second code the impersonated tab exchanges for the access token.
+  /// Hashed at rest like every other opaque token here. See migration 0013: the panel
+  /// used to be handed the token itself and display it for copying.
+  claim_code_hash  String?   @unique
+  claim_expires_at DateTime? @db.Timestamptz(6)
+  /// Set by the same conditional UPDATE that reads the code, so it cannot be spent twice.
+  claimed_at       DateTime? @db.Timestamptz(6)
   created_at       DateTime  @default(now()) @db.Timestamptz(6)
 
   platform_user platform_users @relation(fields: [platform_user_id], references: [id], onDelete: Cascade)

@@ -25,6 +25,7 @@ import { logout } from '../lib/api/auth';
 import { resendVerification } from '../lib/api/auth';
 import { Spinner } from '../ui/Page';
 import { useAppStore } from './store';
+import { setSession } from '../lib/tokens';
 import { mountSupportWidget } from '../lib/supportWidget';
 import { playChime } from '../lib/sound';
 import { get } from '../lib/http';
@@ -313,19 +314,85 @@ function ConnectionDot({ connected, collapsed }: { connected: boolean; collapsed
   );
 }
 
+/**
+ * The banner both sides of an impersonated session read.
+ *
+ * It has two audiences at once, which is why the countdown matters. The customer, whose
+ * account this is, gets an answer to the question the old wording left open — not just
+ * "somebody is in here" but "for four more minutes". And the support agent, who is looking
+ * at the same banner, can see how long they have before the session ends under them
+ * instead of discovering it from a 401 halfway through a reply.
+ *
+ * At zero the session is over: the token has expired, so every request would 401. Rather
+ * than let the app produce a wall of failures, this clears the session once and lets the
+ * router send whoever it is to the login page.
+ */
 function ImpersonationBanner() {
   const { me } = useSession();
   const scope = me.impersonation?.scope;
+  const expiresAt = me.impersonation?.expires_at;
+
+  const [remainingMs, setRemainingMs] = useState(() =>
+    expiresAt ? new Date(expiresAt).getTime() - Date.now() : 0,
+  );
+
+  useEffect(() => {
+    if (!expiresAt) return;
+    const end = new Date(expiresAt).getTime();
+    // Every second, because this is a clock and a coarser tick reads as a stuck one.
+    const timer = setInterval(() => setRemainingMs(end - Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [expiresAt]);
+
+  const expired = Boolean(expiresAt) && remainingMs <= 0;
+
+  useEffect(() => {
+    if (!expired) return;
+    // Once. `setSession(null)` clears the tab-scoped store this session lives in, which is
+    // all an impersonated session ever occupied.
+    setSession(null);
+  }, [expired]);
+
+  if (expired) {
+    return (
+      <div
+        role="alert"
+        className="shrink-0 flex items-center justify-center gap-2 bg-gray-700 text-white text-xs font-semibold px-4 py-2"
+      >
+        <ShieldAlert className="w-4 h-4" aria-hidden />
+        The support session has ended. This account is yours again.
+      </div>
+    );
+  }
+
   return (
     <div
       role="alert"
-      className="shrink-0 flex items-center justify-center gap-2 bg-violet-600 text-white text-xs font-semibold px-4 py-2"
+      className="shrink-0 flex flex-wrap items-center justify-center gap-2 bg-violet-600 text-white text-xs font-semibold px-4 py-2"
     >
       <ShieldAlert className="w-4 h-4" aria-hidden />
       Nestled support is signed in to this workspace
       {scope === 'read_only' ? ' (read only)' : ''}. Every action is recorded in your audit log.
+      {expiresAt && (
+        <span className="rounded-full bg-black/20 px-2 py-0.5 tabular-nums" aria-live="off">
+          {/*
+            aria-live off: a screen reader announcing a new value every second is unusable,
+            and the important information — that a session is running — is in the sentence
+            before it, which IS announced.
+          */}
+          Ends in {formatCountdown(remainingMs)}
+        </span>
+      )}
     </div>
   );
+}
+
+/** `m:ss`, floored, never negative. Minutes only — nothing here runs longer than 30. */
+function formatCountdown(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 function VerificationBanner() {

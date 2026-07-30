@@ -96,6 +96,11 @@ export const router = createBrowserRouter(
     { path: '/forgot', ...lazyRoute(() => import('./routes/auth/Forgot')) },
     { path: '/reset', ...lazyRoute(() => import('./routes/auth/Reset')) },
     { path: '/invite/:token', ...lazyRoute(() => import('./routes/auth/AcceptInvite')) },
+    /*
+      Outside the authenticated tree on purpose: the tab that lands here has no session
+      yet — spending the handover code is how it gets one. See routes/auth/Impersonate.tsx.
+    */
+    { path: '/impersonate', ...lazyRoute(() => import('./routes/auth/Impersonate')) },
 
     // ── Authenticated ─────────────────────────────────────────────────────
     {

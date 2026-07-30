@@ -101,6 +101,24 @@ async function impersonate(
   });
 }
 
+/**
+ * Redeem the handover code the mint returned, the way the customer app's tab does.
+ *
+ * The mint no longer returns a token at all (see migration 0013), so every assertion below
+ * that needs one goes through this — which means these tests now cover both halves of the
+ * real flow rather than a token nobody would receive that way.
+ */
+async function claim(minted: { json: () => { handover_url: string } }): Promise<string> {
+  const code = new URL(minted.json().handover_url).hash.replace(/^#c=/, '');
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/v1/impersonation/claim',
+    payload: { code },
+  });
+  assert.equal(res.statusCode, 200, res.body);
+  return res.json().access_token as string;
+}
+
 test('a reason is mandatory, and a token cannot be minted without one', async () => {
   for (const payload of [
     { scope: 'read_only' },
@@ -130,11 +148,22 @@ test('a full session mints a customer token with an act claim and no refresh tok
   assert.equal(res.statusCode, 201, res.body);
   const body = res.json();
 
-  assert.equal(body.refresh_token, null, 'an impersonation credential must not be renewable');
+  // The mint hands over a URL, never a credential — see migration 0013 for the textarea
+  // full of bearer token this replaced.
+  assert.equal(body.access_token, undefined, 'the panel must not be given the token');
+  assert.match(body.handover_url as string, /\/impersonate#c=/);
   assert.equal(body.session.scope, 'full');
   assert.equal(body.session.target.email, 'ada@example.com', 'defaults to the workspace owner');
 
-  const claims = jwt.decode(body.access_token) as Record<string, unknown>;
+  const redeemed = await app.inject({
+    method: 'POST',
+    url: '/api/v1/impersonation/claim',
+    payload: { code: new URL(body.handover_url).hash.replace(/^#c=/, '') },
+  });
+  assert.equal(redeemed.statusCode, 200, redeemed.body);
+  assert.equal(redeemed.json().refresh_token, null, 'an impersonation credential must not be renewable');
+
+  const claims = jwt.decode(redeemed.json().access_token) as Record<string, unknown>;
   assert.equal(claims.typ, 'user');
   assert.equal(claims.sub, ownerUserId);
   assert.deepEqual(claims.act, {
@@ -161,18 +190,27 @@ test('the impersonated token works on the customer plane and announces itself', 
     reason: 'checking whether their plan limits are applied correctly',
     scope: 'full',
   });
-  const token = minted.json().access_token as string;
+  const token = await claim(minted);
   const headers = { authorization: `Bearer ${token}` };
 
   const me = await app.inject({ method: 'GET', url: '/api/v1/me', headers });
   assert.equal(me.statusCode, 200, me.body);
   // Without this block the customer has no way to know a staff member is inside
-  // their account — the client renders it as an unmissable banner.
+  // their account — the client renders it as an unmissable banner with a countdown.
   assert.deepEqual(me.json().impersonation, {
     by_platform_user_id: staffId,
     scope: 'full',
     workspace_id: workspaceA,
+    expires_at: minted.json().session.expires_at,
   });
+  // The countdown's number must be the SESSION's end, not the token's: they agree today
+  // because the token is minted to the remaining time, and this is what keeps them
+  // agreeing if that ever changes.
+  const sessionRow = await unscopedPrisma.impersonation_sessions.findUniqueOrThrow({
+    where: { id: minted.json().session.id },
+    select: { expires_at: true },
+  });
+  assert.equal(me.json().impersonation.expires_at, sessionRow.expires_at.toISOString());
 
   const ws = await app.inject({ method: 'GET', url: `/api/v1/w/${workspaceA}`, headers });
   assert.equal(ws.statusCode, 200, ws.body);
@@ -183,7 +221,7 @@ test('a session is bound to ONE workspace and cannot be replayed against another
     reason: 'confirming the workspace binding holds',
     scope: 'full',
   });
-  const headers = { authorization: `Bearer ${minted.json().access_token}` };
+  const headers = { authorization: `Bearer ${await claim(minted)}` };
 
   // Same token, different workspace in the path. Editing the URL is the entire
   // attack, and requireWorkspace refuses it before any query runs.
@@ -197,7 +235,7 @@ test('impersonation subtracts billing, integrations, membership and export', asy
     reason: 'verifying the capability subtraction is applied',
     scope: 'full',
   });
-  const headers = { authorization: `Bearer ${minted.json().access_token}` };
+  const headers = { authorization: `Bearer ${await claim(minted)}` };
 
   const me = await app.inject({ method: 'GET', url: '/api/v1/me', headers });
   const permissions: string[] = me.json().workspaces[0].permissions;
@@ -230,7 +268,7 @@ test('a read_only session is refused at the capability layer', async () => {
     reason: 'reading their configuration to answer a support question',
     scope: 'read_only',
   });
-  const headers = { authorization: `Bearer ${minted.json().access_token}` };
+  const headers = { authorization: `Bearer ${await claim(minted)}` };
 
   const read = await app.inject({ method: 'GET', url: `/api/v1/w/${workspaceA}/conversations`, headers });
   assert.equal(read.statusCode, 200, read.body);
@@ -294,7 +332,7 @@ test('a mutation while impersonating lands in the CUSTOMER audit log, as the sta
     scope: 'full',
   });
   const sessionId = minted.json().session.id as string;
-  const headers = { authorization: `Bearer ${minted.json().access_token}` };
+  const headers = { authorization: `Bearer ${await claim(minted)}` };
 
   const res = await app.inject({
     method: 'PATCH',
@@ -335,7 +373,7 @@ test('ending a session kills the token without waiting for its TTL', async () =>
     ttl_minutes: 30,
   });
   const sessionId = minted.json().session.id as string;
-  const headers = { authorization: `Bearer ${minted.json().access_token}` };
+  const headers = { authorization: `Bearer ${await claim(minted)}` };
 
   const ended = await app.inject({
     method: 'POST',
@@ -371,7 +409,8 @@ test('an expired session row invalidates the token even while the JWT is valid',
     ttl_minutes: 30,
   });
   const sessionId = minted.json().session.id as string;
-  const headers = { authorization: `Bearer ${minted.json().access_token}` };
+  const token = await claim(minted);
+  const headers = { authorization: `Bearer ${token}` };
 
   await unscopedPrisma.impersonation_sessions.update({
     where: { id: sessionId },
@@ -379,7 +418,7 @@ test('an expired session row invalidates the token even while the JWT is valid',
   });
 
   // The JWT itself is still nowhere near its exp; the row is what decides.
-  const claims = jwt.decode(minted.json().access_token) as { exp: number };
+  const claims = jwt.decode(token) as { exp: number };
   assert.ok(claims.exp * 1000 > Date.now(), 'precondition: the JWT has not expired');
 
   const res = await app.inject({ method: 'GET', url: '/api/v1/me', headers });
@@ -428,4 +467,133 @@ test('a workspace with no impersonatable member is refused, not fudged', async (
   assert.equal(res.json().code, 'no_target');
   // No orphan session row was written for the failed attempt.
   assert.equal(await unscopedPrisma.impersonation_sessions.count({ where: { workspace_id: empty.id } }), 0);
+});
+
+// ── The handover ─────────────────────────────────────────────────────────────
+//
+// The mint hands the panel a URL with a single-use code; the customer app's tab redeems it.
+// What these pin is the part that makes that safer than the textarea of bearer token it
+// replaced: the code works once, briefly, and buys no more than the session it belongs to.
+
+test('a handover code works exactly once', async () => {
+  const minted = await impersonate(workspaceA, {
+    reason: 'confirming the handover code cannot be replayed',
+    scope: 'read_only',
+  });
+  const code = new URL(minted.json().handover_url).hash.replace(/^#c=/, '');
+
+  const first = await app.inject({
+    method: 'POST',
+    url: '/api/v1/impersonation/claim',
+    payload: { code },
+  });
+  assert.equal(first.statusCode, 200, first.body);
+
+  const second = await app.inject({
+    method: 'POST',
+    url: '/api/v1/impersonation/claim',
+    payload: { code },
+  });
+  assert.equal(second.statusCode, 400, second.body);
+  assert.equal(second.json().code, 'claim_invalid');
+});
+
+test('the code is not stored in a form that still works, and is dropped once spent', async () => {
+  const minted = await impersonate(workspaceA, {
+    reason: 'checking the code is hashed at rest like every other opaque token',
+    scope: 'read_only',
+  });
+  const code = new URL(minted.json().handover_url).hash.replace(/^#c=/, '');
+  const sessionId = minted.json().session.id as string;
+
+  const before = await unscopedPrisma.impersonation_sessions.findUniqueOrThrow({
+    where: { id: sessionId },
+    select: { claim_code_hash: true, claimed_at: true },
+  });
+  assert.ok(before.claim_code_hash, 'a hash is stored');
+  assert.notEqual(before.claim_code_hash, code, 'the code itself is never stored');
+  assert.equal(before.claimed_at, null);
+
+  await claim(minted);
+
+  const after = await unscopedPrisma.impersonation_sessions.findUniqueOrThrow({
+    where: { id: sessionId },
+    select: { claim_code_hash: true, claimed_at: true },
+  });
+  assert.equal(after.claim_code_hash, null, 'the hash goes once the code is spent');
+  assert.ok(after.claimed_at, 'and the record that it was used stays');
+});
+
+test('an expired code is refused, and says nothing about which failure it was', async () => {
+  const minted = await impersonate(workspaceA, {
+    reason: 'checking the sixty-second window is enforced',
+    scope: 'read_only',
+  });
+  const code = new URL(minted.json().handover_url).hash.replace(/^#c=/, '');
+
+  await unscopedPrisma.impersonation_sessions.update({
+    where: { id: minted.json().session.id },
+    data: { claim_expires_at: new Date(Date.now() - 1000) },
+  });
+
+  const expired = await app.inject({
+    method: 'POST',
+    url: '/api/v1/impersonation/claim',
+    payload: { code },
+  });
+  assert.equal(expired.statusCode, 400, expired.body);
+  assert.equal(expired.json().code, 'claim_invalid');
+
+  // Same code and message as a nonexistent one: a tab that cannot tell them apart cannot
+  // be used to probe which codes exist.
+  const nonsense = await app.inject({
+    method: 'POST',
+    url: '/api/v1/impersonation/claim',
+    payload: { code: 'this-code-never-existed-at-all' },
+  });
+  assert.equal(nonsense.statusCode, 400, nonsense.body);
+  assert.equal(nonsense.json().error, expired.json().error);
+});
+
+test('redeeming late does not extend the window the operator agreed to', async () => {
+  const minted = await impersonate(workspaceA, {
+    reason: 'checking the token inherits what remains rather than a fresh ttl',
+    scope: 'read_only',
+    ttl_minutes: 20,
+  });
+  const sessionId = minted.json().session.id as string;
+
+  // Five minutes of the session have gone by the time the tab opens.
+  await unscopedPrisma.impersonation_sessions.update({
+    where: { id: sessionId },
+    data: { expires_at: new Date(Date.now() + 15 * 60_000) },
+  });
+
+  const token = await claim(minted);
+  const claims = jwt.decode(token) as { exp: number };
+  const remaining = claims.exp * 1000 - Date.now();
+  assert.ok(
+    remaining <= 15 * 60_000 + 5_000,
+    `the token must expire with the session, not 20 minutes from redemption — got ${Math.round(remaining / 1000)}s`,
+  );
+});
+
+test('a code for a session that was already ended is refused', async () => {
+  const minted = await impersonate(workspaceA, {
+    reason: 'checking an ended session cannot be opened afterwards',
+    scope: 'read_only',
+  });
+  const ended = await app.inject({
+    method: 'POST',
+    url: `/platform/impersonations/${minted.json().session.id}/end`,
+    headers: staffAuth(),
+  });
+  assert.equal(ended.statusCode, 200, ended.body);
+
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/v1/impersonation/claim',
+    payload: { code: new URL(minted.json().handover_url).hash.replace(/^#c=/, '') },
+  });
+  assert.equal(res.statusCode, 400, res.body);
 });

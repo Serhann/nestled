@@ -3,10 +3,11 @@ import { api } from '../api';
 import { useSession } from '../session';
 import { Button, Field, Modal, inputClass } from '../ui';
 
-interface Minted {
+interface Started {
   session: { id: string; scope: string; expires_at: string; target: { name: string; email: string } };
-  access_token: string;
-  refresh_token: null;
+  /** Where to send the operator. Carries a single-use code, not a token. */
+  handover_url: string;
+  claim_expires_in_seconds: number;
 }
 
 /**
@@ -18,6 +19,19 @@ interface Minted {
  * knowing, while they type, that the customer will read it.
  *
  * `read_only` is the default. `full` has to be chosen.
+ *
+ * ── The handover ───────────────────────────────────────────────────────────────
+ *
+ * This used to display the signed access token in a textarea with a Copy button, on the
+ * theory that writing a staff-minted credential into another origin's token store silently
+ * is what makes an audit trail arguable. The risk was real; the remedy was not. What it
+ * produced in practice was a bearer token for a customer's account living in a clipboard,
+ * a form field, and wherever it was pasted next.
+ *
+ * Now the server returns a URL carrying a single-use, sixty-second code and this opens it
+ * in a new tab. The token exists only inside that tab, in per-tab storage, and the
+ * operator's own session is never touched — see server/src/routes/v1/impersonation.ts and
+ * src/lib/tokens.ts.
  */
 export function ImpersonateDialog({
   workspaceId,
@@ -34,7 +48,8 @@ export function ImpersonateDialog({
   const [ttl, setTtl] = useState(15);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [minted, setMinted] = useState<Minted | null>(null);
+  const [started, setStarted] = useState<Started | null>(null);
+  const [blocked, setBlocked] = useState(false);
 
   const canWrite = session?.user.can_write ?? false;
 
@@ -42,12 +57,20 @@ export function ImpersonateDialog({
     setBusy(true);
     setError(null);
     try {
-      setMinted(
-        await api<Minted>(`/platform/workspaces/${workspaceId}/impersonate`, {
-          method: 'POST',
-          body: { reason: reason.trim(), scope, ttl_minutes: ttl },
-        }),
-      );
+      const result = await api<Started>(`/platform/workspaces/${workspaceId}/impersonate`, {
+        method: 'POST',
+        body: { reason: reason.trim(), scope, ttl_minutes: ttl },
+      });
+      setStarted(result);
+
+      /*
+        Opened straight away, in the same click that started the session — a popup blocker
+        allows a window opened from a user gesture, and this still counts as one. If it is
+        blocked anyway (some configurations block everything), the link below is the
+        fallback rather than a dead end. The code expires in a minute either way.
+      */
+      const tab = window.open(result.handover_url, '_blank', 'noopener');
+      setBlocked(tab === null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start the session');
     } finally {
@@ -55,28 +78,38 @@ export function ImpersonateDialog({
     }
   }
 
-  if (minted) {
+  if (started) {
     return (
       <Modal title="Session started" onClose={onClose}>
         <div className="space-y-3 text-sm text-gray-300">
           <p>
-            Acting as <strong className="text-gray-100">{minted.session.target.name}</strong> (
-            {minted.session.target.email}) in <strong className="text-gray-100">{workspaceName}</strong>, scope{' '}
-            <strong className="text-gray-100">{minted.session.scope.replace('_', ' ')}</strong>, until{' '}
-            {new Date(minted.session.expires_at).toLocaleTimeString()}.
+            Acting as <strong className="text-gray-100">{started.session.target.name}</strong> (
+            {started.session.target.email}) in <strong className="text-gray-100">{workspaceName}</strong>, scope{' '}
+            <strong className="text-gray-100">{started.session.scope.replace('_', ' ')}</strong>, until{' '}
+            {new Date(started.session.expires_at).toLocaleTimeString()}.
           </p>
-          {/* The token is handed over rather than auto-applied. The customer app is
-              a different origin with its own token store, and silently writing a
-              staff-minted credential into it is exactly the kind of convenience
-              that makes an audit trail arguable. */}
-          <Field label="Access token" hint="Paste into the customer app. It cannot be refreshed and expires with the session.">
-            <textarea readOnly className={`${inputClass} h-24 font-mono text-xs`} value={minted.access_token} />
-          </Field>
+
+          {blocked ? (
+            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              Your browser blocked the new tab.{' '}
+              <a href={started.handover_url} target="_blank" rel="noopener noreferrer" className="underline">
+                Open it now
+              </a>{' '}
+              — the link works once and expires in {started.claim_expires_in_seconds} seconds.
+            </p>
+          ) : (
+            <p className="text-xs text-gray-500">
+              Opened in a new tab. That tab holds the session and nothing else does — closing it ends
+              your side of it, and your own account is untouched in this one.
+            </p>
+          )}
+
           <p className="text-xs text-gray-500">
-            The customer sees a banner naming this session, and every change you make appears in their own audit log.
+            The customer sees a banner naming this session with a countdown, and every change you make
+            appears in their own audit log.
           </p>
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => void navigator.clipboard?.writeText(minted.access_token)}>Copy token</Button>
+
+          <div className="flex justify-end">
             <Button variant="primary" onClick={onClose}>
               Done
             </Button>

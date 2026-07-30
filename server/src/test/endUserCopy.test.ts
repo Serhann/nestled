@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -27,6 +27,23 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FRONTEND = join(HERE, '..', '..', '..', 'src');
 const SURFACES = ['app', 'widget'];
+
+/**
+ * Files on an end-user surface whose READER is staff, each with its reason.
+ *
+ * The rule is about audience, not directory. This page lives under `src/app` because it
+ * has to be served from the customer ORIGIN — that is where the session it creates belongs
+ * — but a customer never reaches it: it is opened by the ops panel, in a new tab, by the
+ * operator who just started the session. Telling them to go back to the ops panel is the
+ * correct instruction for the only person who will ever read it.
+ *
+ * Keep this list at one or two entries. A third is a sign the rule is being worked around
+ * rather than applied.
+ */
+const STAFF_AUDIENCE: Record<string, string> = {
+  'app/routes/auth/Impersonate.tsx':
+    'opened only by the ops panel, in a new tab, for the operator who started the session',
+};
 
 /**
  * Each entry is a phrase that only makes sense to whoever runs the install. They are
@@ -58,6 +75,7 @@ test('no end-user copy explains our own plumbing', async () => {
 
   const offences: string[] = [];
   for (const file of files) {
+    if (STAFF_AUDIENCE[relative(FRONTEND, file).split(sep).join('/')]) continue;
     const source = stripComments(await readFile(file, 'utf8'));
     source.split('\n').forEach((line, index) => {
       const haystack = line.toLowerCase();
@@ -74,7 +92,8 @@ test('no end-user copy explains our own plumbing', async () => {
     [],
     `end-user copy must not mention our internals:\n${offences.join('\n')}\n\n` +
       `If one of these is an identifier rather than copy, rename it. If it is copy, ` +
-      `rewrite it for the person reading it and put the cause in a log.`,
+      `rewrite it for the person reading it and put the cause in a log. If the file's only ` +
+      `reader is staff, add it to STAFF_AUDIENCE above with the reason.`,
   );
 });
 
