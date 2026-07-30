@@ -16,6 +16,7 @@ import { registerAuthPlugin } from './plugins/auth.js';
 import { registerRealtime } from './realtime/gateway.js';
 import { authV1Routes } from './routes/v1/auth.js';
 import { meV1Routes } from './routes/v1/me.js';
+import { impersonationV1Routes } from './routes/v1/impersonation.js';
 import { twoFactorV1Routes } from './routes/v1/twoFactor.js';
 import { workspaceV1Routes } from './routes/v1/workspaces.js';
 import { teamV1Routes } from './routes/v1/team.js';
@@ -145,6 +146,9 @@ export async function buildServer() {
   // is a path segment rather than ambient state — see auth/tokens.ts for why.
   await app.register(authV1Routes);
   await app.register(meV1Routes);
+  // Redeeming a staff handover code. On the customer plane because the customer app's
+  // tab is what calls it — see routes/v1/impersonation.ts.
+  await app.register(impersonationV1Routes);
   await app.register(twoFactorV1Routes);
   await app.register(workspaceV1Routes);
   await app.register(teamV1Routes);

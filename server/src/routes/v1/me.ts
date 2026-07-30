@@ -193,6 +193,10 @@ export async function meV1Routes(app: FastifyInstance): Promise<void> {
             by_platform_user_id: impersonation.platformUserId,
             scope: impersonation.scope,
             workspace_id: impersonation.workspaceId,
+            // So the banner can count down rather than just assert that somebody is here.
+            // A customer watching "4:12 left" knows when their account is their own again;
+            // "Nestled support is signed in" alone does not answer that.
+            expires_at: new Date(impersonation.expiresAt).toISOString(),
           }
         : null,
     });

@@ -1,10 +1,19 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { unscopedPrisma } from '../../db/unscoped.js';
-import { signAccessToken } from '../../auth/tokens.js';
+import { generateOpaqueToken } from '../../auth/tokens.js';
 import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
+import { settings } from '../../services/platform/settings.js';
 import { platformCan, platformRead } from './guards.js';
+
+/**
+ * How long the handover code lives.
+ *
+ * Sixty seconds: the operator clicks, a tab opens, the tab redeems it. Anything longer is
+ * a credential-shaped thing with a shelf life, which is what this design exists to avoid.
+ */
+const CLAIM_TTL_MS = 60_000;
 
 /**
  * Impersonation.
@@ -106,6 +115,16 @@ export async function platformImpersonationRoutes(app: FastifyInstance): Promise
       }
 
       const expiresAt = new Date(Date.now() + body.ttl_minutes * 60_000);
+
+      /**
+       * The handover code, not the token.
+       *
+       * Single use, 60 seconds, hashed at rest. Long enough to open a tab and short
+       * enough that a code left in a chat message is worthless — and the token it buys
+       * is only ever seen by the tab that redeems it. See migration 0013 for what this
+       * replaced: the panel used to display the signed token for copying.
+       */
+      const claim = generateOpaqueToken(32);
       const session = await unscopedPrisma.impersonation_sessions.create({
         data: {
           platform_user_id: req.platform!.id,
@@ -115,27 +134,11 @@ export async function platformImpersonationRoutes(app: FastifyInstance): Promise
           scope: body.scope,
           ip: req.clientIp,
           expires_at: expiresAt,
+          claim_code_hash: claim.hash,
+          claim_expires_at: new Date(Date.now() + CLAIM_TTL_MS),
         },
         select: { id: true, created_at: true },
       });
-
-      // The access token's own lifetime matches the session's, so the two cannot
-      // disagree. There is deliberately NO refresh token: this credential expires
-      // and that is the end of it.
-      const accessToken = signAccessToken(
-        {
-          sub: member.user.id,
-          typ: 'user',
-          email: member.user.email,
-          act: {
-            pu: req.platform!.id,
-            sid: session.id,
-            ws: workspaceId,
-            scope: body.scope,
-          },
-        },
-        `${body.ttl_minutes}m`,
-      );
 
       // Written into the CUSTOMER's log, not only ours. The customer must be able to
       // see that this happened without asking us.
@@ -163,10 +166,16 @@ export async function platformImpersonationRoutes(app: FastifyInstance): Promise
           created_at: session.created_at.toISOString(),
           target: { id: member.user.id, name: member.user.name, email: member.user.email },
         },
-        access_token: accessToken,
-        // Named so no client is tempted to look for one. See point 2 above.
-        refresh_token: null,
-        expires_at: expiresAt.toISOString(),
+        /**
+         * Where the panel sends the operator: a new tab on the customer app, which
+         * exchanges the code for the token itself.
+         *
+         * The code rides in the FRAGMENT. A fragment is never sent to a server, so it
+         * stays out of nginx's access log and out of any Referer header the app's own
+         * requests carry — the query string would have been in both.
+         */
+        handover_url: `${settings().urls.app}/impersonate#c=${claim.token}`,
+        claim_expires_in_seconds: CLAIM_TTL_MS / 1000,
       });
     },
   );

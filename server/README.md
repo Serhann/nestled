@@ -38,7 +38,7 @@ export DATABASE_URL='postgres://nestled:nestled@localhost:5546/nestled_test'
 export JWT_ACCESS_SECRET=test-secret-min-16-chars JWT_REFRESH_SECRET=test-secret-min-16-chars
 export NODE_ENV=test
 npx prisma migrate deploy
-npm test        # 357 tests, serial — they share one database
+npm test        # 362 tests, serial — they share one database
 ```
 
 They run with `--test-concurrency=1` on purpose: each file `TRUNCATE`s in its
@@ -84,7 +84,7 @@ cannot go stale.
 
 | Area | Routes |
 |---|---|
-| Auth | `POST /api/v1/auth/{signup,login,refresh,logout,verify-email,resend-verification,forgot-password,reset-password,change-password}`, `GET /api/v1/auth/slug-available` |
+| Auth | `POST /api/v1/auth/{signup,login,refresh,logout,verify-email,resend-verification,forgot-password,reset-password,change-password}`, `GET /api/v1/auth/slug-available`, `POST /api/v1/impersonation/claim` |
 | Account | `GET|PATCH /api/v1/me` |
 | Invitations | `GET /api/v1/invites/:token`, `POST /api/v1/invites/:token/accept` |
 | Workspaces | `POST /api/v1/workspaces`, `GET|PATCH /api/v1/w/:id` |

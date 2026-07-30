@@ -47,6 +47,13 @@ export interface AuthContext {
     scope: 'read_only' | 'full';
     /** The single workspace this impersonated session may touch. */
     workspaceId: string;
+    /**
+     * Epoch ms the session ends. Taken from the token's own `exp`, which is minted to the
+     * session's remaining time — so the countdown the customer sees cannot disagree with
+     * the credential's actual lifetime. Ending a session early is separate and enforced by
+     * the per-request live check below, not by this number.
+     */
+    expiresAt: number;
   };
   can(cap: Capability, websiteId?: string): boolean;
 }
@@ -95,7 +102,7 @@ interface CacheEntry<T> {
 }
 const memberCache = new Map<string, CacheEntry<AuthedMember | null>>();
 const workspaceCache = new Map<string, CacheEntry<AuthContext['workspace'] | null>>();
-const impersonationCache = new Map<string, CacheEntry<boolean>>();
+const impersonationCache = new Map<string, CacheEntry<{ live: boolean; expiresAt: number }>>();
 
 function cached<T>(map: Map<string, CacheEntry<T>>, key: string, ttl: number): T | undefined {
   const hit = map.get(key);
@@ -170,16 +177,28 @@ async function loadWorkspace(workspaceId: string): Promise<AuthContext['workspac
   return value;
 }
 
-async function impersonationIsLive(sessionId: string): Promise<boolean> {
+/**
+ * Is this session still live, and when does it end?
+ *
+ * The expiry comes back with the liveness because the row is the authority on both and it
+ * is already being read here — the alternative was widening the token payload to carry
+ * `exp` through to the client, which would have put the countdown's source one step
+ * further from the thing that decides it. Ending a session early sets `ended_at` and is
+ * caught by `live`, not by the number.
+ */
+async function impersonationState(sessionId: string): Promise<{ live: boolean; expiresAt: number }> {
   const hit = cached(impersonationCache, sessionId, IMPERSONATION_TTL_MS);
   if (hit !== undefined) return hit;
   const row = await unscopedPrisma.impersonation_sessions.findUnique({
     where: { id: sessionId },
     select: { ended_at: true, expires_at: true },
   });
-  const live = Boolean(row && !row.ended_at && row.expires_at > new Date());
-  impersonationCache.set(sessionId, { value: live, at: Date.now() });
-  return live;
+  const value = {
+    live: Boolean(row && !row.ended_at && row.expires_at > new Date()),
+    expiresAt: row?.expires_at.getTime() ?? 0,
+  };
+  impersonationCache.set(sessionId, { value, at: Date.now() });
+  return value;
 }
 
 // ── Guards ───────────────────────────────────────────────────────────────────
@@ -202,7 +221,8 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Pro
   // An impersonation token is re-checked against the session row on every
   // request, so "end session" in the ops panel takes effect within seconds rather
   // than waiting out the token's TTL.
-  if (payload.act && !(await impersonationIsLive(payload.act.sid))) {
+  const impersonation = payload.act ? await impersonationState(payload.act.sid) : null;
+  if (payload.act && !impersonation!.live) {
     await reply.code(401).send({ error: 'Impersonation session ended' });
     return;
   }
@@ -219,6 +239,7 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Pro
             sessionId: payload.act.sid,
             scope: payload.act.scope,
             workspaceId: payload.act.ws,
+            expiresAt: impersonation!.expiresAt,
           },
         }
       : {}),
