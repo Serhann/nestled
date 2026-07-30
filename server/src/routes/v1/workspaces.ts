@@ -61,7 +61,12 @@ export async function workspaceV1Routes(app: FastifyInstance): Promise<void> {
       const plan =
         (await unscopedPrisma.plans.findFirst({ where: { is_trial_default: true } })) ??
         (await unscopedPrisma.plans.findFirst({ where: { is_public: true }, orderBy: { sort_order: 'asc' } }));
-      if (!plan) return reply.code(500).send({ error: 'No plans configured' });
+      if (!plan) {
+        req.log.error('workspace creation blocked: no plan is marked is_trial_default or is_public');
+        return reply
+          .code(500)
+          .send({ error: 'Creating a workspace is temporarily unavailable. Please try again shortly.' });
+      }
 
       try {
         const workspace = await unscopedPrisma.$transaction(async (tx) => {

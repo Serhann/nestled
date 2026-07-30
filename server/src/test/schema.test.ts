@@ -48,6 +48,8 @@ const UNSCOPED_MODELS: Record<string, string> = {
 
   // Nullable workspace_id by design (a NULL means "platform-level").
   audit_log: 'workspace_id is nullable: NULL = a platform-level action',
+  deletion_events:
+    'workspace_id is nullable AND ON DELETE SET NULL: the record of a purge has to outlive the workspace it purged',
   outbound_emails: 'workspace_id is nullable: NULL = a platform-level email',
   impersonation_sessions: 'has workspace_id, but is written on the vendor plane',
 };
@@ -82,9 +84,11 @@ test('exemptions in UNSCOPED_MODELS all refer to models that exist', () => {
 });
 
 test('workspace_id is NOT NULL on every tenant model', () => {
-  // The two exceptions are intentional and documented above: a NULL workspace on
-  // audit_log / outbound_emails means "platform-level, not any customer's".
-  const NULLABLE_BY_DESIGN = new Set(['audit_log', 'outbound_emails']);
+  // The exceptions are intentional and documented above: a NULL workspace means
+  // "platform-level, not any customer's". On `deletion_events` it means something
+  // sharper — the FK is ON DELETE SET NULL, so the record of a purge outlives the
+  // workspace it purged, which is the one row that must survive its own subject.
+  const NULLABLE_BY_DESIGN = new Set(['audit_log', 'outbound_emails', 'deletion_events']);
   const offenders: string[] = [];
   for (const model of models) {
     const f = model.fields.find((x) => x.name === 'workspace_id');

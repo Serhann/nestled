@@ -51,7 +51,7 @@ export async function audit(req: FastifyRequest, entry: AuditEntry): Promise<voi
         target_type: entry.targetType ?? null,
         target_id: entry.targetId ?? null,
         details: (entry.details ?? {}) as object,
-        ip_address: req.ip,
+        ip_address: req.clientIp,
         request_id: String(req.id),
         impersonation_session_id: impersonation?.sessionId ?? null,
       },

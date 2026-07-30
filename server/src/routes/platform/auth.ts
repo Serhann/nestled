@@ -103,7 +103,7 @@ export async function platformAuthRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const session = await createSession(user.id, {
-        ip: req.ip,
+        ip: req.clientIp,
         userAgent: req.headers['user-agent'],
       });
 
@@ -174,7 +174,7 @@ export async function platformAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post('/platform/me/sessions/revoke-others', { preHandler: platformRead }, async (req, reply) => {
     const revoked = await revokeAllSessions(req.platform!.id);
     const current = await createSession(req.platform!.id, {
-      ip: req.ip,
+      ip: req.clientIp,
       userAgent: req.headers['user-agent'],
     });
     await audit(req, { action: 'platform.sessions_revoked', details: { count: revoked } });

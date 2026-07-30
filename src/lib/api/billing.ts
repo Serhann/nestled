@@ -56,8 +56,21 @@ export interface BillingState {
     limit: number;
     state: 'ok' | 'soft' | 'hard';
   }[];
-  /** False when this deployment has no Stripe keys — self-hosting stays usable. */
-  stripe_configured: boolean;
+  /**
+   * How this workspace is billed. `manual` = we invoice them (transfer, purchase
+   * order, a partner deal), so nothing on this page may offer self-service checkout —
+   * it would charge a customer who is already paying us.
+   */
+  billing_mode: 'stripe' | 'manual';
+  /**
+   * `configured` is false when the install has no Stripe keys at all.
+   *
+   * This was declared as a flat `stripe_configured` and the API has always sent a
+   * nested object, so every read of it was `undefined`: the Card & invoices button
+   * never rendered for anyone, and every customer was shown the "no payment provider"
+   * notice regardless of setup.
+   */
+  stripe: { configured: boolean; customer: boolean };
 }
 
 export const listPlans = (): Promise<{ plans: Plan[] }> =>

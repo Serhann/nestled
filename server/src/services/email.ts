@@ -270,7 +270,12 @@ export async function sendChannelEmail(args: {
       where: { id: row.id },
       data: { status: 'failed', error: 'No SMTP configured', attempts: { increment: 1 } },
     });
-    return { ok: false, error: 'Email is not configured on this installation' };
+    // Two audiences, two sentences. `outbound_emails.error` above keeps the reason
+    // an operator needs and ops → Health counts it. What is RETURNED becomes
+    // `messages.delivery_error`, which an agent reads in the thread — a customer
+    // being told their reply failed because "email is not configured on this
+    // installation" learns our vocabulary, not what to do next.
+    return { ok: false, error: 'Email replies are temporarily unavailable — this reply was not sent.' };
   }
 
   try {

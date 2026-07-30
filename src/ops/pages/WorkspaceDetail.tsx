@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, dateTime, money, shortDate } from '../api';
 import { useSession } from '../session';
+import { DeleteAction } from './DeleteAction';
 import type {
   AuditEntry,
   ImpersonationSession,
@@ -166,7 +167,7 @@ function OverviewTab({ data }: { data: WorkspaceOverview }) {
         </Card>
       </div>
 
-      <LifecyclePanel workspaceId={ws.id} />
+      <LifecyclePanel workspaceId={ws.id} workspaceName={ws.name} />
     </div>
   );
 }
@@ -184,7 +185,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
  * The levers. Every one takes a reason, and the form will not submit without it —
  * enforced on the server too, so this is a courtesy rather than the control.
  */
-function LifecyclePanel({ workspaceId }: { workspaceId: string }) {
+function LifecyclePanel({ workspaceId, workspaceName }: { workspaceId: string; workspaceName: string }) {
   const session = useSession();
   const queryClient = useQueryClient();
   const [action, setAction] = useState('extend_trial');
@@ -206,7 +207,24 @@ function LifecyclePanel({ workspaceId }: { workspaceId: string }) {
   const needsDays = action === 'extend_trial' || action === 'grant_grace';
 
   return (
-    <Card title="Support actions">
+    <Card
+      title="Support actions"
+      action={
+        /*
+          Deliberately on the same card as the reversible levers rather than in a
+          separate "danger zone": the levers people reach for by mistake are the ones
+          that look harmless, and the dialog behind this button is what does the work of
+          slowing somebody down — it names what goes, asks why, and requires the
+          workspace name typed out.
+        */
+        <DeleteAction
+          type="workspace"
+          id={workspaceId}
+          label={workspaceName}
+          onDone={() => void queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] })}
+        />
+      }
+    >
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Action">
           <select className={`${inputClass} max-w-[14rem]`} value={action} onChange={(e) => setAction(e.target.value)}>
@@ -272,6 +290,7 @@ function PlanTab({ workspaceId }: { workspaceId: string }) {
   const session = useSession();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
+  const [assigning, setAssigning] = useState(false);
 
   const { data, error, isPending } = useQuery({
     queryKey: ['workspace', workspaceId, 'plan'],
@@ -287,11 +306,18 @@ function PlanTab({ workspaceId }: { workspaceId: string }) {
         title={
           <span>
             {data.plan.name}{' '}
-            {data.is_override && <Badge tone="warn">custom — this workspace only</Badge>}
+            {data.is_override && <Badge tone="warn">custom — this workspace only</Badge>}{' '}
+            {/* Not decoration: while this says manual, Stripe webhooks do not touch this
+                workspace's plan or status and the trial/dunning sweeps skip it. Anyone
+                wondering why a past_due customer never advanced needs to see it here. */}
+            {data.billing_mode === 'manual' && <Badge tone="warn">billed by hand — Stripe ignored</Badge>}
           </span>
         }
         action={
           <div className="flex gap-2">
+            <Button onClick={() => setAssigning(true)} disabled={!session?.user.can_write}>
+              Set plan by hand
+            </Button>
             <Button onClick={() => setEditing(true)} disabled={!session?.user.can_write}>
               {data.is_override ? 'Adjust override' : 'Grant exception'}
             </Button>
@@ -354,6 +380,18 @@ function PlanTab({ workspaceId }: { workspaceId: string }) {
         )}
       </Card>
 
+      {assigning && (
+        <AssignPlanDialog
+          workspaceId={workspaceId}
+          current={data}
+          onClose={() => setAssigning(false)}
+          onSaved={() => {
+            setAssigning(false);
+            void queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] });
+          }}
+        />
+      )}
+
       {editing && (
         <OverrideDialog
           workspaceId={workspaceId}
@@ -376,6 +414,127 @@ function PlanTab({ workspaceId }: { workspaceId: string }) {
  * invites someone to submit a plan that silently removes everything they already
  * had. The server clones for the same reason.
  */
+/**
+ * Assigning a plan without Stripe.
+ *
+ * The plan picker is the small half of this dialog. The important control is the billing
+ * mode, because a plan set on a workspace Stripe still owns lasts exactly until the next
+ * `customer.subscription.updated` — and nobody watching the panel would ever connect the
+ * two events. `manual` is what makes it stick: while it is set the webhook mirrors
+ * nothing here, the trial and dunning sweeps skip this workspace, and the customer's own
+ * billing page stops offering checkout.
+ *
+ * Two things it deliberately does NOT do. It does not cancel a live Stripe subscription —
+ * so if one exists, the card is still being charged and the dialog says so, because
+ * "their plan is sorted" and "they have stopped paying twice" are different facts. And
+ * handing a workspace back to Stripe reconciles nothing: the next webhook wins.
+ */
+function AssignPlanDialog({
+  workspaceId,
+  current,
+  onClose,
+  onSaved,
+}: {
+  workspaceId: string;
+  current: WorkspacePlanTab;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [planId, setPlanId] = useState(current.plan.id);
+  // Defaults to manual whichever way it is set today: someone opening this dialog is
+  // almost always taking a customer OFF self-service, and handing one back is the rare
+  // direction that deserves an explicit choice.
+  const [mode, setMode] = useState<'manual' | 'stripe'>('manual');
+  const [status, setStatus] = useState('active');
+  const [reason, setReason] = useState('');
+
+  const save = useMutation({
+    mutationFn: () =>
+      api<{ stripe_subscription: { id: string; status: string } | null }>(
+        `/platform/workspaces/${workspaceId}/plan`,
+        {
+          method: 'POST',
+          body: { plan_id: planId, billing_mode: mode, status, reason: reason.trim() },
+        },
+      ),
+    onSuccess: onSaved,
+  });
+
+  return (
+    <Modal title="Set this plan by hand" onClose={onClose}>
+      {current.subscription && (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          This workspace has a live Stripe subscription. Switching to manual makes us ignore it — it
+          does NOT cancel it, so cancel it in Stripe as well or they keep being charged.
+        </p>
+      )}
+
+      {save.error && (
+        <div className="mt-3">
+          <ErrorBox error={save.error} />
+        </div>
+      )}
+
+      <div className="mt-3 space-y-3">
+        <Field label="Plan">
+          <select className={inputClass} value={planId} onChange={(e) => setPlanId(e.target.value)}>
+            {current.catalog.map((plan) => (
+              <option key={plan.id} value={plan.id}>
+                {plan.name}
+                {plan.is_public ? '' : ' (private)'}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field
+          label="Billing"
+          hint="Manual = we invoice them (transfer, purchase order, partner deal). Stripe = hand it back; the next webhook wins."
+        >
+          <select className={inputClass} value={mode} onChange={(e) => setMode(e.target.value as 'manual' | 'stripe')}>
+            <option value="manual">Manual — we bill them another way</option>
+            <option value="stripe">Stripe — self-service again</option>
+          </select>
+        </Field>
+
+        <Field
+          label="Subscription status"
+          hint="Usually active. A workspace left on trialing is expired by the sweep the moment it goes back to Stripe."
+        >
+          <select className={inputClass} value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="active">active</option>
+            <option value="trialing">trialing</option>
+            <option value="past_due">past_due</option>
+            <option value="unpaid">unpaid</option>
+            <option value="canceled">canceled</option>
+            <option value="suspended">suspended</option>
+          </select>
+        </Field>
+
+        <Field label="Reason" hint="Goes into the customer's audit log.">
+          <input
+            className={inputClass}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Paying yearly by bank transfer — invoice INV-2031."
+          />
+        </Field>
+      </div>
+
+      <div className="mt-4 flex justify-end gap-2">
+        <Button onClick={onClose}>Cancel</Button>
+        <Button
+          variant="primary"
+          disabled={save.isPending || reason.trim().length < 3}
+          onClick={() => save.mutate()}
+        >
+          {save.isPending ? 'Saving…' : 'Apply'}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 function OverrideDialog({
   workspaceId,
   current,
@@ -496,6 +655,7 @@ function UsageTab({ workspaceId }: { workspaceId: string }) {
 // ── Websites ─────────────────────────────────────────────────────────────────
 
 function WebsitesTab({ workspaceId }: { workspaceId: string }) {
+  const queryClient = useQueryClient();
   const { data, error, isPending } = useQuery({
     queryKey: ['workspace', workspaceId, 'websites'],
     queryFn: () => api<{ websites: WorkspaceWebsite[] }>(`/platform/workspaces/${workspaceId}/websites`),
@@ -512,12 +672,24 @@ function WebsitesTab({ workspaceId }: { workspaceId: string }) {
           key={site.id}
           title={site.name}
           action={
-            <span className="flex gap-2">
+            <span className="flex items-center gap-2">
               {site.deleted_at && <Badge tone="fail">deleted</Badge>}
               <Badge tone={site.installed_at ? 'ok' : 'warn'}>
                 {site.installed_at ? 'installed' : 'never installed'}
               </Badge>
               <Badge tone={site.is_active ? 'ok' : 'neutral'}>{site.is_active ? 'active' : 'inactive'}</Badge>
+              {/* Nothing to delete twice: a soft-deleted website is already gone from
+                  the customer's side, and a second event over the same rows would make
+                  the first one's undo list wrong. */}
+              {!site.deleted_at && (
+                <DeleteAction
+                  type="website"
+                  id={site.id}
+                  label={site.name}
+                  compact
+                  onDone={() => void queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] })}
+                />
+              )}
             </span>
           }
         >
@@ -557,6 +729,7 @@ function WebsitesTab({ workspaceId }: { workspaceId: string }) {
 // ── Members ──────────────────────────────────────────────────────────────────
 
 function MembersTab({ workspaceId }: { workspaceId: string }) {
+  const queryClient = useQueryClient();
   const { data, error, isPending } = useQuery({
     queryKey: ['workspace', workspaceId, 'members'],
     queryFn: () =>
@@ -571,7 +744,7 @@ function MembersTab({ workspaceId }: { workspaceId: string }) {
   return (
     <div className="space-y-4">
       <Card title="Members">
-        <Table head={['Name', 'Email', 'Role', 'Status', 'Verified', 'Scope', 'Last seen']}>
+        <Table head={['Name', 'Email', 'Role', 'Status', 'Verified', 'Scope', 'Last seen', '']}>
           {data.members.map((m) => (
             <tr key={m.id}>
               <Td>
@@ -583,9 +756,30 @@ function MembersTab({ workspaceId }: { workspaceId: string }) {
               <Td>
                 <Badge tone={m.status === 'active' ? 'ok' : 'warn'}>{m.status}</Badge>
               </Td>
-              <Td>{m.user.email_verified_at ? 'yes' : <span className="text-amber-300">no</span>}</Td>
+              <Td>
+                {m.user.email_verified_at ? (
+                  'yes'
+                ) : (
+                  <ConfirmEmailButton
+                    userId={m.user.id}
+                    email={m.user.email}
+                    onDone={() => void queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] })}
+                  />
+                )}
+              </Td>
               <Td>{m.all_websites ? 'all websites' : 'restricted'}</Td>
               <Td className="text-gray-400">{dateTime(m.last_seen)}</Td>
+              <Td>
+                {(
+                  <DeleteAction
+                    type="user"
+                    id={m.user.id}
+                    label={m.user.email}
+                    compact
+                    onDone={() => void queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId] })}
+                  />
+                )}
+              </Td>
             </tr>
           ))}
         </Table>
@@ -608,9 +802,83 @@ function MembersTab({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-// ── Conversations ────────────────────────────────────────────────────────────
+/**
+ * Confirming an address by hand.
+ *
+ * The button only exists on an unverified member, and it is the answer to a loop the
+ * customer cannot leave on their own: unverified blocks invitations, leaving it needs a
+ * link in an email, and the email is exactly what is not arriving. The reason is
+ * required because this bypasses an identity check — a recorded bypass is a support
+ * action, an unrecorded one is a hole.
+ */
+function ConfirmEmailButton({
+  userId,
+  email,
+  onDone,
+}: {
+  userId: string;
+  email: string;
+  onDone: () => void;
+}) {
+  const session = useSession();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+
+  const confirm = useMutation({
+    mutationFn: () =>
+      api(`/platform/users/${userId}/confirm-email`, { method: 'POST', body: { reason: reason.trim() } }),
+    onSuccess: () => {
+      setOpen(false);
+      onDone();
+    },
+  });
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)} className="text-xs text-amber-300 underline hover:text-amber-200">
+        no — confirm it
+      </button>
+      {open && (
+        <Modal title="Confirm this address" onClose={() => setOpen(false)}>
+          <p className="text-sm text-gray-200">{email}</p>
+          <p className="mt-2 text-xs text-gray-500">
+            Marks the address confirmed without them clicking a link, and spends any outstanding
+            verification link. Recorded in their workspace&rsquo;s audit log.
+          </p>
+          {confirm.error && (
+            <div className="mt-3">
+              <ErrorBox error={confirm.error} />
+            </div>
+          )}
+          <div className="mt-3">
+            <Field label="Reason" hint="Visible to the customer.">
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                className={inputClass}
+                placeholder="Their mail provider is rejecting our verification mail — ticket 5120."
+              />
+            </Field>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              disabled={confirm.isPending || reason.trim().length < 3 || !session?.user.can_write}
+              onClick={() => confirm.mutate()}
+            >
+              {confirm.isPending ? 'Confirming…' : 'Confirm'}
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+// ── Conversations ───────────────────────────────────────────────
 
 function ConversationsTab({ workspaceId }: { workspaceId: string }) {
+  const queryClient = useQueryClient();
   const [status, setStatus] = useState('');
   const query = status ? `?status=${status}` : '';
 
@@ -644,7 +912,7 @@ function ConversationsTab({ workspaceId }: { workspaceId: string }) {
       {data && data.conversations.length === 0 && <Empty>No conversations.</Empty>}
 
       {data && data.conversations.length > 0 && (
-        <Table head={['Visitor', 'Website', 'Status', 'Messages', 'Rating', 'Started', 'Updated']}>
+        <Table head={['Visitor', 'Website', 'Status', 'Messages', 'Rating', 'Started', 'Updated', '']}>
           {data.conversations.map((c) => (
             <tr key={c.id}>
               <Td>
@@ -661,6 +929,17 @@ function ConversationsTab({ workspaceId }: { workspaceId: string }) {
               <Td>{c.rating_stars ? `${c.rating_stars}/5` : '—'}</Td>
               <Td className="text-gray-400">{shortDate(c.created_at)}</Td>
               <Td className="text-gray-400">{dateTime(c.updated_at)}</Td>
+              <Td>
+                <DeleteAction
+                  type="conversation"
+                  id={c.id}
+                  label={c.visitor_name ?? c.visitor_email ?? 'this conversation'}
+                  compact
+                  onDone={() =>
+                    void queryClient.invalidateQueries({ queryKey: ['workspace', workspaceId, 'conversations'] })
+                  }
+                />
+              </Td>
             </tr>
           ))}
         </Table>

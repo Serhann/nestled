@@ -210,7 +210,7 @@ test('a non-public plan stays out of the catalog', async () => {
 
 // ── Self-hosted: no Stripe ───────────────────────────────────────────────────
 
-test('with no Stripe, checkout and portal 503 and say what to set', async () => {
+test('with no Stripe, checkout and portal 503 without naming our configuration', async () => {
   setStripeForTests(null);
 
   const checkout = await app.inject({
@@ -221,7 +221,10 @@ test('with no Stripe, checkout and portal 503 and say what to set', async () => 
   });
   assert.equal(checkout.statusCode, 503, checkout.body);
   assert.equal(checkout.json().code, 'stripe_unconfigured');
-  assert.match(checkout.json().error, /STRIPE_SECRET_KEY/);
+  // The `code` is what a client branches on. The `error` is read by a customer who
+  // just clicked Subscribe, so it must not name an environment variable they have no
+  // access to — that wording shipped once and is what this asserts against.
+  assert.doesNotMatch(checkout.json().error, /STRIPE_SECRET_KEY|installation|ops panel/i);
 
   const portal = await app.inject({
     method: 'POST',

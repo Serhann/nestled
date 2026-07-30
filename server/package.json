@@ -10,7 +10,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "migrate": "prisma migrate deploy",
+    "migrate": "node dist/db/migrate.js",
     "migrate:dev": "prisma migrate dev",
     "generate": "prisma generate",
     "studio": "prisma studio",

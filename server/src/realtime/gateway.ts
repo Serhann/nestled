@@ -6,7 +6,7 @@ import { unscopedPrisma } from '../db/unscoped.js';
 import { verifyAccessToken, tokenMatchesHash } from '../auth/tokens.js';
 import { verifyWidgetSession } from '../services/widgetSession.js';
 import { verifyContextToken } from '../services/verifiedAttributes.js';
-import { clientIp, lookupGeo } from '../services/geo.js';
+import { lookupGeo } from '../services/geo.js';
 import { recordVisitorIp } from '../services/visitorTracking.js';
 import { resolveIdentity } from '../services/identity.js';
 import { registerAgentSocket, registerVisitorSocket, rememberConversationOwner } from './hub.js';
@@ -110,7 +110,7 @@ export async function registerRealtime(app: FastifyInstance): Promise<void> {
     }
     const { vid: visitorId, wsite: websiteId, ws: workspaceId } = session;
 
-    const ip = clientIp(req.headers, req.ip);
+    const ip = req.clientIp;
     const geo = await lookupGeo(ip);
     let lastContext: string | null = null;
     let lastContextAt = 0;

@@ -46,8 +46,12 @@ services:
     command: ['npm', 'run', 'migrate']
     environment:
       NODE_ENV: production
+      # A password containing "/", "?" or "#" would end this URL's host portion
+      # early; `npm run migrate` percent-encodes the credentials before Prisma
+      # sees them (server/src/db/url.ts).
       DATABASE_URL: postgres://${POSTGRES_USER:-nestled}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nestled_staging}
-      # The env schema demands these even for a migration run.
+      # Not read by a migration run — it does not load the env schema — but set
+      # here so this service's environment matches the app's.
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
 
@@ -76,6 +80,9 @@ services:
       # The widget origin belongs here too — leaving it out makes every widget
       # call fail in the browser with a CORS error that looks like an outage.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://app.staging.nestled.chat,https://ops.staging.nestled.chat,https://widget.staging.nestled.chat,https://staging.nestled.chat}
+      # Behind Cloudflare. See the warning in DEPLOY.md: this asserts the app cannot
+      # be reached except through it.
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
       UPLOAD_DIR: /data/uploads
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
       # Encrypts the secrets stored in platform_settings. Optional and worth

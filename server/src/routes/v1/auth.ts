@@ -119,7 +119,14 @@ export async function authV1Routes(app: FastifyInstance): Promise<void> {
       const plan =
         (await unscopedPrisma.plans.findFirst({ where: { is_trial_default: true } })) ??
         (await unscopedPrisma.plans.findFirst({ where: { is_public: true }, orderBy: { sort_order: 'asc' } }));
-      if (!plan) return reply.code(500).send({ error: 'No plans configured' });
+      if (!plan) {
+        // The cause is ours — no plan row is flagged `is_trial_default` or
+        // `is_public` — and the person reading the response is a stranger trying to
+        // sign up. They get a sentence about what to do; the diagnosis goes to the
+        // log, where the operator who can fix it is looking.
+        req.log.error('signup blocked: no plan is marked is_trial_default or is_public');
+        return reply.code(500).send({ error: 'Signing up is temporarily unavailable. Please try again shortly.' });
+      }
 
       const password_hash = await hashPassword(body.password);
 
@@ -156,7 +163,7 @@ export async function authV1Routes(app: FastifyInstance): Promise<void> {
       // Outside the transaction: a slow mail server must not roll back a signup.
       void queueVerificationEmail(userId, body.name, email);
 
-      const tokens = await issueSession(userId, { ip: req.ip, userAgent: req.headers['user-agent'] });
+      const tokens = await issueSession(userId, { ip: req.clientIp, userAgent: req.headers['user-agent'] });
       await audit(req, { action: 'auth.signup', targetType: 'user', targetId: userId });
       return reply.code(201).send(tokens);
     },
@@ -287,7 +294,7 @@ export async function authV1Routes(app: FastifyInstance): Promise<void> {
         where: { id: user.id },
         data: { last_login_at: new Date() },
       });
-      const tokens = await issueSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
+      const tokens = await issueSession(user.id, { ip: req.clientIp, userAgent: req.headers['user-agent'] });
       return reply.send(tokens);
     },
   );
@@ -339,7 +346,7 @@ export async function authV1Routes(app: FastifyInstance): Promise<void> {
             user_id: row.user_id,
             session_id: row.session_id, // same family
             token_hash: hash,
-            ip: req.ip,
+            ip: req.clientIp,
             user_agent: req.headers['user-agent']?.slice(0, 400) ?? null,
             expires_at: refreshExpiryDate(),
           },
@@ -502,7 +509,7 @@ export async function authV1Routes(app: FastifyInstance): Promise<void> {
 
       // The caller just revoked their own session too; hand back a fresh one so
       // they are not bounced to the login screen for succeeding.
-      const tokens = await issueSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
+      const tokens = await issueSession(user.id, { ip: req.clientIp, userAgent: req.headers['user-agent'] });
       return reply.send(tokens);
     },
   );

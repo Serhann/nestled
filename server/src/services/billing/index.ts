@@ -33,5 +33,6 @@ export {
   setStripeForTests,
   returnUrl,
   STRIPE_UNCONFIGURED,
+  BILLING_HANDLED_MANUALLY,
 } from './stripe.js';
 export type { StripeLike, StripeWebhookEvent } from './stripe.js';

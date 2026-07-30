@@ -14,7 +14,10 @@ npm install
 export DATABASE_URL='postgres://nestled:nestled@localhost:5544/nestled'
 export JWT_ACCESS_SECRET=dev-secret-min-16-chars
 export JWT_REFRESH_SECRET=dev-secret-min-16-chars
-npm run migrate     # apply the schema
+npx prisma migrate deploy     # apply the schema
+# (`npm run migrate` is the same thing through db/migrate.ts, which also
+#  percent-encodes the credentials — it runs from dist/, so it needs a build.
+#  That is the entry point the compose release step uses.)
 npm run seed        # a demo workspace with sample content (optional)
 npm run dev         # tsx watch on :4000
 ```
@@ -35,7 +38,7 @@ export DATABASE_URL='postgres://nestled:nestled@localhost:5546/nestled_test'
 export JWT_ACCESS_SECRET=test-secret-min-16-chars JWT_REFRESH_SECRET=test-secret-min-16-chars
 export NODE_ENV=test
 npx prisma migrate deploy
-npm test        # 213 tests, serial — they share one database
+npm test        # 340 tests, serial — they share one database
 ```
 
 They run with `--test-concurrency=1` on purpose: each file `TRUNCATE`s in its

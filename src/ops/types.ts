@@ -97,6 +97,10 @@ export interface WorkspacePlanTab {
   plan: Plan;
   is_override: boolean;
   subscription_status: string;
+  /** `manual` = we bill them another way, and Stripe is ignored for this workspace. */
+  billing_mode: 'stripe' | 'manual';
+  /** The Stripe mirror, when there is one. Present here since 0011's manual billing. */
+  subscription: { status: string; interval: string; cancel_at_period_end: boolean } | null;
   trial_ends_at: string | null;
   grace_until: string | null;
   invoices: {
@@ -228,4 +232,68 @@ export interface HealthReport {
   retention: HealthCheck & { enabled: boolean; last_run: { at: string; ok: boolean } | null };
   email: HealthCheck & { queued: number; failed: number; smtp_configured: boolean };
   billing: HealthCheck & { unprocessed_stripe_events: number; stripe_configured: boolean };
+}
+
+/**
+ * GET /platform/audit — the cross-workspace read.
+ *
+ * A superset of `AuditEntry` above, which is the per-workspace activity tab's row. Kept
+ * as its own type rather than widening that one: this view carries the workspace, the IP
+ * and the restore handle, and none of those belong on a list already scoped to one
+ * customer.
+ */
+export interface PlatformAuditEntry {
+  id: string;
+  workspace_id: string | null;
+  actor_type: string;
+  actor_email: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  details: Record<string, unknown> | null;
+  ip_address: string | null;
+  created_at: string;
+  impersonation_session_id: string | null;
+  /** Null once the workspace itself has been purged — `details.label` survives it. */
+  workspace: { name: string; slug: string } | null;
+  /**
+   * Present only while this entry's deletion can still be undone. Resolved by the
+   * server from `deletion_events`, so the button never offers to reverse something
+   * that was purged months ago.
+   */
+  restore: { deletion_event_id: string; days_left: number } | null;
+}
+
+export interface AuditPage {
+  entries: PlatformAuditEntry[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+/** GET /platform/deletions */
+export interface DeletionEvent {
+  id: string;
+  actor_type: string;
+  actor_email: string | null;
+  workspace_id: string | null;
+  target_type: 'workspace' | 'website' | 'user' | 'conversation';
+  target_id: string;
+  target_label: string | null;
+  reason: string;
+  targets: { table: string; ids: string[] }[];
+  created_at: string;
+  purge_after: string;
+  restored_at: string | null;
+  purged_at: string | null;
+  restore_days_left: number;
+  workspace: { name: string; slug: string } | null;
+}
+
+/** GET /platform/diagnostics/client-ip */
+export interface ClientIpDiagnostics {
+  resolved: string;
+  configured_header: string | null;
+  headers: Record<string, string | null>;
+  socket: string;
 }

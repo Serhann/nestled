@@ -94,8 +94,13 @@ services:
     command: ['npm', 'run', 'migrate']
     environment:
       NODE_ENV: production
+      # A password containing "/", "?" or "#" would end this URL's host portion
+      # early — the failure that crash-looped a production deploy. `npm run
+      # migrate` percent-encodes the credentials before Prisma sees them
+      # (server/src/db/url.ts).
       DATABASE_URL: postgres://${POSTGRES_USER:-nestled}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nestled}
-      # The env schema demands these even for a migration run.
+      # Not read by a migration run — it does not load the env schema — but set
+      # here so this service's environment matches the app's.
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
 
@@ -122,6 +127,12 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       # Origins allowed to call the API / open sockets (the widget's host sites).
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://app.nestled.chat,https://ops.nestled.chat,https://widget.nestled.chat,https://nestled.chat}
+      # Behind Cloudflare, set this to cf-connecting-ip. Without it every visitor is
+      # attributed to the Cloudflare edge that relayed them: one rate-limit bucket
+      # per region, and a presence board showing Cloudflare's country. Read the
+      # warning in DEPLOY.md before setting it — it asserts that this app cannot be
+      # reached except through Cloudflare.
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
       UPLOAD_DIR: /data/uploads
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
       # Encrypts the secrets stored in platform_settings. Optional and worth

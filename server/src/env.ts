@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { normalizeDatabaseUrl, redactDatabaseUrl } from './db/url.js';
 
 /**
  * The environment.
@@ -67,6 +68,22 @@ const schema = z.object({
       'https://app.nestled.chat,https://ops.nestled.chat,https://widget.nestled.chat,https://nestled.chat,http://localhost:5173',
     ),
 
+  /**
+   * A header to believe about who is calling, ahead of `X-Forwarded-For`.
+   *
+   * Deployment topology: it describes what sits in front of this container. Behind
+   * Cloudflare set `cf-connecting-ip` — Cloudflare OVERWRITES that header, so unlike
+   * XFF a visitor cannot inject a value into it, and without it every visitor is
+   * attributed to whichever Cloudflare edge relayed them: one rate-limit bucket for
+   * a whole region, and a presence board showing Cloudflare's country instead of the
+   * visitor's.
+   *
+   * Setting this asserts that nothing reaches this app except through that CDN. If
+   * the origin is reachable directly, the header is attacker-controlled — see
+   * lib/clientIp.ts. Empty (the default) keeps pure XFF behaviour.
+   */
+  CLIENT_IP_HEADER: z.string().default(''),
+
   // Where uploads land on this machine, and the per-file cap the multipart plugin
   // is configured with at boot.
   UPLOAD_DIR: z.string().default('./uploads'),
@@ -104,7 +121,36 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const env = parsed.data;
+/**
+ * The credentials are percent-encoded here if the operator did not do it.
+ *
+ * A password containing `/`, `?` or `#` — which `openssl rand -base64 48` hands
+ * out more often than not — makes a connection string that no URL parser
+ * accepts, and the error Prisma raises for it (`P1013 … invalid port number`)
+ * points at the port rather than the password. See db/url.ts. A string that
+ * already parses is passed through untouched.
+ */
+const database = ((): { url: string; repaired: boolean } => {
+  try {
+    return normalizeDatabaseUrl(parsed.data.DATABASE_URL);
+  } catch (err) {
+    // Printed the same way as a schema failure: the message is the diagnosis, and
+    // a stack trace pointing into the migration runner is what made this hard to
+    // read the first time it happened.
+    // eslint-disable-next-line no-console
+    console.error(`\nInvalid environment configuration:\n  ${(err as Error).message}\n`);
+    process.exit(1);
+  }
+})();
+if (database.repaired) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[env] DATABASE_URL credentials contained characters that must be percent-encoded; ` +
+      `using the encoded form (${redactDatabaseUrl(database.url)}).`,
+  );
+}
+
+export const env = { ...parsed.data, DATABASE_URL: database.url };
 
 export const allowedOrigins = env.ALLOWED_ORIGINS.split(',')
   .map((o) => o.trim())

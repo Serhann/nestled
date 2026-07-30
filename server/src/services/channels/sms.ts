@@ -106,7 +106,15 @@ export async function sendSms(args: {
 }): Promise<DeliveryResult> {
   const { accountSid, authToken } = settings().sms;
   if (!accountSid || !authToken) {
-    return { ok: false, error: 'SMS is not configured on this installation', retryable: false };
+    // This string becomes `messages.delivery_error` and an agent reads it in the
+    // thread. Our missing Twilio credentials are not something they can act on, so
+    // the sentence they get says what happened to their reply and nothing about our
+    // configuration.
+    return {
+      ok: false,
+      error: 'Text replies are temporarily unavailable — this reply was not sent.',
+      retryable: false,
+    };
   }
 
   const controller = new AbortController();

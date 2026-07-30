@@ -11,6 +11,7 @@ import { Dunning } from './pages/Dunning';
 import { Health } from './pages/Health';
 import { Settings } from './pages/Settings';
 import { Impersonations } from './pages/Impersonations';
+import { Audit } from './pages/Audit';
 import { Account } from './pages/Account';
 
 /**
@@ -53,6 +54,7 @@ const router = createBrowserRouter([
       { path: 'plans', element: <Plans /> },
       { path: 'dunning', element: <Dunning /> },
       { path: 'impersonations', element: <Impersonations /> },
+      { path: 'audit', element: <Audit /> },
       { path: 'health', element: <Health /> },
       { path: 'settings', element: <Settings /> },
       { path: 'account', element: <Account /> },

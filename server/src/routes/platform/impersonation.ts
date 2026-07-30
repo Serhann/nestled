@@ -102,7 +102,7 @@ export async function platformImpersonationRoutes(app: FastifyInstance): Promise
           target_user_id: member.user.id,
           reason: body.reason,
           scope: body.scope,
-          ip: req.ip,
+          ip: req.clientIp,
           expires_at: expiresAt,
         },
         select: { id: true, created_at: true },

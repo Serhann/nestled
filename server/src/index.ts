@@ -9,6 +9,7 @@ import { runMigrations } from './db/migrate.js';
 import { ensureSeedAdmin } from './db/seedAdmin.js';
 import { ensureSeedPlatformUser } from './db/seedPlatform.js';
 import { startBackgroundJobs } from './lib/jobs.js';
+import { registerClientIp } from './lib/clientIp.js';
 import { assertTenantModelsRegistered } from './db/tenant.js';
 import { registerAuthPlugin } from './plugins/auth.js';
 import { registerRealtime } from './realtime/gateway.js';
@@ -39,10 +40,17 @@ export async function buildServer() {
   await loadSettings();
 
   const app = Fastify({
-    // Trust the reverse proxy so req.ip / X-Forwarded-For are correct behind nginx.
+    // Trust the reverse proxy so `req.ip` reflects X-Forwarded-For behind nginx
+    // rather than the container network address. Note `req.ip` is the FALLBACK, not
+    // the answer: what the app attributes a request to is `req.clientIp`
+    // (lib/clientIp.ts), which behind a CDN reads the header that CDN controls.
     trustProxy: true,
     logger: env.NODE_ENV === 'test' ? false : isProd ? true : { transport: undefined },
   });
+
+  // `req.clientIp` — before anything that reads an IP, which is the rate limiter
+  // below, every route, and the WebSocket gateway.
+  registerClientIp(app);
 
   // CORS locked to the configured origins (replaces the wildcard on the old
   // edge functions). Requests from other origins are rejected by the browser.
@@ -69,6 +77,11 @@ export async function buildServer() {
       global: true,
       max: 300,
       timeWindow: '1 minute',
+      // Keyed on the resolved client IP, not the plugin's default `req.ip`. Behind
+      // Cloudflare the default is an edge address shared by everyone it relays, so
+      // one busy site would spend the budget of every visitor in that region — a
+      // rate limiter that turns into an outage for strangers.
+      keyGenerator: (req) => req.clientIp,
     });
   }
 
