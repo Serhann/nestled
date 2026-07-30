@@ -27,6 +27,15 @@ import { backfillStripeCustomers } from './customer.js';
  * Grace is generous on purpose. The widget keeps serving throughout (see
  * entitlement.ts): a customer whose card expired should hear it from us, not from
  * their own visitors finding a dead chat bubble.
+ *
+ * Every query below also requires `billing_mode: 'stripe'`. A workspace an operator
+ * moved to manual billing — bank transfer, an invoice against a purchase order, a
+ * partner deal — has no Stripe subscription for this ladder to reason about, and
+ * running it anyway would expire the trial of a customer who has already paid us and
+ * then dun them for it. See migration 0011 and the plan route in
+ * routes/platform/workspaces.ts. The purge sweep at the bottom is deliberately NOT
+ * gated: `purge_after` is set by an explicit cancellation, and how someone pays has no
+ * bearing on whether a cancellation they asked for should proceed.
  */
 
 const GRACE_DAYS = 7;
@@ -61,6 +70,7 @@ async function expireTrials(now: Date, report: LifecycleReport): Promise<void> {
   const lapsed = await unscopedPrisma.workspaces.findMany({
     where: {
       deleted_at: null,
+      billing_mode: 'stripe',
       subscription_status: 'trialing',
       trial_ends_at: { lt: now },
       subscription: { is: null },
@@ -96,6 +106,7 @@ async function dropExpiredTrialsToFree(now: Date, report: LifecycleReport): Prom
   const done = await unscopedPrisma.workspaces.findMany({
     where: {
       deleted_at: null,
+      billing_mode: 'stripe',
       subscription_status: 'trial_expired',
       grace_until: { lt: now },
       subscription: { is: null },
@@ -122,7 +133,7 @@ async function dropExpiredTrialsToFree(now: Date, report: LifecycleReport): Prom
  */
 async function advanceDunning(now: Date, report: LifecycleReport): Promise<void> {
   const pastDue = await unscopedPrisma.workspaces.findMany({
-    where: { deleted_at: null, subscription_status: 'past_due', grace_until: { lt: now } },
+    where: { deleted_at: null, billing_mode: 'stripe', subscription_status: 'past_due', grace_until: { lt: now } },
     take: BATCH,
     select: { id: true },
   });
@@ -135,7 +146,7 @@ async function advanceDunning(now: Date, report: LifecycleReport): Promise<void>
   }
 
   const unpaid = await unscopedPrisma.workspaces.findMany({
-    where: { deleted_at: null, subscription_status: 'unpaid', grace_until: { lt: now } },
+    where: { deleted_at: null, billing_mode: 'stripe', subscription_status: 'unpaid', grace_until: { lt: now } },
     take: BATCH,
     select: { id: true },
   });

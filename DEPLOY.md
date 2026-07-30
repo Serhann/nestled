@@ -2,7 +2,7 @@
 
 All fourteen phases are merged, plus live translation, the email/SMS channels and
 response-time targets.
-**285 server tests pass, both typechecks are clean, ESLint reports zero errors,
+**340 server tests pass, both typechecks are clean, ESLint reports zero errors,
 and the production images have been built and exercised end to end** — signup, website creation, widget boot, a visitor
 message, an agent reply, the billing state, and both directions of the
 customer/staff auth wall.
@@ -132,6 +132,36 @@ not do that encoding for you.
 | `JWT_ACCESS_SECRET` | ≥16 chars. Cannot move into the database — it is what proves a request may reach the database. Rotating it signs out every agent AND invalidates every live widget session. |
 | `JWT_REFRESH_SECRET` | ≥16 chars. |
 | `ALLOWED_ORIGINS` | The **private** origins: app, ops, widget, marketing. Deployment topology, not a setting. Customer domains do NOT belong here — where a widget may run is per-website, in `websites.allowed_domains`. **Leaving out the widget origin makes every widget call fail in the browser with a CORS error that looks like the API is down.** The public URLs used in outbound email are derived from this list unless you set them in the ops panel. |
+| `CLIENT_IP_HEADER` | Behind Cloudflare, set to `cf-connecting-ip` (the compose files default to it). Read the section below before you do. |
+
+### Behind Cloudflare: `CLIENT_IP_HEADER`
+
+With a CDN in front, the socket peer is one of its edges and so is most of what
+arrives in `X-Forwarded-For`. Leave this unset there and every visitor is
+attributed to whichever edge relayed them: **one rate-limit bucket for a whole
+region**, a presence board showing Cloudflare's country instead of the visitor's,
+and audit rows blaming an address that belongs to nobody.
+
+`cf-connecting-ip` is the right value because Cloudflare **overwrites** it —
+unlike `X-Forwarded-For`, which the visitor's own browser can prepend to.
+
+**Setting it asserts that nothing can reach this app except through that CDN.** If
+the origin is reachable directly — its bare IP with a `Host` header will do — then
+anyone can send `CF-Connecting-IP: 1.2.3.4` and pick which rate-limit bucket to
+spend, which country the board shows, and which address the audit log blames. Lock
+the origin to Cloudflare's ranges, or put it behind a tunnel.
+
+To find out what actually arrives, ask the app instead of reasoning about the proxy
+chain:
+
+```bash
+curl -H "Authorization: Bearer <ops session token>" https://ops.your-host/platform/diagnostics/client-ip
+# → resolved, configured_header, and the raw value of every header that could supply it
+```
+
+One resolver feeds all of it (`server/src/lib/clientIp.ts`, `req.clientIp`): the
+rate limiter's bucket key, geo lookups, the audit log, session records and visitor
+IP history. They cannot disagree with each other, which is the point.
 
 Optional but recommended:
 
@@ -290,10 +320,126 @@ notification on its own is one more thing to miss.
 
 ---
 
+## Deleting things, and the ninety days before it is permanent
+
+**Ops panel → a workspace, or the Audit page.** Four things can be deleted:
+a workspace, a website, a user, and a conversation.
+
+Every deletion is a **soft** delete plus a record of what it touched
+(`deletion_events`, migration 0011). What that record buys is a restore that is
+*exact*:
+
+- Deleting a workspace also removes its websites and conversations — otherwise a
+  closed customer's widget keeps answering visitors.
+- It does **not** remove their users. Login is global, and someone who also works
+  for another customer must not lose that account.
+- Restoring reverses **only the rows that deletion flipped**. A website the customer
+  deleted themselves last month stays deleted. Without that, "restore" would mean
+  "clear every `deleted_at` underneath" and would silently reverse their decisions.
+
+**A reason is mandatory**, as with every lever on that surface. In ninety days that
+sentence may be the only surviving explanation of why a customer's data is gone, and
+whoever typed it may no longer work here.
+
+**Ninety days later, a daily sweep deletes it for real** — rows and uploaded files —
+and stamps the event `purged_at`. The window is one constant,
+`RESTORE_WINDOW_DAYS` in `server/src/lib/deletions.ts`; `purge_after` is stored per
+event, so changing it never moves the deadline of a deletion already waiting. After
+the sweep, restore refuses with `already_purged` instead of reporting a success that
+recovered nothing.
+
+Three things worth knowing before support asks:
+
+- **A restored website comes back switched off.** Bringing a widget back up on a
+  customer's live site is their decision, not a side effect of us undoing our own
+  mistake.
+- **The record outlives its subject.** `deletion_events.workspace_id` is
+  `ON DELETE SET NULL` and the name is snapshotted, so the log still says what was
+  removed after the workspace itself is gone.
+- **Only an explicit ops deletion starts the clock.** A workspace soft-deleted by
+  the billing purge has no event and is never hard-deleted by this sweep.
+
+Deleting is `superadmin`; restoring is open to support as well — undoing is the safe
+direction, and making somebody hunt for a superadmin to recover a customer's inbox
+turns five minutes into an afternoon. The sweep records itself on ops → Health like
+retention does, so "did it actually run?" has an answer.
+
+## Billing a customer who does not pay through Stripe
+
+**Ops panel → workspace → Plan → Set plan by hand.** Bank transfer, an invoice
+against a purchase order, a partner arrangement, a plan granted while a payment
+problem is sorted out.
+
+The plan picker is the small half. The control that matters is **billing mode**,
+because `workspaces.plan_id` is otherwise owned by the Stripe webhook and the
+trial/dunning job: a plan set by hand on a workspace Stripe still owns lasts until
+the next `customer.subscription.updated`, and nobody would connect the two events.
+While `billing_mode` is `manual`:
+
+- the webhook mirrors **no** plan or status onto that workspace (it records the skip
+  rather than doing it silently),
+- the trial and dunning sweeps skip it, so a customer who paid by transfer is not
+  expired and then dunned,
+- and their billing page offers **no checkout** — the API refuses it too, so a tab
+  left open across the switch cannot charge them a second time.
+
+**It does not cancel their Stripe subscription.** If one exists, the card is still
+being charged; the dialog says so. Cancel it in Stripe as well.
+
+Handing a workspace back with mode `stripe` reconciles nothing: the next webhook
+wins, and if there is no subscription the trial and dunning rules resume from
+whatever status the workspace has. Set the status deliberately when you switch —
+a workspace left on `trialing` is expired by the sweep the moment it goes back.
+
+**Confirming an address by hand** lives on the same customer's Members tab. It is
+for the loop a customer cannot leave on their own: unverified blocks invitations,
+leaving it needs a link in an email, and the email is what is not arriving. It
+spends any outstanding verification link and is recorded in the customer's own audit
+log with who did it and why — a recorded bypass of an identity check is a support
+action; an unrecorded one is a hole.
+
+## What customers are allowed to read
+
+Copy on the two end-user surfaces — the customer panel (`src/app`) and the visitor
+widget (`src/widget`) — describes what happened to **them** and what they can do.
+Causes that live on our side belong in logs, in `outbound_emails.error`, and on ops →
+Health.
+
+This is a rule because it was broken. A workspace owner whose address could not be
+confirmed was told: *"this installation has no mail server set up … an operator can
+add SMTP in the ops panel under Settings → Email."* Every word true, none of it
+theirs — our vocabulary, our admin console, and a task they cannot perform, phrased
+so it reads like their mistake. Four more said the same kind of thing, including the
+503 a customer got for clicking Subscribe, which named an environment variable.
+
+`server/src/test/endUserCopy.test.ts` scans both surfaces for that vocabulary and
+fails the build on it. If a phrase it catches is an identifier, rename it; if it is
+copy, rewrite it for the person reading it and put the cause in a log.
+
+---
+
 ## What is NOT verified
 
 Be aware of these before a launch. None is a known defect; each is something
 nobody has watched happen.
+
+**The deletion and manual-billing screens have not been opened in a browser.** The
+server side is covered end to end — 17 tests across `deletions.test.ts` and
+`manualBilling.test.ts`, including that a deleted conversation is invisible through
+the tenant client, that a restore does not resurrect what the customer had already
+deleted, that the sweep hard-deletes past the window and then refuses to restore, and
+that the trial sweep leaves a manually billed workspace alone. What nobody has
+watched: the ops panel's new Audit page, the delete dialogs, the assign-plan dialog
+and the confirm-email button rendering on screen. Given that this exact gap has
+produced real defects twice before in this codebase, treat them as unverified until
+somebody clicks them.
+
+**`CLIENT_IP_HEADER` has not been observed against a real Cloudflare edge.** The
+resolver's fallback chain is unit-tested (`clientIp.test.ts`) and the header lookup is
+the same table read one key earlier, but no request has been traced from a real
+visitor through Cloudflare to a log line. `/platform/diagnostics/client-ip` exists
+precisely so this can be confirmed in one curl rather than argued about — do that
+before trusting the presence board's countries or a rate-limit complaint.
 
 **The panel and the ops console have largely not been clicked through in a
 browser.** Both typecheck, lint, build, and their API contracts are covered by
@@ -463,7 +609,7 @@ export NODE_ENV=test
 # ever change it, clear `platform_settings` first.
 export SETTINGS_KEY=test-settings-key
 npx prisma migrate deploy
-npm test        # 301 tests, serial (they share one database)
+npm test        # 340 tests, serial (they share one database)
 ```
 
 From the repo root: `npm run typecheck && npx eslint . && npm run build`.

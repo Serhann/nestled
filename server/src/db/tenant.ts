@@ -105,6 +105,26 @@ const NULL_WEBSITE_MEANS_ALL = new Set<string>([
   'routing_rules',
 ]);
 
+/**
+ * Models with a `deleted_at`, which the tenant client treats as gone.
+ *
+ * This is the same argument as workspace scoping, one level down. `conversations`
+ * alone is queried from 79 places; asking each of them to remember `deleted_at: null`
+ * means the one that forgets serves a deleted customer's conversation in an inbox, or
+ * counts it in a report, and nothing about the code reads as wrong. Making it a
+ * property of the client means a route CANNOT forget.
+ *
+ * `workspaces` and `users` are absent because they are not tenant models — they have no
+ * `workspace_id` and never pass through this extension. Their `deleted_at` is checked
+ * where identity is resolved: plugins/auth.ts for the workspace, routes/v1/auth.ts and
+ * me.ts for the user. That asymmetry is worth knowing about; it is not an oversight.
+ *
+ * The ops plane reads `unscopedPrisma` directly and is therefore unaffected, which is
+ * exactly right: support has to be able to see what was deleted in order to put it
+ * back. Same for lib/deletions.ts and the sweeps.
+ */
+const SOFT_DELETED = new Set<string>(['websites', 'conversations']);
+
 const READ_OPS = new Set([
   'findFirst',
   'findFirstOrThrow',
@@ -154,6 +174,12 @@ export function tenantDb(scope: TenantScope) {
   const scopeOf = (model: string): { top: Record<string, unknown>; and: unknown[] } => {
     const top: Record<string, unknown> = { workspace_id: scope.workspaceId };
     const and: unknown[] = [];
+    // Into AND rather than the top level, for the same reason the website narrowing
+    // goes there: on findUnique the top level is the caller's unique key, and this must
+    // compose with it instead of sitting beside it. The soft-delete filter applies to
+    // writes as well as reads — updating a row that is gone should miss, and the caller
+    // gets the P2025 → 404 it already handles.
+    if (SOFT_DELETED.has(model)) and.push({ deleted_at: null });
     if (scope.websiteIds && WEBSITE_SCOPED.has(model)) {
       const column = model === 'websites' ? 'id' : 'website_id';
       and.push(
@@ -279,6 +305,10 @@ export function tenantDb(scope: TenantScope) {
  */
 export const INTENTIONALLY_UNSCOPED = new Set([
   'audit_log',
+  // Read and written only on the vendor plane, and deliberately NOT auto-scoped for a
+  // second reason: `workspace_id` is ON DELETE SET NULL so the record of a purge
+  // survives the workspace it purged, and a scoped client could never find those rows.
+  'deletion_events',
   'outbound_emails',
   'impersonation_sessions',
   'subscriptions',

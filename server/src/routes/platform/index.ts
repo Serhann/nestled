@@ -7,6 +7,7 @@ import { platformDunningRoutes } from './dunning.js';
 import { platformHealthRoutes } from './health.js';
 import { platformSettingsRoutes } from './settings.js';
 import { platformImpersonationRoutes } from './impersonation.js';
+import { platformDeletionRoutes } from './deletions.js';
 
 /**
  * The platform (ops) surface, mounted under /platform/*.
@@ -32,4 +33,5 @@ export async function platformRoutes(app: FastifyInstance): Promise<void> {
   await app.register(platformHealthRoutes);
   await app.register(platformSettingsRoutes);
   await app.register(platformImpersonationRoutes);
+  await app.register(platformDeletionRoutes);
 }

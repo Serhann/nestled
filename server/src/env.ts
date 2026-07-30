@@ -68,6 +68,22 @@ const schema = z.object({
       'https://app.nestled.chat,https://ops.nestled.chat,https://widget.nestled.chat,https://nestled.chat,http://localhost:5173',
     ),
 
+  /**
+   * A header to believe about who is calling, ahead of `X-Forwarded-For`.
+   *
+   * Deployment topology: it describes what sits in front of this container. Behind
+   * Cloudflare set `cf-connecting-ip` — Cloudflare OVERWRITES that header, so unlike
+   * XFF a visitor cannot inject a value into it, and without it every visitor is
+   * attributed to whichever Cloudflare edge relayed them: one rate-limit bucket for
+   * a whole region, and a presence board showing Cloudflare's country instead of the
+   * visitor's.
+   *
+   * Setting this asserts that nothing reaches this app except through that CDN. If
+   * the origin is reachable directly, the header is attacker-controlled — see
+   * lib/clientIp.ts. Empty (the default) keeps pure XFF behaviour.
+   */
+  CLIENT_IP_HEADER: z.string().default(''),
+
   // Where uploads land on this machine, and the per-file cap the multipart plugin
   // is configured with at boot.
   UPLOAD_DIR: z.string().default('./uploads'),

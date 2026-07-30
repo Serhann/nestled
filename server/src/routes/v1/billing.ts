@@ -25,6 +25,7 @@ import {
   webhookSecret,
   returnUrl,
   STRIPE_UNCONFIGURED,
+  BILLING_HANDLED_MANUALLY,
   assessDowngrade,
   applyDowngrade,
   manualBlockers,
@@ -93,6 +94,22 @@ function allowanceFor(metric: UsageMetric, plan: PlanLimits): number {
   }
 }
 
+/**
+ * Is this workspace billed by hand rather than through Stripe?
+ *
+ * Read fresh rather than taken from `req.auth.workspace`, which is a 30-second cache:
+ * the window between an operator switching a customer to manual billing and that cache
+ * expiring is exactly when a customer might click Subscribe, and being charged twice is
+ * not a thing to be eventually consistent about.
+ */
+async function isManuallyBilled(workspaceId: string): Promise<boolean> {
+  const ws = await unscopedPrisma.workspaces.findUnique({
+    where: { id: workspaceId },
+    select: { billing_mode: true },
+  });
+  return ws?.billing_mode === 'manual';
+}
+
 export async function billingV1Routes(app: FastifyInstance): Promise<void> {
   // ── The public catalog ────────────────────────────────────────────────────
   /**
@@ -129,6 +146,7 @@ export async function billingV1Routes(app: FastifyInstance): Promise<void> {
           purge_after: true,
           deleted_at: true,
           stripe_customer_id: true,
+          billing_mode: true,
           plan: true,
         },
       });
@@ -219,7 +237,12 @@ export async function billingV1Routes(app: FastifyInstance): Promise<void> {
         ],
         invoices,
         // The client needs to know whether to render a Subscribe button at all.
-        // On a self-hosted install with no Stripe there is nothing behind it.
+        // On an install with no Stripe there is nothing behind it, and on a workspace
+        // we bill by transfer or invoice (`billing_mode: 'manual'`) there must not be:
+        // a Subscribe button in front of a customer who already pays us charges them
+        // twice. The guard is repeated on checkout and portal below, because a page
+        // left open across a plan change would otherwise still be able to POST.
+        billing_mode: ws.billing_mode,
         stripe: { configured: stripeConfigured(), customer: Boolean(ws.stripe_customer_id) },
       });
     },
@@ -236,6 +259,14 @@ export async function billingV1Routes(app: FastifyInstance): Promise<void> {
         reply,
       );
       if (!body) return;
+
+      // Refuse before touching Stripe: this workspace is billed another way, and a
+      // checkout here bills a customer who is already paying us. Repeated on all three
+      // self-service endpoints because a page left open across the switch can still
+      // POST to any of them.
+      if (await isManuallyBilled(req.auth!.workspace!.id)) {
+        return reply.code(409).send(BILLING_HANDLED_MANUALLY);
+      }
 
       const stripe = stripeClient();
       if (!stripe) return reply.code(503).send(STRIPE_UNCONFIGURED);
@@ -312,6 +343,14 @@ export async function billingV1Routes(app: FastifyInstance): Promise<void> {
     '/api/v1/w/:workspaceId/billing/portal',
     { preHandler: [requireWorkspace, can('billing:manage')] },
     async (req, reply) => {
+      // Refuse before touching Stripe: this workspace is billed another way, and a
+      // checkout here bills a customer who is already paying us. Repeated on all three
+      // self-service endpoints because a page left open across the switch can still
+      // POST to any of them.
+      if (await isManuallyBilled(req.auth!.workspace!.id)) {
+        return reply.code(409).send(BILLING_HANDLED_MANUALLY);
+      }
+
       const stripe = stripeClient();
       if (!stripe) return reply.code(503).send(STRIPE_UNCONFIGURED);
 
@@ -353,6 +392,14 @@ export async function billingV1Routes(app: FastifyInstance): Promise<void> {
         reply,
       );
       if (!body) return;
+
+      // Refuse before touching Stripe: this workspace is billed another way, and a
+      // checkout here bills a customer who is already paying us. Repeated on all three
+      // self-service endpoints because a page left open across the switch can still
+      // POST to any of them.
+      if (await isManuallyBilled(req.auth!.workspace!.id)) {
+        return reply.code(409).send(BILLING_HANDLED_MANUALLY);
+      }
 
       const workspaceId = req.auth!.workspace!.id;
       const target = await planByCode(body.plan_code);

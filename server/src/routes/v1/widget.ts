@@ -11,7 +11,7 @@ import { requireVisitor } from '../../plugins/auth.js';
 import { parseBody } from '../../lib/validate.js';
 import { insertMessage } from '../../lib/messages.js';
 import { bumpUsage, checkUsageLimit } from '../../lib/usage.js';
-import { clientIp, lookupGeo } from '../../services/geo.js';
+import { lookupGeo } from '../../services/geo.js';
 import { recordVisitorIp } from '../../services/visitorTracking.js';
 import { resolveIdentity } from '../../services/identity.js';
 import { verifyContextToken } from '../../services/verifiedAttributes.js';
@@ -220,14 +220,20 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
           },
         }),
       ]);
-      if (!settings) return reply.code(500).send({ error: 'Website is not fully configured' });
+      if (!settings) {
+        // A website with no settings row is our data problem. This response is read
+        // by the widget on a stranger's website, so it says nothing about which
+        // record is missing.
+        req.log.error({ websiteId: site.websiteId }, 'widget boot: website_settings row is missing');
+        return reply.code(500).send({ error: 'Chat is unavailable right now.' });
+      }
 
       const online = anyAgentOnline(site.workspaceId, site.websiteId);
       const withinHours = isWithinBusinessHours(hours);
       // The country a trigger's `country_restriction` is matched against. Resolved
       // here rather than in the widget because the widget has no honest way to know
       // it, and a client-declared country is not a restriction.
-      const country = (await lookupGeo(clientIp(req.headers, req.ip)))?.country ?? null;
+      const country = (await lookupGeo(req.clientIp))?.country ?? null;
 
       return reply.send({
         enabled: true,
@@ -420,7 +426,7 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
       }
 
       const { token, hash } = generateVisitorToken();
-      const ip = clientIp(req.headers, req.ip);
+      const ip = req.clientIp;
       const geo = await lookupGeo(ip);
 
       // A valid signature makes the host's data TRUSTED, so verified name/email win
@@ -819,7 +825,7 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
           visitor_email: body.email,
           visitor_token_hash: hash,
           source: 'widget',
-          metadata: { offline: true, ip_address: clientIp(req.headers, req.ip) } as object,
+          metadata: { offline: true, ip_address: req.clientIp } as object,
         },
         select: { id: true },
       });

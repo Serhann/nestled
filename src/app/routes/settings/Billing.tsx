@@ -53,14 +53,24 @@ export default function Billing() {
   const state = billing.data;
   const currentCode = state?.plan.code ?? workspace.plan.code;
   const manageDisabled = !can('billing:manage');
+  /**
+   * Whether this customer can change their own plan.
+   *
+   * False when there is no payment provider connected, and false when we bill them
+   * directly — those are different reasons for the same UI, and the second one matters
+   * more: a Subscribe button in front of somebody paying us by bank transfer charges
+   * them twice. The API refuses both cases too (409 `billing_manual`); this is what
+   * stops the button existing in the first place.
+   */
+  const selfServe = Boolean(state?.stripe.configured) && state?.billing_mode !== 'manual';
 
   return (
     <SettingsLayout
       title="Plan & billing"
       subtitle={state?.subscription ? `${state.plan.name}, billed ${state.subscription.interval}ly` : workspace.plan.name}
       action={
-        state?.stripe_configured &&
-        state.subscription &&
+        selfServe &&
+        state?.subscription &&
         !manageDisabled && (
           <Button variant="ghost" busy={portal.isPending} onClick={() => portal.mutate()}>
             <ExternalLink className="w-4 h-4" aria-hidden />
@@ -72,11 +82,18 @@ export default function Billing() {
       {billing.isLoading && <Spinner />}
       {billing.error && <ErrorState error={billing.error} onRetry={() => void billing.refetch()} />}
 
-      {state && !state.stripe_configured && (
-        <Section title="Billing is not configured">
+      {state && !selfServe && (
+        /*
+          No card on file because there is no payment provider connected — which from
+          the customer's side is simply "we bill you directly". The earlier wording
+          ("this deployment has no payment provider connected, so plans and limits are
+          set directly in the database") described our architecture to someone who
+          wanted to know whether their plan was fine.
+        */
+        <Section title="We look after your plan">
           <p className="text-sm text-gray-600">
-            This deployment has no payment provider connected, so plans and limits are set directly
-            in the database. Everything else works normally.
+            Your plan and limits are managed for you, so there’s no card to set up here. Get
+            in touch if you want to change plans or need an invoice.
           </p>
         </Section>
       )}
@@ -164,7 +181,7 @@ export default function Billing() {
                   {plan.features.live_view && <Line>Live view</Line>}
                   {plan.features.remove_branding && <Line>No Nestled branding</Line>}
                 </ul>
-                {!current && !manageDisabled && (
+                {!current && !manageDisabled && selfServe && (
                   <Button
                     className="w-full mt-4"
                     variant={price === 0 ? 'ghost' : 'primary'}

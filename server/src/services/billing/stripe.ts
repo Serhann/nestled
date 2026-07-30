@@ -118,13 +118,28 @@ export function setStripeForTests(
 }
 
 /**
- * The 503 body for the two endpoints that cannot work without Stripe. Phrased for
- * the operator, because on a self-hosted install the operator is the reader.
+ * The 503 body for the two endpoints that cannot work without Stripe.
+ *
+ * This used to be phrased for the operator — "set STRIPE_SECRET_KEY to enable
+ * checkout" — on the theory that a self-hosted operator is the reader. They are not:
+ * the reader is a customer who just clicked Subscribe, and what they got back named an
+ * environment variable they have no access to. The `code` is what a client branches on
+ * and the log line is what an operator needs; the `error` string belongs to whoever is
+ * looking at the screen.
  */
 export const STRIPE_UNCONFIGURED = {
-  error:
-    'Billing is not configured on this installation. Set STRIPE_SECRET_KEY to enable checkout and the billing portal; plans and limits work without it.',
+  error: 'Card payments aren’t available at the moment. Get in touch and we’ll sort your plan out directly.',
   code: 'stripe_unconfigured',
+} as const;
+
+/**
+ * The same, for a workspace we bill by transfer, invoice or a partner arrangement
+ * (`billing_mode: 'manual'`). Not an error they should try to work around: their plan
+ * is already handled, and self-service checkout would charge them a second time.
+ */
+export const BILLING_HANDLED_MANUALLY = {
+  error: 'Your plan is managed for you, so there’s nothing to pay here. Get in touch to change it.',
+  code: 'billing_manual',
 } as const;
 
 /** Where Checkout and the portal send the customer back to. */

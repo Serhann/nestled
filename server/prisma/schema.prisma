@@ -58,6 +58,14 @@ model workspaces {
   /// Set on cancel; the purge job reads it. Webhooks never delete data.
   purge_after         DateTime? @db.Timestamptz(6)
   deleted_at          DateTime? @db.Timestamptz(6)
+  /// Who owns `plan_id` for this workspace. CHECK (stripe|manual)
+  ///
+  /// `manual` is the state for a customer we bill some other way — transfer, invoice,
+  /// a partner deal, a plan granted while a payment problem is sorted out. While it is
+  /// set, the Stripe webhook does not mirror plan or status here, the trial and dunning
+  /// sweeps skip the workspace, and its billing page offers no checkout. See migration
+  /// 0011: without a marker, a plan set by hand is reverted by the next webhook.
+  billing_mode        String    @default("stripe")
   created_at          DateTime  @default(now()) @db.Timestamptz(6)
   updated_at          DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 
@@ -91,6 +99,7 @@ model workspaces {
   ai_usage               ai_usage[]
   usage_counters         usage_counters[]
   audit_log              audit_log[]
+  deletion_events        deletion_events[]
   outbound_emails        outbound_emails[]
   subscription           subscriptions?
   invoices               invoices[]
@@ -129,9 +138,9 @@ model users {
   tokens         user_tokens[]
   recovery_codes user_recovery_codes[]
   push           push_subscriptions[]
-  sent_invites   invites[]            @relation("invite_author")
+  sent_invites   invites[]             @relation("invite_author")
   notes          conversation_notes[]
-  avatar_file    stored_files?        @relation("user_avatar", fields: [avatar_file_id], references: [id], onDelete: SetNull)
+  avatar_file    stored_files?         @relation("user_avatar", fields: [avatar_file_id], references: [id], onDelete: SetNull)
 
   @@index([deleted_at])
 }
@@ -305,19 +314,19 @@ model websites {
 
   workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
 
-  settings         website_settings?
-  hours            website_business_hours?
-  domains          website_domains[]
-  conversations    conversations[]
-  member_access    member_website_access[]
-  knowledge_base   knowledge_base[]
-  canned_responses canned_responses[]
-  starters         starters[]
-  triggers         triggers[]
-  bot_flows        bot_flows[]
-  routing_rules    routing_rules[]
-  visitor_links    visitor_links[]
-  ai_usage         ai_usage[]
+  settings          website_settings?
+  hours             website_business_hours?
+  domains           website_domains[]
+  conversations     conversations[]
+  member_access     member_website_access[]
+  knowledge_base    knowledge_base[]
+  canned_responses  canned_responses[]
+  starters          starters[]
+  triggers          triggers[]
+  bot_flows         bot_flows[]
+  routing_rules     routing_rules[]
+  visitor_links     visitor_links[]
+  ai_usage          ai_usage[]
   channel_endpoints channel_endpoints[]
   response_targets  website_response_targets?
 
@@ -335,38 +344,38 @@ model website_settings {
   workspace_id String @db.Uuid
 
   // ── Theme. Explicit columns: few, validated, rendered into CSS variables. ──
-  primary_color    String  @default("#4f46e5")
+  primary_color      String  @default("#4f46e5")
   /// NULL = use `primary_color`. A colour that reads on white can be unreadable on a
   /// dark surface, and the contrast warning is computed against one background.
   primary_color_dark String?
-  color_mode       String  @default("light") // CHECK (light|dark|auto)
-  radius_px        Int     @default(16)
-  font_family      String  @default("system")
-  position         String  @default("right") // CHECK (left|right)
-  offset_x         Int     @default(20)
-  offset_y         Int     @default(20)
-  launcher_style   String  @default("bubble") // CHECK (bubble|pill|custom_icon)
+  color_mode         String  @default("light") // CHECK (light|dark|auto)
+  radius_px          Int     @default(16)
+  font_family        String  @default("system")
+  position           String  @default("right") // CHECK (left|right)
+  offset_x           Int     @default(20)
+  offset_y           Int     @default(20)
+  launcher_style     String  @default("bubble") // CHECK (bubble|pill|custom_icon)
   /// 40–96. A number rather than an enum so a new size needs no migration.
-  launcher_size    Int     @default(60)
+  launcher_size      Int     @default(60)
   /// CHECK (chat|question|sparkle|envelope|wave) — a curated set, not a URL.
-  launcher_icon    String  @default("chat")
+  launcher_icon      String  @default("chat")
   /// CHECK (solid|soft|minimal). 'solid' is a full-bleed block of the brand colour,
   /// which on a saturated brand is the first thing anyone criticises.
-  header_style     String  @default("solid")
+  header_style       String  @default("solid")
   /// A picture the customer already hosts. Not an upload — see migration 0008.
-  brand_avatar_url String?
+  brand_avatar_url   String?
   /// CHECK (brand|neutral). Whose colour the visitor's own message bubbles use.
-  bubble_style     String  @default("brand")
+  bubble_style       String  @default("brand")
   /// 320–520. Reaches embed.js too: the host page owns the iframe.
-  panel_width      Int     @default(384)
+  panel_width        Int     @default(384)
   /// Off by default. Effective and irritating in equal measure — the customer decides.
-  launcher_pulse   Boolean @default(false)
-  launcher_file_id String? @db.Uuid
-  avatar_file_id   String? @db.Uuid
-  logo_file_id     String? @db.Uuid
+  launcher_pulse     Boolean @default(false)
+  launcher_file_id   String? @db.Uuid
+  avatar_file_id     String? @db.Uuid
+  logo_file_id       String? @db.Uuid
   /// Plan-gated. The resolver may force this true regardless of what is stored,
   /// so a client cannot flip it.
-  show_branding    Boolean @default(true)
+  show_branding      Boolean @default(true)
 
   // ── Behaviour ──
   ai_enabled               Boolean @default(true)
@@ -587,15 +596,19 @@ model conversations {
   escalated_at         DateTime? @db.Timestamptz(6)
   /// Deliberately marked unread by an agent, so it cannot quietly fall off the list.
   unread_at            DateTime? @db.Timestamptz(6)
-  rating_stars      Int?
-  rating_tags       String[]  @default([])
-  rating_comment    String?
+  rating_stars         Int?
+  rating_tags          String[]  @default([])
+  rating_comment       String?
 
   /// UNVERIFIED client hints: ip, geo, page, utm, user agent, prechat answers.
   metadata          Json @default(dbgenerated("'{}'::jsonb"))
   /// HMAC-VERIFIED attributes only. The split is the whole point: the AI prompt
   /// and the agent's "verified" card read this, never `metadata`.
   custom_attributes Json @default(dbgenerated("'{}'::jsonb"))
+
+  /// Soft-deleted from the ops panel; see migration 0011 and lib/deletions.ts. Every
+  /// tenant read filters this. The ops panel and the sweeps deliberately do not.
+  deleted_at DateTime? @db.Timestamptz(6)
 
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @db.Timestamptz(6)
@@ -623,6 +636,11 @@ model conversations {
   @@index([workspace_id, assigned_member_id, status])
   @@index([workspace_id, visitor_id])
   @@index([person_id])
+  /// Both of these are PARTIAL in the migration — live rows for the inbox, deleted
+  /// rows for the sweep. Prisma cannot express a WHERE clause on an index, so what it
+  /// records here is the column list only; migration 0011 is the definition.
+  @@index([workspace_id, updated_at(sort: Desc)])
+  @@index([deleted_at])
 }
 
 model messages {
@@ -1238,6 +1256,54 @@ model audit_log {
   @@index([created_at(sort: Desc)])
 }
 
+/// One act of deletion from the ops panel, and everything needed to undo it.
+///
+/// `audit_log` records that a deletion happened; this records what it DID. The
+/// difference is `targets`: the exact rows whose `deleted_at` this act set, so a
+/// restore reverses those and not the ones somebody deleted last month. See migration
+/// 0011 for why that distinction is the whole feature, and lib/deletions.ts for the
+/// registry of what each target type takes with it.
+///
+/// Rows here outlive what they describe — `workspace_id` is SET NULL, and
+/// `target_label` is a snapshot — because the record of a purge must survive the purge.
+model deletion_events {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// CHECK (platform_user|user|system). Denormalised so the log still reads after the
+  /// staff account that acted has been removed.
+  actor_type   String
+  actor_id     String? @db.Uuid
+  actor_email  String?
+  workspace_id String? @db.Uuid
+  /// CHECK (workspace|website|user|conversation)
+  target_type  String
+  target_id    String  @db.Uuid
+  /// Name, slug or email as it read when deleted.
+  target_label String?
+  /// Mandatory, like every lever on the platform surface.
+  reason       String
+  /// [{ "table": "conversations", "ids": ["…"] }, …] — the rows this act flipped.
+  targets      Json    @default(dbgenerated("'[]'::jsonb"))
+
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  /// When the reversal window closes. STORED, not computed: shortening the window must
+  /// never retroactively make a pending deletion permanent.
+  purge_after DateTime @db.Timestamptz(6)
+
+  restored_at DateTime? @db.Timestamptz(6)
+  restored_by String?   @db.Uuid
+  /// Set by the sweep. The schema forbids this and `restored_at` both being present.
+  purged_at   DateTime? @db.Timestamptz(6)
+
+  workspace workspaces? @relation(fields: [workspace_id], references: [id], onDelete: SetNull)
+
+  @@index([created_at(sort: Desc)])
+  @@index([workspace_id, created_at(sort: Desc)])
+  /// Partial in the migration: pending rows only, which is all the sweep and the
+  /// duplicate-delete check ever read.
+  @@index([purge_after])
+  @@index([target_type, target_id])
+}
+
 /// Doubles as the retry queue and the email-quota source, so "did we send it?" and
 /// "how many did they send?" are the same table.
 model outbound_emails {
@@ -1331,7 +1397,7 @@ model platform_settings {
   /// serve our own support chat on the marketing site and inside the customer
   /// panel. Empty means no support chat anywhere — which is the right default for
   /// a self-hoster, who is not our customer and should not get our widget.
-  support_website_key        String?
+  support_website_key String?
 
   // ── Operations ──
   discord_webhook_url        String?

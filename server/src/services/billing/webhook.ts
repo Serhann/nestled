@@ -173,9 +173,32 @@ function mirrorStatus(stripeStatus: string | undefined): string | null {
   }
 }
 
-/** Update the workspace billing mirror and drop the auth plugin's 30s cache. */
+/**
+ * Update the workspace billing mirror and drop the auth plugin's 30s cache.
+ *
+ * A workspace on `billing_mode = 'manual'` is skipped, and that is the entire
+ * mechanism protecting a plan set by hand. Someone paying by bank transfer may still
+ * have an old Stripe subscription attached; without this check the next
+ * `customer.subscription.updated` for it would quietly overwrite the plan an operator
+ * assigned, and nobody would connect the two events. Skipping is recorded rather than
+ * silent — a webhook that changed nothing must be findable later.
+ *
+ * The subscription and invoice ROWS are still written by their handlers. Only this
+ * mirror is gated: keeping the Stripe record accurate is how a workspace can be handed
+ * back to Stripe without reconciling anything by hand.
+ */
 async function mirror(workspaceId: string, data: Record<string, unknown>): Promise<void> {
   if (Object.keys(data).length === 0) return;
+
+  const ws = await unscopedPrisma.workspaces.findUnique({
+    where: { id: workspaceId },
+    select: { billing_mode: true },
+  });
+  if (ws?.billing_mode === 'manual') {
+    await systemAudit(workspaceId, 'billing.mirror_skipped_manual', { would_have_set: data });
+    return;
+  }
+
   await unscopedPrisma.workspaces.update({ where: { id: workspaceId }, data });
   invalidateWorkspaceCache(workspaceId);
 }

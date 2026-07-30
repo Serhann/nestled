@@ -183,13 +183,8 @@ export async function lookupGeo(ip: string): Promise<GeoLocation | null> {
   return result;
 }
 
-/** Extract the client IP, honoring the first hop in X-Forwarded-For. */
-export function clientIp(headers: Record<string, string | string[] | undefined>, fallback: string): string {
-  const fwd = headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.length > 0) {
-    return fwd.split(',')[0]!.trim();
-  }
-  const real = headers['x-real-ip'];
-  if (typeof real === 'string' && real.length > 0) return real;
-  return fallback;
-}
+// Extracting the client IP used to live here, reading X-Forwarded-For only. It
+// moved to lib/clientIp.ts as `req.clientIp` when this install went behind
+// Cloudflare, where XFF is a chain of edge addresses and the visitor is in a
+// header of its own. Geo looks up an address; deciding whose address it is turned
+// out to be a separate concern with its own trust rules.

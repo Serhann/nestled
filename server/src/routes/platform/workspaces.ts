@@ -172,6 +172,7 @@ export async function platformWorkspaceRoutes(app: FastifyInstance): Promise<voi
         subscription_status: true,
         trial_ends_at: true,
         grace_until: true,
+        billing_mode: true,
         subscription: true,
         invoices: {
           orderBy: { created_at: 'desc' },
@@ -199,6 +200,9 @@ export async function platformWorkspaceRoutes(app: FastifyInstance): Promise<voi
       is_override: !ws.plan.is_public,
       subscription: ws.subscription,
       subscription_status: ws.subscription_status,
+      // Who owns `plan_id` here. The panel badges it, and the assign-plan dialog needs
+      // to know whether it is about to hand the workspace back to Stripe.
+      billing_mode: ws.billing_mode,
       trial_ends_at: ws.trial_ends_at,
       grace_until: ws.grace_until,
       invoices: ws.invoices,
@@ -537,6 +541,180 @@ export async function platformWorkspaceRoutes(app: FastifyInstance): Promise<voi
         details: { reason: body.reason, ...data },
       });
       return reply.send({ workspace: updated });
+    },
+  );
+
+  /**
+   * Set a workspace's plan by hand.
+   *
+   * `workspaces.plan_id` is documented as written only by the Stripe webhook and the
+   * trial/dunning job, and this is the third writer — declared, not smuggled in. It
+   * exists because not every customer pays through Stripe: bank transfer, an invoice
+   * against a purchase order, a partner arrangement, a plan granted while a payment
+   * problem is sorted out.
+   *
+   * The important part is `billing_mode`, not the plan id. Setting a plan on a
+   * workspace Stripe still owns lasts until the next `customer.subscription.updated`
+   * silently reverts it, and the nightly trial sweep would expire a customer who has
+   * paid us by transfer. So switching to manual is a STATE: while it holds, the webhook
+   * mirrors nothing here, both sweeps skip the workspace, and the customer's billing
+   * page stops offering checkout — a customer paying by transfer must never be shown a
+   * Subscribe button that would charge them twice.
+   *
+   * Handing a workspace back to Stripe is the same call with mode `stripe`. It does not
+   * reconcile anything: if they have a live subscription, the next webhook mirrors it,
+   * and if they do not, the trial and dunning rules apply again from wherever their
+   * status happens to be. Both are stated in the response so the panel can say so.
+   */
+  app.post(
+    '/platform/workspaces/:id/plan',
+    { preHandler: platformWrite('billing') },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = parseBody(
+        z.object({
+          plan_id: z.string().uuid(),
+          /** `manual` = we bill them another way. `stripe` = hand billing back. */
+          billing_mode: z.enum(['manual', 'stripe']).default('manual'),
+          /**
+           * Optional, and usually wanted: a workspace still marked `trialing` on a plan
+           * they are paying for by transfer would be expired by the sweep the moment it
+           * is handed back to Stripe, and reads as a trial in every list until then.
+           */
+          status: z
+            .enum(['trialing', 'active', 'past_due', 'unpaid', 'canceled', 'trial_expired', 'suspended'])
+            .optional(),
+          reason: z.string().min(3).max(500),
+        }),
+        req.body,
+        reply,
+      );
+      if (!body) return;
+
+      const [ws, plan] = await Promise.all([
+        unscopedPrisma.workspaces.findUnique({
+          where: { id },
+          select: {
+            id: true,
+            plan_id: true,
+            billing_mode: true,
+            subscription_status: true,
+            subscription: { select: { stripe_subscription_id: true, status: true } },
+          },
+        }),
+        unscopedPrisma.plans.findUnique({ where: { id: body.plan_id }, select: { id: true, name: true } }),
+      ]);
+      if (!ws) return reply.code(404).send({ error: 'Not found' });
+      if (!plan) return reply.code(400).send({ error: 'No such plan' });
+
+      const updated = await unscopedPrisma.workspaces.update({
+        where: { id },
+        data: {
+          plan_id: plan.id,
+          billing_mode: body.billing_mode,
+          ...(body.status ? { subscription_status: body.status } : {}),
+        },
+        select: {
+          id: true,
+          plan: { select: { id: true, name: true } },
+          billing_mode: true,
+          subscription_status: true,
+        },
+      });
+      invalidateWorkspaceCache(id);
+
+      await audit(req, {
+        action: 'platform.workspace_plan_set',
+        workspaceId: id,
+        targetType: 'workspace',
+        targetId: id,
+        details: {
+          reason: body.reason,
+          from: { plan_id: ws.plan_id, billing_mode: ws.billing_mode, status: ws.subscription_status },
+          to: { plan_id: plan.id, billing_mode: body.billing_mode, status: updated.subscription_status },
+        },
+      });
+
+      return reply.send({
+        workspace: updated,
+        /**
+         * The one thing the panel must be able to warn about: a live Stripe
+         * subscription still exists underneath. On `manual` it is now being ignored
+         * rather than cancelled — nobody has stopped charging their card — and handing
+         * the workspace back to Stripe means the next webhook overwrites this plan.
+         */
+        stripe_subscription: ws.subscription
+          ? { id: ws.subscription.stripe_subscription_id, status: ws.subscription.status }
+          : null,
+      });
+    },
+  );
+
+  /**
+   * Confirm a member's email address by hand.
+   *
+   * Unverified blocks invitations, and the usual way out of that is a link in an email.
+   * When mail cannot be delivered — no SMTP yet, a bouncing corporate filter, an
+   * address that was mistyped and then corrected in support — the customer is stuck in
+   * a loop with no exit, and it is not a loop they can leave on their own.
+   *
+   * So: staff can stamp it, and the stamp is recorded in the customer's own audit log
+   * with who did it and why. That record is the difference between a support action and
+   * a quiet bypass of an identity check.
+   */
+  app.post(
+    '/platform/users/:userId/confirm-email',
+    { preHandler: platformWrite('support') },
+    async (req, reply) => {
+      const { userId } = req.params as { userId: string };
+      const body = parseBody(z.object({ reason: z.string().min(3).max(500) }), req.body, reply);
+      if (!body) return;
+
+      const user = await unscopedPrisma.users.findUnique({
+        where: { id: userId },
+        select: { id: true, email: true, email_verified_at: true, deleted_at: true },
+      });
+      if (!user || user.deleted_at) return reply.code(404).send({ error: 'Not found' });
+      if (user.email_verified_at) {
+        return reply.code(409).send({ error: 'Already confirmed', code: 'already_confirmed' });
+      }
+
+      const now = new Date();
+      await unscopedPrisma.$transaction(async (tx) => {
+        await tx.users.update({ where: { id: user.id }, data: { email_verified_at: now } });
+        // Any outstanding verification link is spent. Leaving one live means a token
+        // sitting in a mailbox that still confirms an address somebody may have changed
+        // in the meantime.
+        await tx.user_tokens.deleteMany({ where: { user_id: user.id, kind: 'email_verify' } });
+      });
+
+      // The workspaces this affects, so the action lands in the log of each customer
+      // whose member it was — they are the ones entitled to know their teammate's
+      // address was confirmed by us rather than by them.
+      const memberships = await unscopedPrisma.workspace_members.findMany({
+        where: { user_id: user.id },
+        select: { workspace_id: true },
+      });
+      for (const membership of memberships) {
+        await audit(req, {
+          action: 'platform.user_email_confirmed',
+          workspaceId: membership.workspace_id,
+          targetType: 'user',
+          targetId: user.id,
+          details: { reason: body.reason, email: user.email },
+        });
+      }
+      if (memberships.length === 0) {
+        await audit(req, {
+          action: 'platform.user_email_confirmed',
+          workspaceId: null,
+          targetType: 'user',
+          targetId: user.id,
+          details: { reason: body.reason, email: user.email },
+        });
+      }
+
+      return reply.send({ user: { id: user.id, email: user.email, email_verified_at: now } });
     },
   );
 }

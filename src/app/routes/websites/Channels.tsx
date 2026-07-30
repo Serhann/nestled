@@ -154,8 +154,16 @@ export default function Channels() {
                 </p>
               ) : (
                 <p className="mt-1.5 text-gray-600 leading-relaxed">
-                  Inbound email has not been set up on this installation yet. Ask your
-                  operator to configure a receiving domain, then forward a mailbox to it.
+                  {/*
+                    Receiving mail needs a domain on our side that is not ready yet.
+                    That is ours to arrange, so this says so and points at us — the
+                    earlier wording told the customer to go and ask an operator to
+                    configure a receiving domain, which is our vocabulary and not a
+                    thing they can do.
+                  */}
+                  Email isn’t ready for your account yet — we still have to set up the
+                  receiving side. Contact us and we’ll turn it on; website chat and SMS
+                  are unaffected.
                 </p>
               )}
             </div>
