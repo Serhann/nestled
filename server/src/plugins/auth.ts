@@ -4,8 +4,10 @@ import { unscopedPrisma } from '../db/unscoped.js';
 import { tenantDb, TenantScopeError, type TenantDb, type TenantScope } from '../db/tenant.js';
 import {
   capabilitiesFor,
+  platformCapabilitiesFor,
   platformRoleAllows,
   type Capability,
+  type PlatformCapability,
   type PlatformRole,
   type WorkspaceRole,
 } from '../permissions.js';
@@ -54,6 +56,12 @@ export interface PlatformContext {
   email: string;
   role: PlatformRole;
   sessionId: string;
+  /**
+   * What this account may actually do: its role's bundle, plus its granted scopes,
+   * minus its denied ones. Resolved once per request here so no route has to remember
+   * that the role is only a default — see PLATFORM_CAPABILITIES in permissions.ts.
+   */
+  capabilities: ReadonlySet<PlatformCapability>;
 }
 
 declare module 'fastify' {
@@ -391,7 +399,16 @@ export function requirePlatform(...allowed: PlatformRole[]) {
         id: true,
         revoked_at: true,
         expires_at: true,
-        platform_user: { select: { id: true, email: true, role: true, disabled_at: true } },
+        platform_user: {
+          select: {
+            id: true,
+            email: true,
+            role: true,
+            granted_scopes: true,
+            denied_scopes: true,
+            disabled_at: true,
+          },
+        },
       },
     });
     if (
@@ -413,6 +430,11 @@ export function requirePlatform(...allowed: PlatformRole[]) {
       email: session.platform_user.email,
       role,
       sessionId: session.id,
+      capabilities: platformCapabilitiesFor(
+        role,
+        session.platform_user.granted_scopes,
+        session.platform_user.denied_scopes,
+      ),
     };
   };
 }

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
-import { platformRead, platformWrite } from './guards.js';
+import { platformCan, platformRead } from './guards.js';
 import {
   SECRET_FIELDS,
   redactedSettings,
@@ -96,7 +96,7 @@ export async function platformSettingsRoutes(app: FastifyInstance): Promise<void
   );
 
   /**
-   * Superadmin only, and TOTP-gated by `platformWrite`.
+   * Needs `settings:write` (superadmin by default) and a verified second factor.
    *
    * These fields reach every customer at once — the AI key that answers their
    * chats, the SMTP host their verification mail goes through, the Stripe key
@@ -105,7 +105,7 @@ export async function platformSettingsRoutes(app: FastifyInstance): Promise<void
    */
   app.patch(
     '/platform/settings',
-    { preHandler: platformWrite('superadmin') },
+    { preHandler: platformCan('settings:write') },
     async (req, reply) => {
       const body = parseBody(settingsBody, req.body, reply);
       if (!body) return;
@@ -137,7 +137,7 @@ export async function platformSettingsRoutes(app: FastifyInstance): Promise<void
    */
   app.post(
     '/platform/settings/test-email',
-    { preHandler: platformWrite('superadmin') },
+    { preHandler: platformCan('settings:write') },
     async (req, reply) => {
       const body = parseBody(z.object({ to: z.string().email() }), req.body, reply);
       if (!body) return;

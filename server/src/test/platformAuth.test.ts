@@ -329,10 +329,17 @@ test('creating a staff account revokes nothing and starts read-only', async () =
   assert.equal(login2.json().user.role, 'support');
 
   const supportHeaders = { authorization: `Bearer ${login2.json().token}` };
-  // Role gating is independent of the TOTP gate: support is not superadmin, so the
-  // staff-account list is refused on role grounds.
+  // Scope gating is independent of the TOTP gate: `support` does not carry
+  // `staff:manage`, so the staff list is refused for a missing capability rather than
+  // for a missing factor. The distinction matters — the two produce different `code`s
+  // and the panel tells the operator different things.
   const forbidden = await app.inject({ method: 'GET', url: '/platform/users', headers: supportHeaders });
   assert.equal(forbidden.statusCode, 403, forbidden.body);
+  assert.equal(forbidden.json().code, 'missing_capability');
+  assert.equal(forbidden.json().capability, 'staff:manage');
+
+  // And a created account is told to change the password its creator chose.
+  assert.equal(login2.json().user.must_change_password, true);
 });
 
 test('a factor cannot be removed without presenting a current code', async () => {

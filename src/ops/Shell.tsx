@@ -13,13 +13,22 @@ import { GlobalSearch } from './GlobalSearch';
  *    thing they were trying to do, at the moment they are least able to fix it.
  */
 
-const NAV = [
+/**
+ * `needs` hides a tab this account cannot open at all.
+ *
+ * Only for pages whose READ is gated — Staff is the one, because its list publishes
+ * which colleagues have no second factor enrolled. Everything else stays visible and
+ * refuses individual actions instead: hiding a page somebody can read most of is how
+ * people conclude a feature does not exist and ask in chat.
+ */
+const NAV: { to: string; label: string; needs?: string }[] = [
   { to: '/ops/workspaces', label: 'Workspaces' },
   { to: '/ops/dunning', label: 'Dunning' },
   { to: '/ops/plans', label: 'Plans' },
   { to: '/ops/impersonations', label: 'Impersonations' },
   { to: '/ops/audit', label: 'Audit' },
   { to: '/ops/health', label: 'Health' },
+  { to: '/ops/staff', label: 'Staff', needs: 'staff:manage' },
   { to: '/ops/settings', label: 'Settings' },
   { to: '/ops/account', label: 'Account' },
 ];
@@ -55,7 +64,9 @@ export function Shell() {
         </div>
 
         <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-3 pb-1.5">
-          {NAV.map((item) => (
+          {NAV.filter(
+            (item) => !item.needs || (session?.user.capabilities ?? []).includes(item.needs),
+          ).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

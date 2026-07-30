@@ -4,7 +4,7 @@ import { unscopedPrisma } from '../../db/unscoped.js';
 import { parseBody } from '../../lib/validate.js';
 import { audit } from '../../lib/audit.js';
 import { invalidateWorkspaceCache } from '../../plugins/auth.js';
-import { platformRead, platformWrite } from './guards.js';
+import { platformCan, platformRead } from './guards.js';
 
 /**
  * The plan catalog, and per-workspace exceptions.
@@ -67,7 +67,7 @@ export async function platformPlanRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ plans });
   });
 
-  app.post('/platform/plans', { preHandler: platformWrite('billing') }, async (req, reply) => {
+  app.post('/platform/plans', { preHandler: platformCan('plan:write') }, async (req, reply) => {
     const body = parseBody(
       planFields.extend({
         code: z
@@ -90,7 +90,7 @@ export async function platformPlanRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send({ plan });
   });
 
-  app.patch('/platform/plans/:id', { preHandler: platformWrite('billing') }, async (req, reply) => {
+  app.patch('/platform/plans/:id', { preHandler: platformCan('plan:write') }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = parseBody(planFields, req.body, reply);
     if (!body) return;
@@ -138,7 +138,7 @@ export async function platformPlanRoutes(app: FastifyInstance): Promise<void> {
    */
   app.put(
     '/platform/workspaces/:id/plan-override',
-    { preHandler: platformWrite('billing') },
+    { preHandler: platformCan('workspace:plan') },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = parseBody(
@@ -211,7 +211,7 @@ export async function platformPlanRoutes(app: FastifyInstance): Promise<void> {
   /** Drop the exception and put the workspace back on a catalog plan. */
   app.delete(
     '/platform/workspaces/:id/plan-override',
-    { preHandler: platformWrite('billing') },
+    { preHandler: platformCan('workspace:plan') },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = parseBody(

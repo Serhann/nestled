@@ -45,10 +45,20 @@ export function DeleteAction({
   onDone: () => void;
   compact?: boolean;
 }) {
+  const session = useSession();
   const [open, setOpen] = useState(false);
+  // Shown but refused when the scope is missing, with the scope named. Hiding it makes
+  // people ask in chat whether deletion exists; naming it makes them ask for the one
+  // permission they need.
+  const canDelete = session?.user.capabilities?.includes('deletion:create') ?? false;
   return (
     <>
-      <Button variant="danger" onClick={() => setOpen(true)}>
+      <Button
+        variant="danger"
+        disabled={!canDelete}
+        title={canDelete ? undefined : 'Needs the deletion:create permission'}
+        onClick={() => setOpen(true)}
+      >
         {compact ? 'Delete' : `Delete ${type}`}
       </Button>
       {open && (
@@ -157,7 +167,9 @@ function DeleteDialog({
 
       <div className="mt-4 flex items-center justify-between gap-2">
         <span className="text-xs text-gray-500">
-          {session?.user.can_write ? 'Superadmins only.' : 'Enroll an authenticator first — this session is read-only.'}
+          {session?.user.can_write
+            ? 'Needs the deletion:create permission.'
+            : 'Enroll an authenticator first — this session is read-only.'}
         </span>
         <div className="flex gap-2">
           <Button onClick={onClose}>

@@ -6,7 +6,16 @@ import { Badge, Button, Card, Empty, ErrorBox, Field, Spinner, Table, Td, inputC
 import { QrCode } from '../../ui/QrCode';
 
 interface MeResponse {
-  user: { id: string; email: string; name: string; role: string; totp_enabled: boolean; created_at: string };
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    totp_enabled: boolean;
+    must_change_password: boolean;
+    capabilities: string[];
+    created_at: string;
+  };
   sessions: { id: string; ip: string | null; user_agent: string | null; created_at: string; expires_at: string; current: boolean }[];
 }
 
@@ -27,6 +36,23 @@ export function Account() {
 
   return (
     <div className="space-y-4">
+      {data?.user.must_change_password && (
+        /*
+          Whoever created this account chose its password, and there is no email-based
+          reset on this plane — so until this is cleared, every audit row this account
+          writes is one that person could also have written. Said plainly, because
+          "for security, please update your password" is the wording everybody ignores.
+        */
+        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          The password on this account was set by whoever created it. Until you change it, they
+          can sign in as you — and anything done under your name is deniable.
+        </div>
+      )}
+
+      <Card title="Password">
+        <PasswordForm onChanged={() => void queryClient.invalidateQueries({ queryKey: ['me'] })} />
+      </Card>
+
       <Card title="Two-factor authentication">
         {session?.user.can_write ? <FactorEnrolled /> : <FactorEnrollment />}
       </Card>
@@ -215,6 +241,80 @@ function FactorEnrollment() {
       )}
 
       {error && <ErrorBox error={error} />}
+    </div>
+  );
+}
+
+/**
+ * Changing your own password.
+ *
+ * Requires the current one, so a stolen session cannot lock the real owner out. Every
+ * other session for the account is revoked server-side and this one is handed a fresh
+ * token — a password change that leaves the old sessions live has not changed anything.
+ */
+function PasswordForm({ onChanged }: { onChanged: () => void }) {
+  const session = useSession();
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const mismatch = confirm.length > 0 && next !== confirm;
+  const ready = current.length > 0 && next.length >= 12 && !mismatch;
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api<{ token: string; expires_at: string }>('/platform/me/password', {
+        method: 'POST',
+        body: { current_password: current, new_password: next },
+      });
+      // The token we called with was just revoked; swap in the one we were handed or the
+      // next request logs this person out of the panel they are standing in.
+      if (session) setSession({ ...session, token: result.token, expires_at: result.expires_at });
+      setCurrent('');
+      setNext('');
+      setConfirm('');
+      setDone(true);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not change the password');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {done && <p className="text-sm text-green-300">Changed. Every other session was signed out.</p>}
+      {error && <p className="text-sm text-red-300">{error}</p>}
+
+      <Field label="Current password">
+        <input
+          type="password"
+          value={current}
+          onChange={(e) => setCurrent(e.target.value)}
+          className={inputClass}
+        />
+      </Field>
+      <Field label="New password" hint="At least 12 characters.">
+        <input type="password" value={next} onChange={(e) => setNext(e.target.value)} className={inputClass} />
+      </Field>
+      <Field label="New password again" hint={mismatch ? 'These do not match.' : undefined}>
+        <input
+          type="password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          className={inputClass}
+        />
+      </Field>
+
+      <Button variant="primary" disabled={busy || !ready} onClick={() => void submit()}>
+        {busy ? 'Changing…' : 'Change password'}
+      </Button>
     </div>
   );
 }

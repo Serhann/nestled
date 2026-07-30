@@ -1171,17 +1171,27 @@ model ai_usage {
 // ===========================================================================
 
 model platform_users {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email         String    @unique
-  password_hash String
-  name          String
-  /// CHECK (superadmin|support|billing|readonly)
-  role          String    @default("support")
-  totp_secret   String?
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                String    @unique
+  password_hash        String
+  name                 String
+  /// CHECK (superadmin|support|billing|readonly). A named BUNDLE of scopes since
+  /// migration 0012 — see PLATFORM_CAPABILITIES in permissions.ts.
+  role                 String    @default("support")
+  /// Scopes this account has BEYOND its role's bundle.
+  granted_scopes       String[]  @default([])
+  /// Scopes removed from its role's bundle. Deny wins, including over superadmin —
+  /// which is the only thing that makes these more than decoration.
+  denied_scopes        String[]  @default([])
+  totp_secret          String?
   /// Required before any write capability.
-  totp_enabled  Boolean   @default(false)
-  disabled_at   DateTime? @db.Timestamptz(6)
-  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  totp_enabled         Boolean   @default(false)
+  /// Set when another staff member created or reset this account. Cleared by the
+  /// account itself, with its own current password: otherwise whoever created it
+  /// knows the credential behind every audit row it writes.
+  must_change_password Boolean   @default(false)
+  disabled_at          DateTime? @db.Timestamptz(6)
+  created_at           DateTime  @default(now()) @db.Timestamptz(6)
 
   sessions       platform_sessions[]
   impersonations impersonation_sessions[]

@@ -37,6 +37,14 @@ export interface PlatformUser {
   totp_enabled: boolean;
   /** False until a TOTP factor is enrolled — the panel renders read-only. */
   can_write: boolean;
+  /**
+   * What this account may do: its role's bundle, plus granted, minus denied. The panel
+   * hides what it cannot use — a button that always 403s teaches people the panel is
+   * broken — and every one of these is still checked on the server.
+   */
+  capabilities?: string[];
+  /** Their password was set by whoever created the account. */
+  must_change_password?: boolean;
 }
 
 export function loadSession(): StoredSession | null {
