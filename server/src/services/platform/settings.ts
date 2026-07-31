@@ -4,6 +4,9 @@ import { allowedOrigins, env } from '../../env.js';
 // is read on the hot path by services that have no request context.
 // eslint-disable-next-line no-restricted-imports -- install-wide singleton, no tenant scope exists
 import { unscopedPrisma } from '../../db/unscoped.js';
+// Imports nothing back from here — see the note on resolvePreamble. The default is
+// published so the panel can show what an empty field falls back to.
+import { DEFAULT_PREAMBLE } from '../ai/preamble.js';
 
 /**
  * Install-wide settings.
@@ -41,6 +44,17 @@ export interface PlatformSettings {
     anthropicApiKey: string | null;
     openaiApiKey: string | null;
     ollamaUrl: string | null;
+    /**
+     * This install's version of the assistant's own instructions, or null for the
+     * default in code (`services/ai/preamble.ts`).
+     *
+     * Not resolved here on purpose: the fallback chain is website → install → code
+     * default, and only the AI path knows which website it is answering for. Resolving
+     * a default into this snapshot would make "the install has not set one" and "the
+     * install set exactly the default" indistinguishable, and the panel needs to tell
+     * an operator which of those is true.
+     */
+    preamble: string | null;
   };
   /**
    * How a message gets translated.
@@ -219,6 +233,10 @@ function resolve(row: Row): PlatformSettings {
       anthropicApiKey: str(row, 'anthropic_api_key', e.ANTHROPIC_API_KEY ?? null),
       openaiApiKey: str(row, 'openai_api_key', e.OPENAI_API_KEY ?? null),
       ollamaUrl: str(row, 'ollama_url', e.OLLAMA_URL ?? null),
+      // No environment fallback: a multi-paragraph prompt is not something anyone wants
+      // to maintain in a compose file, and this is the one AI setting with a sane
+      // default already in code.
+      preamble: str(row, 'ai_preamble', null),
     },
     translate: {
       // A provider set to deepl with no key would silently translate nothing, so it
@@ -372,6 +390,11 @@ export function redactedSettings(): Record<string, unknown> {
       anthropic_api_key: mask(s.ai.anthropicApiKey),
       openai_api_key: mask(s.ai.openaiApiKey),
       ollama_url: s.ai.ollamaUrl,
+      // Returned in full, unlike every credential above: it is instructions, the
+      // operator has to read it to edit it, and `ai_preamble_default` next to it is what
+      // makes "we have not set one" visible rather than looking like an empty field.
+      ai_preamble: s.ai.preamble,
+      ai_preamble_default: DEFAULT_PREAMBLE,
     },
     translate: {
       provider: s.translate.provider,

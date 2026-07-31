@@ -2,7 +2,7 @@
 
 All fourteen phases are merged, plus live translation, the email/SMS channels and
 response-time targets.
-**362 server tests pass, both typechecks are clean, ESLint reports zero errors,
+**393 server tests pass, both typechecks are clean, ESLint reports zero errors,
 and the production images have been built and exercised end to end** — signup, website creation, widget boot, a visitor
 message, an agent reply, the billing state, and both directions of the
 customer/staff auth wall.
@@ -182,6 +182,9 @@ Sign in at `https://ops.your-host`, enrol TOTP, then open **Settings**:
 - **AI** — provider, model, and the API key. This is *our* infrastructure, not
   the customer's: usage is metered per workspace. Without a key the AI degrades
   to knowledge-base answers.
+- **Assistant instructions** — the text that goes *above* every website's own
+  prompt, and the only place the handoff policy can be changed. See
+  [Telling the assistant when to fetch a human](#telling-the-assistant-when-to-fetch-a-human).
 - **Email** — SMTP host, credentials, from-address, and a **Send test** button.
   Without an SMTP host, mail is queued to `outbound_emails` and logged rather
   than sent; nothing is lost, but nobody receives a verification link.
@@ -320,6 +323,103 @@ notification on its own is one more thing to miss.
 
 ---
 
+## Telling the assistant when to fetch a human
+
+A customer could always change what their assistant KNOWS — their prompt, their
+knowledge base. What nobody could change was what it DOES, and above all when it
+gives up and fetches a person. That lived in three string constants in the
+server, so "hand off sooner for this customer" was a code change and a release.
+
+The prompt now has two ends, and which end a sentence is at is the whole design.
+
+**The front is policy, and it is editable.** Our instructions — that this is
+first-line support in a chat window, how long replies should run, and when to
+reach for an action — then the customer's own prompt, their knowledge base, the
+facts their site signed about this visitor, and their house rules.
+
+**The tail is safety and syntax, and it is not.** Stay on topic; never invent
+account state; here is exactly how to spell an action. It is appended after every
+authored string in the prompt, so neither a customer's "ignore all previous
+instructions" nor an operator's rewritten preamble can switch the protocol off.
+
+### Three tiers
+
+The editable front resolves **website → install → the default in code**, and a
+blank field means "use the tier above" rather than "send the model nothing":
+
+| Where | Who sets it | When to use it |
+|---|---|---|
+| The default in code | us, in `server/src/services/ai/preamble.ts` | improvements reach every install that never edited theirs |
+| ops → Settings → Assistant instructions | an operator, needs `settings:write` | one wording for every customer on this install |
+| ops → a customer → Websites → Assistant instructions | needs `ai:prompt` | the one customer whose assistant must behave differently |
+
+Nothing about this is customer-editable, and that is deliberate: it carries the
+action protocol, and the actions have consequences on our side of the line.
+
+### Actions
+
+An LLM can only write text, so anything else it should be able to DO has to be
+something it asks for in the text — a token we parse and then strip. Write them
+as placeholders and they expand to the literal token:
+
+| Placeholder | What it does | Availability |
+|---|---|---|
+| `{{handoff}}` | flags the conversation for a human, notifies the team, attaches a summary | **always**, whether or not the text mentions it |
+| `{{tag:billing,shipping}}` | labels the conversation, using only the names you list | only while the text mentions it |
+| `{{resolve}}` | closes the conversation | only while the text mentions it |
+
+Two rules are worth knowing before you write one.
+
+**Enabling is by reference, not a checkbox.** Anything other than handoff is
+offered to the model only while the effective text mentions it. A checkbox saying
+"the assistant may close conversations", with no accompanying sentence about
+when, produces a model guessing at a policy nobody wrote down; typing
+`{{resolve}}` into a sentence forces the author to say what it is for in the same
+breath.
+
+**Handoff is exempt.** Narrowing when it fires is editing; deleting every mention
+of it is not turning it off. It is the safety valve, and no wording removes it.
+
+`{{resolve}}` is the one with a visitor-visible consequence, and it is off by
+default for that reason. Closing a conversation stops the response clock and tells
+the widget the chat is over — which means a visitor with the panel open sees the
+**rating screen**, exactly as they would if an agent had resolved it. It also
+never fires in the same reply as a handoff, and never on a conversation somebody
+has already been assigned to or asked a human about.
+
+Tags are the one action with a vocabulary, and it is required — `{{tag}}` on its
+own is refused. A model left to invent labels writes "billing", "billing
+question" and "Billing", and the reports that group by them stop meaning
+anything. Anything outside the list is silently dropped, as is a token for an
+action that is not enabled: the model wastes a few characters, and no visitor
+ever reads `<<RESOLVE>>` at the end of an answer.
+
+### What to check after an edit
+
+The per-website editor shows **what the model is sent right now** — the whole
+assembled prompt, with the two per-conversation blocks described rather than
+filled in. It goes through the same assembly function as a live reply, so it
+cannot drift into telling you a comfortable lie. After narrowing a handoff
+policy, look for the syntax contract still sitting underneath your text.
+
+A misspelled action is refused at save time in both editors. That is not
+politeness: `{{handof}}` stores happily, ships literal braces to the model, and
+turns into "the assistant stopped escalating" a week later with nothing in any
+log to explain it.
+
+Every per-website change is written to **that customer's own audit log**, with
+the wording in the details — because if this becomes "your bot refused to
+escalate my complaint", the exact text in force and who put it there is the only
+useful record.
+
+### One bug this fixed on the way past
+
+Inside a bot flow, an `ai_answer` node dropped the assistant's handoff request
+entirely: the flow said the answer out loud and walked on to the next node. A
+visitor could be told "let me connect you to a team member" and nobody was ever
+connected. The flow's own handoff node is how an author asks for a human; this is
+how the assistant does, and both arrive now.
+
 ## Deleting things, and the ninety days before it is permanent
 
 **Ops panel → a workspace, or the Audit page.** Four things can be deleted:
@@ -371,7 +471,7 @@ disable somebody who has left.
 
 ### The role is a bundle; the scopes are the adjustment
 
-There are four roles — `superadmin`, `support`, `billing`, `readonly` — and thirteen
+There are four roles — `superadmin`, `support`, `billing`, `readonly` — and fourteen
 scopes (`PLATFORM_CAPABILITIES` in `server/src/permissions.ts`). A role is a named set
 of those scopes, and any account can be granted extras or have some removed.
 
@@ -383,7 +483,7 @@ one grant.
 | Role | What it carries by default |
 |---|---|
 | `readonly` | `panel:read` |
-| `support` | reads, notes, ending an impersonation, trial/grace/status levers, confirming an address, restoring a deletion, both impersonation scopes |
+| `support` | reads, notes, ending an impersonation, trial/grace/status levers, confirming an address, restoring a deletion, both impersonation scopes, rewriting a website's assistant instructions |
 | `billing` | reads, notes, ending an impersonation, the lifecycle levers, one customer's plan, the plan catalog, restoring a deletion |
 | `superadmin` | everything, including `deletion:create` and `staff:manage` |
 
@@ -491,6 +591,21 @@ is ended. What nobody has watched: the new tab actually opening, the popup-block
 fallback, the per-tab session leaving the operator's own account alone in the tab next to
 it, and the banner counting down to zero and clearing itself. Do that once before relying
 on it — the whole feature is a browser behaviour.
+
+**The assistant-instruction editors have not been opened in a browser.** The server
+side is covered by 31 tests (`aiPrompt.test.ts`): the three tiers and what a blank field
+means, that handoff survives a preamble that never mentions it, that the fixed rules and
+the syntax contract land under everything anyone can edit, that an unenabled token is both
+ignored and stripped, that a reply cannot both fetch a human and close the thread, that a
+tag outside the offered list is discarded, that a typo is refused rather than stored, and
+that `ai:prompt` is required to write while plain panel access is enough to read. What
+nobody has watched: the Settings card and the per-website editor rendering, the preview
+`<details>` opening, and the badges naming the tier in force.
+
+**No model has been asked to obey a rewritten preamble.** The plumbing is proved end
+to end; whether a particular model actually hands off later because you told it to is a
+question about the model. Change one, then read the next few handoffs in the inbox —
+`metadata.handoff.reason` on the conversation says who asked for it.
 
 **The Staff screen has not been opened in a browser.** The permission model itself is
 covered by 12 tests (`platformScopes.test.ts`) — deny beating superadmin, a granted scope
@@ -743,7 +858,7 @@ export NODE_ENV=test
 # ever change it, clear `platform_settings` first.
 export SETTINGS_KEY=test-settings-key
 npx prisma migrate deploy
-npm test        # 362 tests, serial (they share one database)
+npm test        # 393 tests, serial (they share one database)
 ```
 
 From the repo root: `npm run typecheck && npx eslint . && npm run build`.

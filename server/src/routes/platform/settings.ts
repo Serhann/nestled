@@ -9,6 +9,7 @@ import {
   settings,
   updateSettings,
 } from '../../services/platform/settings.js';
+import { validatePreamble } from '../../services/ai/actions.js';
 import { sendEmail } from '../../services/email.js';
 import { validateVapidPair } from '../../services/push.js';
 
@@ -41,6 +42,9 @@ const settingsBody = z.object({
   anthropic_api_key: text(200),
   openai_api_key: text(200),
   ollama_url: text(300),
+  // The assistant's own instructions for this whole install. Long, because it is prose;
+  // '' clears it back to the default in code.
+  ai_preamble: text(8000),
 
   // Translation. Empty string on the provider clears it back to NULL, which the
   // settings layer reads as "use the configured LLM".
@@ -138,6 +142,23 @@ export async function platformSettingsRoutes(app: FastifyInstance): Promise<void
             code: 'vapid_invalid',
             field: 'vapid_private_key',
           });
+        }
+      }
+
+      /**
+       * Refuse a preamble whose actions are misspelled.
+       *
+       * Same argument as the VAPID pair above: a mistyped `{{handof}}` is stored happily,
+       * ships literal braces to the model, and turns into "the assistant stopped handing
+       * off" a week later — with nothing in any log to explain it. This is the one moment
+       * somebody is looking at the text.
+       */
+      if (body.ai_preamble) {
+        const problem = validatePreamble(body.ai_preamble);
+        if (problem) {
+          return reply
+            .code(400)
+            .send({ error: problem.message, code: 'preamble_invalid', field: 'ai_preamble' });
         }
       }
 

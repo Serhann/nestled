@@ -35,6 +35,9 @@ interface SettingsResponse {
       anthropic_api_key: Masked;
       openai_api_key: Masked;
       ollama_url: string | null;
+      /** null = nothing set here; the default below is what every website gets. */
+      ai_preamble: string | null;
+      ai_preamble_default: string;
     };
     translate: {
       provider: string;
@@ -218,6 +221,58 @@ export function Settings() {
           <Field label="OpenAI API key">{secret('openai_api_key', s.ai.openai_api_key)}</Field>
           <Field label="Ollama URL">{text('ollama_url', s.ai.ollama_url, 'http://ollama:11434')}</Field>
         </div>
+      </Card>
+
+      {/* The assistant's own instructions. Separate card from the keys above because it is
+          the one AI setting that changes BEHAVIOUR rather than plumbing, and the one an
+          operator will come back to. */}
+      <Card title="Assistant instructions">
+        <p className="text-sm text-gray-500 mb-4 leading-relaxed">
+          What goes <b>above</b> every website&rsquo;s own prompt: that this is first-line
+          support in a chat window, and — the part nobody could set before — when it should
+          stop trying and fetch a human. A customer writes who their business is; this writes
+          how the assistant behaves. Leave it blank to use the default below. One website can
+          be given its own wording from that customer&rsquo;s <b>Websites</b> tab.
+        </p>
+        <Field
+          label="This install’s instructions"
+          hint="Blank = the default. Actions are written as {{handoff}}, {{tag:billing,shipping}} and {{resolve}} — they expand to the tokens the assistant emits, and the syntax rules are appended after everything anyone can edit, so no wording here can switch the protocol off."
+        >
+          <textarea
+            className={`${inputClass} font-mono text-xs`}
+            rows={10}
+            disabled={!canWrite}
+            placeholder={s.ai.ai_preamble_default}
+            value={String(draft.ai_preamble ?? s.ai.ai_preamble ?? '')}
+            onChange={(e) => set('ai_preamble', e.target.value)}
+          />
+        </Field>
+        <div className="mt-2 flex items-center gap-3">
+          <Badge tone={s.ai.ai_preamble ? 'warn' : 'ok'}>
+            {s.ai.ai_preamble ? 'using this install’s wording' : 'using the built-in default'}
+          </Badge>
+          {s.ai.ai_preamble && canWrite && (
+            <Button
+              variant="default"
+              onClick={() => {
+                // Back to the default in code, which is the version that improves in later
+                // releases — the reason clearing is offered as a first-class gesture rather
+                // than left to somebody deleting the text and wondering if blank is legal.
+                if (confirm('Go back to the built-in instructions for every website that has no wording of its own?')) {
+                  save.mutate({ ai_preamble: '' });
+                }
+              }}
+            >
+              Use the default
+            </Button>
+          )}
+        </div>
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs text-gray-500">The built-in default</summary>
+          <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-xs text-gray-700">
+            {s.ai.ai_preamble_default}
+          </pre>
+        </details>
       </Card>
 
       <Card title="Translation">
