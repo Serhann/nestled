@@ -123,11 +123,13 @@ export default function Campaigns() {
                 is_active: false,
                 priority: 10,
                 events: { after_delay: true, delay_seconds: 30 },
-                // `open_chatbox` defaults ON because a nudge is drawn INSIDE the panel
-                // (Widget.tsx renders it through Screen → Thread) and nothing badges the
-                // closed launcher for it. A message campaign that does not open the panel
-                // is invisible unless the visitor happens to open the chat themselves.
-                actions: { show_message: true, message_content: '', open_chatbox: true },
+                // `open_chatbox` defaults OFF now that the message shows as a teaser above
+                // the closed launcher (Teaser.tsx). It defaulted ON only because the nudge
+                // was drawn INSIDE the panel and nothing else surfaced it, so a campaign
+                // that did not open the panel was invisible — which made the intrusive
+                // option the only working one. With the teaser, the visitor reads the
+                // message in place and opening the chat stays their decision.
+                actions: { show_message: true, message_content: '', open_chatbox: false },
                 behaviors: {},
                 platforms: { desktop_enabled: true, mobile_enabled: true },
               })
@@ -344,7 +346,7 @@ function CampaignDialog({
           checked={actions.open_chatbox ?? false}
           onChange={(v) => onChange({ ...value, actions: { ...actions, open_chatbox: v } })}
           label="Open the chat when it fires"
-          description="Off, and the message only appears if the visitor opens the chat themselves."
+          description="Off, the message shows as a bubble above the launcher and the visitor decides whether to open the chat. On, the panel opens by itself."
         />
 
         <Toggle

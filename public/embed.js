@@ -245,8 +245,21 @@
     s.border = 'none';
     s.background = 'transparent';
     s.transition = TRANSITION;
-    // No pointer-events tricks needed: while closed the container occupies only
-    // the launcher, so it cannot swallow clicks anywhere else.
+    // While closed the container is normally just the launcher, so it swallows no clicks
+    // anywhere else and needs no pointer-events tricks.
+    //
+    // ONE exception, and it is a known trade rather than an oversight: when a campaign
+    // fires, the widget grows this box to fit the message bubble above the launcher (see
+    // `.n-closed` in widget.css) and reports the larger size through `resize`. For as long
+    // as the teaser is up, the rectangle around it belongs to the iframe and the host page
+    // does not receive clicks in it. The teaser is transient — dismissible, and retired for
+    // good once the chat has been opened — and the bubble is capped at 260px wide to keep
+    // the affected area small.
+    //
+    // The proper fix is a `clip-path` on this container covering only the teaser and the
+    // launcher: clip-path is honoured by hit testing, so the gap between them would pass
+    // clicks through. It needs both boxes' geometry sent over, and a wrong polygon makes
+    // the launcher unclickable — so it wants a browser to verify against, not a guess.
 
     iframe = document.createElement('iframe');
     iframe.id = 'nestled-frame';
