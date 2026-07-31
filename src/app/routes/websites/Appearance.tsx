@@ -205,10 +205,22 @@ export default function Appearance() {
                 >
                   <option value="bubble">Bubble</option>
                   <option value="pill">Pill with text</option>
-                  <option value="custom_icon">Custom icon</option>
+                  <option value="custom_icon">Your logo</option>
                 </Select>
               )}
             </Field>
+            {settings.launcher_style === 'custom_icon' && !settings.brand_avatar_url?.trim() && (
+              /*
+               * "Your logo" with no logo set falls back to the chosen glyph, which is the
+               * right thing for the visitor and invisible to the person configuring it —
+               * they pick the option, the preview does not change, and there is nothing to
+               * tell them the picture field two sections down is the missing half.
+               */
+              <p className="sm:col-span-2 text-xs text-amber-800 bg-amber-50 rounded-xl px-3 py-2">
+                Add a picture under <strong>Branding</strong> below, or the launcher keeps
+                using the icon you picked.
+              </p>
+            )}
             <Field label="Side">
               {(a) => (
                 <Select
@@ -360,7 +372,7 @@ export default function Appearance() {
 
             <Field
               label="Picture"
-              hint="A square image you already host. Shown at the top of the chat. Leave empty for the default mark."
+              hint="A square image you already host. Shown at the top of the chat, and in the closed launcher when its style is “Your logo”. Leave empty for the default mark."
             >
               {(a) => (
                 <TextInput

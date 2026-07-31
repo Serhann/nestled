@@ -167,6 +167,11 @@ export function Widget({
     boot.theme?.launcher_size,
     boot.theme?.panel_width,
     boot.theme?.launcher_pulse,
+    // A PILL launcher's width includes whatever sits beside the label, and a logo is given
+    // a larger box than a glyph — so gaining or losing the picture changes the box the host
+    // frame is sized from. A bubble is unaffected (its size is set inline), but the
+    // dependency has to cover the case that is not.
+    boot.theme?.brand_avatar_url,
     copy.launcherLabel,
   ]);
 
@@ -265,7 +270,21 @@ export function Widget({
   const starters = boot.starters ?? [];
   const offline =
     !chat.conversation && !availability.online && boot.behavior?.ai_enabled === false;
-  const atHome = !chat.conversation && chat.messages.length === 0 && !plainChat && starters.length > 0;
+  /**
+   * The starter-chip home screen.
+   *
+   * `!nudge` is load-bearing, and its absence is why campaigns did not appear to work. A
+   * fired campaign produces a nudge that only `Thread` draws, but `Screen` returns Home
+   * before it ever reaches Thread — so on any website with starters configured (the
+   * default) a campaign would fire, meter itself, open the panel, and show the visitor the
+   * ordinary starter chips. Indistinguishable from nothing having happened.
+   *
+   * A proactive message outranks the home screen because it IS the more specific thing to
+   * say: the campaign was written for this visitor on this page, and the chips are what we
+   * show when we have nothing particular to offer.
+   */
+  const atHome =
+    !chat.conversation && chat.messages.length === 0 && !plainChat && !nudge && starters.length > 0;
   const wantsComposer = view === 'auto' && !offline && !atHome;
 
   const body = (
