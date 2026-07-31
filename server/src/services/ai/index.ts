@@ -15,6 +15,7 @@ import {
 import { settings as platformSettings } from '../platform/settings.js';
 import { parseActions } from './actions.js';
 import { resolvePreamble } from './preamble.js';
+import { MAX_HISTORY_MESSAGES, buildTurns } from './history.js';
 
 const providers: Record<AISettings['ai_provider'], AIProvider> = {
   knowledge_base: knowledgeBaseProvider,
@@ -71,6 +72,26 @@ async function loadKnowledge(workspaceId: string, websiteId: string): Promise<Kn
     },
     select: { question: true, answer: true, category: true, keywords: true, priority: true },
   });
+}
+
+/**
+ * The conversation so far, oldest first.
+ *
+ * Takes the LAST `MAX_HISTORY_MESSAGES` rows, which means ordering desc and reversing —
+ * `asc` + `take` would hand back the oldest messages and get progressively more useless
+ * the longer a conversation ran, which is the opposite of what a transcript is for.
+ */
+async function loadTranscript(
+  workspaceId: string,
+  conversationId: string,
+): Promise<Array<{ sender_type: string; content: string }>> {
+  const rows = await prisma.messages.findMany({
+    where: { workspace_id: workspaceId, conversation_id: conversationId },
+    orderBy: { created_at: 'desc' },
+    take: MAX_HISTORY_MESSAGES,
+    select: { sender_type: true, content: true },
+  });
+  return rows.reverse();
 }
 
 /**
@@ -301,12 +322,17 @@ export async function generateAIReply(
 
   const verified = await conversationContext(workspaceId, conversationId);
   const knowledge = await loadKnowledge(workspaceId, websiteId);
+  // The transcript. Until this existed, every reply was generated from the latest message
+  // alone — so the assistant re-greeted, re-asked for details it had just been given, and
+  // read every follow-up as an opening question.
+  const transcript = await loadTranscript(workspaceId, conversationId);
   const provider = providers[settings.ai_provider] ?? knowledgeBaseProvider;
 
   let result;
   try {
     result = await provider.generateReply({
       message,
+      turns: buildTurns(transcript, message),
       settings,
       knowledge,
       // OUR instructions, first — see prompt.ts for why policy goes at the front and the
