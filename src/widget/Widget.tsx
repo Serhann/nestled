@@ -15,6 +15,7 @@ import { ConfirmClose } from './ui/ConfirmClose';
 import { Launcher } from './ui/Launcher';
 import { Panel } from './ui/Panel';
 import { Screen, type View } from './ui/Screen';
+import { Teaser } from './ui/Teaser';
 
 /** Iframe sizes the embed resizes to. Closed leaves room for the launcher's shadow. */
 const SIZES = { closed: [96, 96], minimized: [384, 68], open: [384, 640] } as const;
@@ -45,6 +46,7 @@ export function Widget({
   const [ratingSent, setRatingSent] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [plainChat, setPlainChat] = useState(false);
+  const [teaserDismissed, setTeaserDismissed] = useState(false);
 
   const host = useRef<HostState>({ identity: {}, data: {}, contextToken: null, triggerId: null, prechat: {} });
   const { unread, bump, clear } = useUnread(open && !minimized);
@@ -118,6 +120,19 @@ export function Widget({
   });
 
   /**
+   * The campaign message beside the closed launcher.
+   *
+   * Retired the moment the panel has been opened, by any route — the launcher, the teaser
+   * itself, or the host page's own button. From then on the message is in the thread, and a
+   * teaser that reappeared every time somebody closed the chat would be nagging rather than
+   * inviting.
+   */
+  const showTeaser = Boolean(nudge) && !teaserDismissed;
+  useEffect(() => {
+    if (open) setTeaserDismissed(true);
+  }, [open]);
+
+  /**
    * Tell the embed how large to be. The two-state sizing is what keeps the host page's
    * bottom-right corner clickable while the widget is closed.
    *
@@ -128,6 +143,8 @@ export function Widget({
    * still lands on 96 because that is what it measures.
    */
   const launcherRef = useRef<HTMLButtonElement>(null);
+  /** The teaser + launcher column. What the closed frame is actually sized from. */
+  const closedRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const state = !open ? 'closed' : minimized ? 'minimized' : 'open';
     if (state !== 'closed') {
@@ -141,18 +158,24 @@ export function Widget({
       bridge.emit('open');
       return;
     }
-    // A frame, so the launcher has been laid out with its final label and size.
+    // A frame, so the column has been laid out with its final label, size and teaser text.
     const frame = requestAnimationFrame(() => {
-      const el = launcherRef.current;
       const [fallbackW, fallbackH] = SIZES.closed;
-      const rect = el?.getBoundingClientRect();
+      // The COLUMN, not the button: with a teaser showing, the frame has to be tall enough
+      // for the message too, or the message is rendered outside the iframe and nobody sees
+      // it — which is the same class of mistake as sizing the frame to the button and
+      // cropping its shadow.
+      const rect = closedRef.current?.getBoundingClientRect();
+      // The pulse ring is drawn by the LAUNCHER, so its allowance is measured from the
+      // launcher. Taking 30% of a column that includes a three-line teaser would pad the
+      // frame by half the message's height for a ring around a 60px button.
+      const launcher = launcherRef.current?.getBoundingClientRect();
       // Room on each side for what the button draws OUTSIDE its own box: a drop shadow
       // always, and the attention ring when it is on. The ring reaches 1.55x, so at the
-      // large launcher size a fixed 18px would clip it into a square — the same
-      // mistake as sizing the frame to the button and cropping the shadow.
+      // large launcher size a fixed 18px would clip it into a square.
       const pulsing = boot.theme?.launcher_pulse === true;
       const room = pulsing
-        ? Math.max(SHADOW_ROOM, Math.ceil((rect?.height ?? 60) * 0.3))
+        ? Math.max(SHADOW_ROOM, Math.ceil((launcher?.height ?? 60) * 0.3))
         : SHADOW_ROOM;
       const width = rect && rect.width > 0 ? Math.ceil(rect.width) + room * 2 : fallbackW;
       const height = rect && rect.height > 0 ? Math.ceil(rect.height) + room * 2 : fallbackH;
@@ -174,6 +197,11 @@ export function Widget({
     // dependency has to cover the case that is not.
     boot.theme?.brand_avatar_url,
     copy.launcherLabel,
+    // Gaining or losing the teaser changes the column's box, and the frame has to follow in
+    // both directions — a dismissed teaser that left the frame tall would keep swallowing
+    // clicks over an empty corner of the customer's page.
+    showTeaser,
+    nudge?.message,
   ]);
 
   useEffect(() => {
@@ -257,13 +285,28 @@ export function Widget({
         data-position={boot.theme?.position ?? params.position}
         style={previewOffsets(params, boot)}
       >
-        <Launcher
-          ref={launcherRef}
-          theme={boot.theme}
-          label={copy.launcherLabel}
-          unread={unread}
-          onOpen={show}
-        />
+        {/*
+          Teaser and launcher are one measured column. The host frame's closed size is taken
+          from THIS box, not from the button, which is what lets a proactive message be
+          visible without the panel — see the sizing effect above.
+        */}
+        <div className="n-closed" ref={closedRef}>
+          {showTeaser && nudge && (
+            <Teaser
+              message={nudge.message}
+              avatarUrl={boot.theme?.brand_avatar_url ?? null}
+              onOpen={show}
+              onDismiss={() => setTeaserDismissed(true)}
+            />
+          )}
+          <Launcher
+            ref={launcherRef}
+            theme={boot.theme}
+            label={copy.launcherLabel}
+            unread={unread}
+            onOpen={show}
+          />
+        </div>
       </div>
     );
   }

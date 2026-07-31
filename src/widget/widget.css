@@ -57,11 +57,11 @@ textarea {
 /*
  * Preview (the appearance editor's iframe).
  *
- * On a real page embed.js sizes its iframe to the launcher and positions THAT in the
- * corner, so the widget document only ever has to centre itself in a 96px box —
- * which is why `.n-launcher` uses `margin: auto`. In the editor's 520px iframe that
- * same rule parks the bubble in the middle of an empty white square, and the side and
- * distance controls on that very screen appear to do nothing.
+ * On a real page embed.js sizes its iframe to the closed column and positions THAT in the
+ * corner, so the widget document only ever has to centre itself in that small box — which
+ * is why `.n-closed` uses `margin: auto`. In the editor's 520px iframe that same rule parks
+ * the bubble in the middle of an empty white square, and the side and distance controls on
+ * that very screen appear to do nothing.
  *
  * So the preview plays the part of embed.js: anchor to the chosen corner, using the
  * offsets as the inline custom properties the widget sets in preview mode.
@@ -83,13 +83,18 @@ textarea {
  * 358px preview frame left it 198px wide — half its real width, with the body
  * collapsed. Measured, not guessed.
  */
-.n-root[data-preview='true'] .n-launcher {
+/*
+ * Positions the COLUMN, not the button. The launcher is always inside `.n-closed` now (it
+ * shares that box with a campaign's teaser), and anchoring the button itself would take it
+ * out of the column's flow and leave the teaser floating on its own.
+ */
+.n-root[data-preview='true'] .n-closed {
   position: absolute;
   margin: 0;
   bottom: var(--n-preview-offset-y, 20px);
   right: var(--n-preview-offset-x, 20px);
 }
-.n-root[data-preview='true'][data-position='left'] .n-launcher {
+.n-root[data-preview='true'][data-position='left'] .n-closed {
   right: auto;
   left: var(--n-preview-offset-x, 20px);
 }
@@ -163,9 +168,87 @@ textarea {
 
 /* ── Launcher ────────────────────────────────────────────────────────────── */
 
+/*
+ * The closed state: a campaign's teaser stacked above the launcher.
+ *
+ * `margin: auto` sits HERE rather than on the launcher, because this is now the box the
+ * host frame is measured from and centred in. Aligned to the same edge the widget is
+ * anchored to, so the teaser grows inward across the page instead of off the side of it.
+ */
+.n-closed {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.n-root[data-position='left'] .n-closed {
+  align-items: flex-start;
+}
+
+.n-teaser {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  /* Room at the top-right for the dismiss button, which overhangs the bubble. */
+  padding: 6px 6px 0 0;
+}
+.n-teaser-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* A message is a sentence, not a paragraph. Wide enough to read, narrow enough that the
+     frame it forces does not cover the corner of the customer's page — see the
+     pointer-events note in embed.js. */
+  max-width: 260px;
+  padding: 10px 13px;
+  text-align: left;
+  border-radius: 14px;
+  background: var(--n-color-surface);
+  color: var(--n-color-text);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.16);
+  transition: transform 0.16s ease;
+}
+.n-teaser-body:hover {
+  transform: translateY(-1px);
+}
+.n-teaser-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--n-radius-pill);
+  object-fit: cover;
+  flex: none;
+}
+.n-teaser-text {
+  /* Three lines, then an ellipsis: the bubble must not grow to the height of a paragraph
+     somebody pasted into the campaign, because its height is the frame's height. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13.5px;
+}
+.n-teaser-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--n-radius-pill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--n-color-surface);
+  color: var(--n-color-text-muted);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.22);
+}
+.n-teaser-close:hover {
+  color: var(--n-color-text);
+}
+
 .n-launcher {
   position: relative;
-  margin: auto;
   width: 60px;
   height: 60px;
   border-radius: var(--n-radius-pill);
@@ -191,7 +274,10 @@ textarea {
      anyway. One line, and the frame follows. */
   white-space: nowrap;
   flex: none;
-  align-self: center;
+  /* No `align-self` here any more. It used to centre the button in `.n-root`'s ROW, where
+     the cross axis was vertical; the button now sits in `.n-closed`'s COLUMN, where
+     `align-self: center` would centre it horizontally and pull a pill away from the edge
+     the widget is anchored to. `.n-closed` owns alignment for both axes. */
   height: 48px;
   padding: 0 20px;
   gap: 8px;
