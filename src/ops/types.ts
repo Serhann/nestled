@@ -138,6 +138,30 @@ export interface WorkspaceWebsite {
   domains: { host: string; hits: number; authorized: boolean; last_seen: string }[];
 }
 
+/**
+ * GET /platform/workspaces/:id/websites/:websiteId/prompt
+ *
+ * Every tier is returned, not just the one in force: an empty override field means "use
+ * the install's, or ours", and a UI that cannot show WHICH invites somebody to paste a
+ * whole new prompt when they meant to change one sentence.
+ */
+export interface WebsitePrompt {
+  website_name: string;
+  source: 'website' | 'install' | 'default';
+  website: string | null;
+  install: string | null;
+  default: string;
+  effective_template: string;
+  actions: {
+    catalog: { name: string; placeholder: string; always: boolean }[];
+    enabled: string[];
+    values: Record<string, string[]>;
+  };
+  /** The whole system prompt as the model receives it, with the two per-conversation
+   *  blocks described rather than filled in. */
+  assembled: string;
+}
+
 /** GET /platform/workspaces/:id/members */
 export interface WorkspaceMember {
   id: string;

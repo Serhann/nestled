@@ -36,10 +36,15 @@ docker run -d --name nestled-test-db -e POSTGRES_USER=nestled \
 
 export DATABASE_URL='postgres://nestled:nestled@localhost:5546/nestled_test'
 export JWT_ACCESS_SECRET=test-secret-min-16-chars JWT_REFRESH_SECRET=test-secret-min-16-chars
+export SETTINGS_KEY=test-settings-key
 export NODE_ENV=test
 npx prisma migrate deploy
-npm test        # 362 tests, serial — they share one database
+npm test        # 393 tests, serial — they share one database
 ```
+
+`SETTINGS_KEY` is not optional here even though it is optional in production:
+one test asserts that a saved DeepL key is unreadable in the database, and
+without a key encryption is a no-op, so it fails for the right reason.
 
 They run with `--test-concurrency=1` on purpose: each file `TRUNCATE`s in its
 `before`, and in parallel they delete each other's fixtures.
@@ -98,7 +103,7 @@ cannot go stale.
 | Ops & usage | `/w/:id/{usage,audit,integrations}` |
 | Push | `/api/v1/push/{public-key,subscribe,unsubscribe}` |
 | Widget (public) | `/api/v1/widget/{boot,availability,session,offline-message}`, `…/conversations` and `…/:id/{messages,typing,rating,attributes,claim}`, `…/triggers/:id/fire` |
-| Platform | `/platform/{auth,me,search,workspaces,plans,dunning,impersonations,health,settings,users}` |
+| Platform | `/platform/{auth,me,search,workspaces,plans,dunning,impersonations,health,settings,users}`, `GET|PATCH /platform/workspaces/:id/websites/:websiteId/prompt` |
 | Realtime | `GET /ws/agent`, `/ws/visitor/:id`, `/ws/presence` |
 | Health | `GET /healthz` |
 
@@ -122,13 +127,16 @@ layer beneath the database.
 src/
   index.ts              boot: assertions, migrations, seeds, plugins, routes
   env.ts                the fourteen environment variables, and why
-  permissions.ts        3 customer roles, 34 capabilities, impersonation subtraction
+  permissions.ts        3 customer roles, 34 capabilities, 14 platform scopes
   db/       tenant.ts   the scoped Prisma client — the enforcement core
             unscoped.ts the only real client; its docblock lists who may import it
   plugins/  auth.ts     requireAuth / requireWorkspace / can / requireVisitor / requirePlatform
   routes/   v1/*        the customer and widget planes
             platform/*  the vendor plane
   services/ ai, bot, billing, platform, email, geo, identity, push, discord
+            ai/actions.ts    the token vocabulary: handoff, tag, resolve
+            ai/preamble.ts   our instructions, resolved website → install → default
+            ai/prompt.ts      assembly order: policy in front, safety and syntax last
   realtime/ hub, presence, replay, gateway
   lib/      limits, messages, usage, retention, jobs, audit, validate
   test/     *.test.ts

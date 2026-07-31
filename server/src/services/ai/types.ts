@@ -1,3 +1,5 @@
+import type { EnabledActions } from './actions.js';
+
 export interface KnowledgeItem {
   question: string;
   answer: string;
@@ -21,6 +23,11 @@ export interface AIReplyInput {
   message: string;
   settings: AISettings;
   knowledge: KnowledgeItem[];
+  /** OUR instructions, resolved per install/website and already rendered — the front of
+   *  the prompt. See services/ai/preamble.ts. */
+  preamble?: string;
+  /** Which action tokens this reply may use. Absent = handoff only. */
+  actions?: EnabledActions;
   /** Pre-rendered block of HMAC-verified facts about this visitor from the host
    *  site, or an explicit "no verified facts available" line. Trusted: the model
    *  may quote it; without it the model must not describe any account state. */

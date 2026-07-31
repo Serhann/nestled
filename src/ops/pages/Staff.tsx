@@ -15,7 +15,7 @@ import { Badge, Button, Card, Empty, ErrorBox, Field, Modal, Spinner, Table, Td,
  * Two things this screen has to make visible, or the model is worse than four roles:
  *
  *   - which ticks come from the ROLE and which were added for this person. A flat list
- *     of thirteen ticks tells you nothing about what changing the role would do.
+ *     of fourteen ticks tells you nothing about what changing the role would do.
  *   - that a **denied** scope wins over the role, including over superadmin. That is the
  *     only way to say "administers the install but does not read customer
  *     conversations", and it is invisible unless the UI says so.
@@ -38,6 +38,7 @@ const DESCRIPTIONS: Record<string, string> = {
   'impersonate:full': 'Sign in as a customer and act as them.',
   'impersonate:end': 'End somebody else’s impersonation session.',
   'settings:write': 'Install-wide settings: AI keys, SMTP, Stripe, retention.',
+  'ai:prompt': 'Rewrite one website’s assistant instructions — including when it hands off.',
   'staff:manage': 'Create staff accounts and change their roles and permissions.',
 };
 
@@ -99,7 +100,7 @@ export function Staff() {
                 <Td className="text-xs text-gray-400">
                   {/*
                     Only the DIFFERENCE from the role is worth a row here. Printing all
-                    thirteen for every account buries the one line that matters.
+                    fourteen for every account buries the one line that matters.
                   */}
                   {user.granted_scopes.length === 0 && user.denied_scopes.length === 0 ? (
                     <span className="text-gray-500">role defaults</span>

@@ -13,6 +13,7 @@ import type {
   WorkspacePlanTab,
   WorkspaceUsageTab,
   WorkspaceWebsite,
+  WebsitePrompt,
 } from '../types';
 import {
   Badge,
@@ -700,6 +701,10 @@ function WebsitesTab({ workspaceId }: { workspaceId: string }) {
             <Stat label="Signing secret" value={site.has_identity_secret ? 'configured' : 'none'} />
           </div>
 
+          {/* Not shown for a deleted website: its widget answers nobody, and offering an
+              editor there would be a form whose Save button changes nothing observable. */}
+          {!site.deleted_at && <WebsitePromptEditor workspaceId={workspaceId} websiteId={site.id} />}
+
           {site.domains.length > 0 && (
             <div className="mt-4">
               <h3 className="mb-2 text-xs uppercase tracking-wide text-gray-500">Hosts seen loading the widget</h3>
@@ -722,6 +727,168 @@ function WebsitesTab({ workspaceId }: { workspaceId: string }) {
           )}
         </Card>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The assistant's instructions for one website.
+ *
+ * Collapsed by default. Somebody on the Websites tab is usually checking a domain or a
+ * public key, and an eleven-row textarea per site would bury that — but when the question
+ * IS "why did the bot not escalate this", it needs to be two clicks away and not a
+ * conversation with an engineer.
+ *
+ * The editor is seeded from the tier in force rather than left blank. Starting from the
+ * default is how somebody adjusts one sentence; starting from nothing is how they rewrite a
+ * policy they never read, and lose the handoff wording by accident.
+ */
+function WebsitePromptEditor({ workspaceId, websiteId }: { workspaceId: string; websiteId: string }) {
+  const queryClient = useQueryClient();
+  const session = useSession();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const key = ['workspace', workspaceId, 'websites', websiteId, 'prompt'];
+  const { data, error, isPending } = useQuery({
+    queryKey: key,
+    queryFn: () =>
+      api<{ prompt: WebsitePrompt }>(`/platform/workspaces/${workspaceId}/websites/${websiteId}/prompt`),
+    enabled: open,
+  });
+
+  const save = useMutation({
+    mutationFn: (value: string) =>
+      api<{ prompt: WebsitePrompt }>(
+        `/platform/workspaces/${workspaceId}/websites/${websiteId}/prompt`,
+        { method: 'PATCH', body: { ai_preamble: value } },
+      ),
+    onSuccess: async () => {
+      setDraft(null);
+      await queryClient.invalidateQueries({ queryKey: key });
+    },
+  });
+
+  const canEdit = session?.user.capabilities?.includes('ai:prompt') ?? false;
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="mt-4 text-xs text-blue-700 hover:underline"
+        onClick={() => setOpen(true)}
+      >
+        Assistant instructions →
+      </button>
+    );
+  }
+
+  const prompt = data?.prompt;
+  // `?? effective_template` and not `?? ''`: see the note above.
+  const value = draft ?? prompt?.website ?? prompt?.effective_template ?? '';
+
+  return (
+    <div className="mt-4 rounded-xl border border-gray-200 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-xs uppercase tracking-wide text-gray-500">Assistant instructions</h3>
+        <button type="button" className="text-xs text-gray-500 hover:underline" onClick={() => setOpen(false)}>
+          Hide
+        </button>
+      </div>
+
+      {error && <ErrorBox error={error} />}
+      {isPending && <Spinner />}
+
+      {prompt && (
+        <>
+          <p className="mb-3 text-xs leading-relaxed text-gray-500">
+            This goes above the customer&rsquo;s own prompt and decides when the assistant hands
+            off. Actions expand to the tokens it emits:{' '}
+            {prompt.actions.catalog.map((a) => (
+              <code key={a.name} className="mr-1 rounded bg-gray-100 px-1">
+                {a.placeholder}
+              </code>
+            ))}
+            . Only <code>{'{{handoff}}'}</code> is always available — the others work for this
+            website only while the text below mentions them, so nothing acts on a policy nobody
+            wrote down.
+          </p>
+
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Badge tone={prompt.source === 'website' ? 'warn' : 'ok'}>
+              {prompt.source === 'website'
+                ? 'this website has its own wording'
+                : prompt.source === 'install'
+                  ? 'using the install’s wording'
+                  : 'using the built-in default'}
+            </Badge>
+            {prompt.actions.enabled.map((name) => (
+              <Badge key={name} tone="neutral">
+                {name}
+                {prompt.actions.values[name]?.length ? `: ${prompt.actions.values[name]!.join(', ')}` : ''}
+              </Badge>
+            ))}
+          </div>
+
+          <textarea
+            className={`${inputClass} font-mono text-xs`}
+            rows={10}
+            disabled={!canEdit}
+            value={value}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+
+          {save.error ? <div className="mt-2"><ErrorBox error={save.error} /></div> : null}
+
+          <div className="mt-2 flex items-center gap-2">
+            <Button
+              variant="primary"
+              disabled={!canEdit || save.isPending || draft === null || draft === prompt.website}
+              title={canEdit ? undefined : 'Needs the ai:prompt permission'}
+              onClick={() => save.mutate(value)}
+            >
+              {save.isPending ? 'Saving…' : 'Save for this website'}
+            </Button>
+            {prompt.website && (
+              <Button
+                variant="default"
+                disabled={!canEdit || save.isPending}
+                onClick={() => {
+                  if (
+                    confirm(
+                      'Drop this website’s own wording and go back to the install’s instructions?',
+                    )
+                  ) {
+                    save.mutate('');
+                  }
+                }}
+              >
+                Use the install’s
+              </Button>
+            )}
+            {draft !== null && (
+              <button
+                type="button"
+                className="text-xs text-gray-500 hover:underline"
+                onClick={() => setDraft(null)}
+              >
+                Discard changes
+              </button>
+            )}
+          </div>
+
+          {/* The saved state, not the draft — the point is what the model is being sent
+              right now, and a preview of unsaved text would blur exactly that. */}
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs text-gray-500">
+              What the model is sent right now
+            </summary>
+            <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-gray-50 p-3 text-xs text-gray-700">
+              {prompt.assembled}
+            </pre>
+          </details>
+        </>
+      )}
     </div>
   );
 }

@@ -84,8 +84,16 @@ function readState(raw: unknown): RunState {
  */
 export interface EngineIO {
   say(text: string, hint: BotStepHint): Promise<void>;
-  /** null = the AI could not answer (no quota, no provider, empty output). */
-  aiAnswer(question: string): Promise<string | null>;
+  /**
+   * null = the AI could not answer (no quota, no provider, empty output).
+   *
+   * `handoff` is the assistant asking for a person — the `<<HANDOFF>>` action. It used to
+   * be dropped on this path: the flow said the answer out loud and carried on to the next
+   * node, so a visitor was told "let me connect you to a team member" and nobody was ever
+   * connected. The flow's own handoff node is how an AUTHOR asks for a human; this is how
+   * the assistant does, and both have to arrive.
+   */
+  aiAnswer(question: string): Promise<{ text: string; handoff: boolean } | null>;
   tag(tags: string[]): Promise<void>;
   handoff(reason: string): Promise<void>;
   route(): Promise<void>;
@@ -282,7 +290,16 @@ export async function runTurn(
           cursor = null;
           break;
         }
-        await io.say(answer, hintFor(node, opts.runId));
+        await io.say(answer.text, hintFor(node, opts.runId));
+        // The assistant answered AND asked for a person. The flow stops here rather than
+        // walking on to the next node: whatever comes next was written for the case where
+        // the answer landed, and the visitor has just been promised a human.
+        if (answer.handoff) {
+          await io.handoff('The assistant handed off');
+          handedOff = true;
+          cursor = null;
+          break;
+        }
         cursor = node.next ?? null;
         break;
       }
@@ -329,7 +346,9 @@ interface LiveTarget {
 }
 
 function liveIO(target: LiveTarget): EngineIO {
-  return {
+  // Named rather than returned inline so `aiAnswer` can reuse `io.tag` without `this`,
+  // which would break the moment anything destructured this object.
+  const io: EngineIO = {
     async say(text, hint) {
       // The NORMAL message path, with sender_type 'bot'. There is deliberately no
       // second delivery mechanism: the agent inbox, Web Push, Discord and the
@@ -369,7 +388,11 @@ function liveIO(target: LiveTarget): EngineIO {
       // Metered here rather than in insertMessage: the bot posts as 'bot', not 'ai',
       // so the transcript reads as one voice — but the call still cost us one reply.
       await incrementUsage(target.workspaceId, 'ai_replies', 1);
-      return result.reply;
+      // `tags` are applied by the flow's own tag effect where the author asked for them,
+      // so the assistant's labels are carried here too — a flow calling the assistant
+      // should not lose the categorisation the same reply would have produced outside one.
+      if (result.tags.length > 0) await io.tag(result.tags);
+      return { text: result.reply, handoff: result.needsHuman };
     },
 
     async tag(tags) {
@@ -457,6 +480,7 @@ function liveIO(target: LiveTarget): EngineIO {
       return row?.content ?? null;
     },
   };
+  return io;
 }
 
 // ── Entry matching ───────────────────────────────────────────────────────────
@@ -733,7 +757,10 @@ export async function simulateGraph(params: {
       });
     },
     async aiAnswer(question) {
-      return `[ai_answer] ${question}`;
+      // No handoff in the simulator: whether the model asks for a person depends on the
+      // model, and a Test run that sometimes ended in a handoff and sometimes did not
+      // would be showing the author noise instead of the shape of their flow.
+      return { text: `[ai_answer] ${question}`, handoff: false };
     },
     async tag(tags) {
       steps.push({ kind: 'tag', node_id: '', tags });

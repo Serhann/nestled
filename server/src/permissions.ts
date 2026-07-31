@@ -192,7 +192,7 @@ export function platformRoleAllows(role: PlatformRole, allowed: readonly Platfor
  *
  * So the ROLE is now a named bundle of these scopes, and an account can be granted or
  * denied individual ones on top. The four roles stay because they are the right answer
- * nine times out of ten, and because a list of thirteen checkboxes is a worse default
+ * nine times out of ten, and because a list of fourteen checkboxes is a worse default
  * than a word.
  *
  * The list is deliberately shaped around CONSEQUENCES rather than routes. `plan:write`
@@ -225,6 +225,16 @@ export const PLATFORM_CAPABILITIES = [
   'impersonate:end',
   /** Install-wide settings: AI keys, SMTP, Stripe, GeoIP, VAPID, retention. */
   'settings:write',
+  /**
+   * Rewrite the assistant's instructions for ONE website — notably when it hands off.
+   *
+   * Separate from `settings:write` because the consequences are different sizes. That one
+   * holds the Stripe key and the SMTP host: get it wrong and every customer on the install
+   * feels it at once. This one changes how one customer's assistant behaves, which is
+   * exactly the kind of tuning a support engineer does while a customer is on the phone —
+   * and exactly the reason it should not require handing them the credentials.
+   */
+  'ai:prompt',
   /** Create staff accounts and change their roles, scopes and status. */
   'staff:manage',
 ] as const;
@@ -243,6 +253,7 @@ const PLATFORM_SUPPORT: PlatformCapability[] = [
   'deletion:restore',
   'impersonate:read_only',
   'impersonate:full',
+  'ai:prompt',
 ];
 
 /** Money: one customer's plan, and the catalog everyone is sold. */

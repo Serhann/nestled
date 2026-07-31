@@ -3,7 +3,8 @@
 // eslint-disable-next-line no-restricted-imports -- reads for a caller-supplied workspace
 import { unscopedPrisma } from '../../db/unscoped.js';
 import { insertMessage } from '../../lib/messages.js';
-import { anyAgentOnline, publishToWorkspace } from '../../realtime/hub.js';
+import { anyAgentOnline, publishToWorkspace, sendToConversationVisitors } from '../../realtime/hub.js';
+import { onAgentReply } from '../responseTargets.js';
 import { pushHandoff } from '../push.js';
 import { bumpUsage, checkUsageLimit } from '../../lib/usage.js';
 import { generateAIReply, summarizeConversation } from './index.js';
@@ -98,14 +99,100 @@ export async function maybeAIReply(
       });
     }
 
+    // Labels first: they are the thing an agent wants to see on the row whether the next
+    // step is a handoff or a close.
+    if (result.tags.length > 0) {
+      await applyTags(workspaceId, conversationId, result.tags);
+    }
+
     if (result.needsHuman) {
       const summary = await summarizeConversation(workspaceId, conversationId);
       await flagHandoff(workspaceId, websiteId, conversationId, 'AI handed off', summary, last.content);
+    } else if (result.resolve) {
+      await resolveConversation(workspaceId, websiteId, conversationId);
     }
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[ai] reply failed', err);
   }
+}
+
+/**
+ * Add the labels the assistant asked for.
+ *
+ * MERGED, never replaced, and lowercased on the way in — the same normalisation the bot
+ * engine's `tag` effect uses. The assistant is one of several things that label a
+ * conversation (the flow, a trigger, an agent), and the last one to write must not be able
+ * to drop what the others found.
+ *
+ * The vocabulary is already narrow by the time it gets here: `parseActions` keeps only the
+ * names the preamble listed, so a model inventing "billing question" alongside "billing"
+ * cannot quietly fork the dimension a customer's reports group by.
+ */
+async function applyTags(
+  workspaceId: string,
+  conversationId: string,
+  tags: string[],
+): Promise<void> {
+  const conv = await unscopedPrisma.conversations.findFirst({
+    where: { id: conversationId, workspace_id: workspaceId },
+    select: { tags: true },
+  });
+  if (!conv) return;
+  const merged = [...new Set([...conv.tags, ...tags])];
+  if (merged.length === conv.tags.length) return;
+  await unscopedPrisma.conversations.updateMany({
+    where: { id: conversationId, workspace_id: workspaceId },
+    data: { tags: merged },
+  });
+}
+
+/**
+ * Close a conversation because the assistant says the visitor is done.
+ *
+ * Off unless an operator opted in by writing `{{resolve}}` into the preamble — see
+ * actions.ts for why enabling is by reference rather than a checkbox. The reason for the
+ * caution is right here: resolving stops the response clock and tells the widget to clear
+ * the thread, so a wrong close is visible to the visitor, not just to the team.
+ *
+ * Deliberately the same four steps an agent's resolve takes (see routes/v1/conversations),
+ * because a conversation closed by the assistant that skipped `onAgentReply` would keep
+ * its deadline, breach overnight, and page somebody about something already settled.
+ */
+async function resolveConversation(
+  workspaceId: string,
+  websiteId: string,
+  conversationId: string,
+): Promise<void> {
+  const updated = await unscopedPrisma.conversations.updateMany({
+    // `needs_human` in the filter and not just in the caller: between generating the reply
+    // and this write, a handoff could have landed from a trigger or the visitor asking
+    // again. Closing a thread somebody is already waiting on a human for is the one
+    // outcome this feature must not produce.
+    where: {
+      id: conversationId,
+      workspace_id: workspaceId,
+      needs_human: false,
+      assigned_member_id: null,
+      status: { not: 'resolved' },
+    },
+    data: { status: 'resolved', resolved_at: new Date() },
+  });
+  if (updated.count === 0) return;
+
+  await onAgentReply({ workspaceId, conversationId });
+  publishToWorkspace(
+    workspaceId,
+    {
+      type: 'conversation:updated',
+      conversation: { id: conversationId, status: 'resolved', needs_human: false },
+    },
+    { websiteId },
+  );
+  sendToConversationVisitors(conversationId, {
+    type: 'conversation:resolved',
+    conversationId,
+  });
 }
 
 /**

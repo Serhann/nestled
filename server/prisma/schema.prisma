@@ -384,6 +384,11 @@ model website_settings {
   /// Customer-authored extra instructions. Assembled BEFORE the fixed style,
   /// grounding and handoff rules so it can never override the contract.
   ai_extra_rules           String?
+  /// OPS-only override of the assistant's own instructions for this one website —
+  /// notably when it hands off. NULL falls back to the install's, then to the default
+  /// in code. Not in the customer's behaviour form: it carries the action protocol,
+  /// and the actions write tags and close conversations. See migration 0014.
+  ai_preamble              String?
   pre_chat_enabled         Boolean @default(false)
   pre_chat_fields          Json    @default(dbgenerated("'[]'::jsonb"))
   auto_welcome_enabled     Boolean @default(false)
@@ -1366,6 +1371,10 @@ model platform_settings {
   // ── AI. Ours, not the customer's: usage is metered per workspace. ──
   ai_provider       String? // knowledge_base|anthropic|openai|ollama
   ai_model          String?
+  /// This install's version of the assistant's own instructions — the text that goes
+  /// ABOVE every website's system_prompt. NULL = the default in code, so an improved
+  /// default still reaches installs that never edited theirs. See migration 0014.
+  ai_preamble       String?
   anthropic_api_key String?
   openai_api_key    String?
   ollama_url        String?

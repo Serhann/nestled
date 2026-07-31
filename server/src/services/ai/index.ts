@@ -13,6 +13,8 @@ import {
   openaiProvider,
 } from './providers.js';
 import { settings as platformSettings } from '../platform/settings.js';
+import { parseActions } from './actions.js';
+import { resolvePreamble } from './preamble.js';
 
 const providers: Record<AISettings['ai_provider'], AIProvider> = {
   knowledge_base: knowledgeBaseProvider,
@@ -21,11 +23,13 @@ const providers: Record<AISettings['ai_provider'], AIProvider> = {
   ollama: ollamaProvider,
 };
 
-const HANDOFF = '<<HANDOFF>>';
-
 export interface AIReplyResult {
   reply: string;
   needsHuman: boolean;
+  /** Labels the model asked for, already filtered to the ones the preamble offered. */
+  tags: string[];
+  /** The model says the visitor is done. Only ever true when the preamble enabled it. */
+  resolve: boolean;
 }
 
 /**
@@ -285,12 +289,15 @@ export async function generateAIReply(
 ): Promise<AIReplyResult | null> {
   const site = await prisma.website_settings.findUnique({
     where: { website_id: websiteId },
-    select: { system_prompt: true, ai_extra_rules: true },
+    select: { system_prompt: true, ai_extra_rules: true, ai_preamble: true },
   });
-  const settings = platformAISettings(
-    site?.system_prompt?.trim() ||
-      'You are a helpful customer support assistant for this business. Answer only questions about it and its products or services. If you do not know the answer, hand off to a human.',
-  );
+  // No default persona here any more. It used to fill this slot with "you are a helpful
+  // customer support assistant … if you do not know the answer, hand off to a human" —
+  // which is a HANDOFF POLICY, sitting in the customer's field, silently competing with
+  // whatever an operator now writes in the preamble. Persona and policy have one home
+  // (preamble.ts) and the customer's slot is empty when they have not written anything.
+  const settings = platformAISettings(site?.system_prompt?.trim() || '');
+  const preamble = resolvePreamble(site?.ai_preamble, platformSettings().ai.preamble);
 
   const verified = await conversationContext(workspaceId, conversationId);
   const knowledge = await loadKnowledge(workspaceId, websiteId);
@@ -302,6 +309,10 @@ export async function generateAIReply(
       message,
       settings,
       knowledge,
+      // OUR instructions, first — see prompt.ts for why policy goes at the front and the
+      // action syntax at the very end.
+      preamble: preamble.text,
+      actions: preamble.actions,
       visitorContext: renderVisitorContext(verified),
       // Customer-authored rules go in BEFORE the fixed contract (see prompt.ts), so
       // they can never talk the model out of the handoff protocol.
@@ -334,11 +345,11 @@ export async function generateAIReply(
     void bumpUsage(workspaceId, 'ai_tokens_out', result.usage.output);
   }
 
-  const needsHuman = result.text.includes(HANDOFF);
-  let reply = result.text.split(HANDOFF).join('').trim();
-  if (needsHuman && !reply) {
-    reply = "Let me connect you with a team member who can help with that.";
+  const parsed = parseActions(result.text, preamble.actions);
+  let reply = parsed.text;
+  if (parsed.handoff && !reply) {
+    reply = 'Let me connect you with a team member who can help with that.';
   }
   if (!reply) return null; // empty model output → post nothing
-  return { reply, needsHuman };
+  return { reply, needsHuman: parsed.handoff, tags: parsed.tags, resolve: parsed.resolve };
 }

@@ -26,7 +26,7 @@ function recorder(opts: { open?: boolean; attributes?: Record<string, unknown> }
       said.push(text);
     },
     async aiAnswer(question) {
-      return `answered: ${question}`;
+      return { text: `answered: ${question}`, handoff: false };
     },
     async tag(tags) {
       actions.push(`tag:${tags.join(',')}`);
