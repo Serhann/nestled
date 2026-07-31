@@ -8,6 +8,9 @@ import { ROUTING_STRATEGIES, routingConditionsSchema } from '../../services/rout
 import { validateGraph, parseGraph } from '../../services/bot/validate.js';
 import { simulateGraph } from '../../services/bot/engine.js';
 import { botEntrySchema } from '../../services/bot/types.js';
+// The four JSONB column schemas live outside this file so they are importable — and so
+// testable — without prisma and a database. See services/triggers.ts.
+import { triggerBody } from '../../services/triggers.js';
 // Plan limits are read from the shared plan catalog, which is reference data.
 // eslint-disable-next-line no-restricted-imports -- shared plan catalog
 import { unscopedPrisma } from '../../db/unscoped.js';
@@ -21,79 +24,6 @@ import { unscopedPrisma } from '../../db/unscoped.js';
  */
 
 const websiteScope = z.object({ website_id: z.string().uuid().nullable().optional() });
-
-/**
- * Trigger configuration.
- *
- * The four child tables of the pre-tenant design (trigger_actions, _events,
- * _behaviors, _platforms) are four JSONB columns here. They were 1:1 with the
- * trigger, nothing ever filtered on their individual columns, and every write
- * deleted and recreated all four rows — a join table's cost with none of its
- * benefit. What a JSONB column loses is the database's opinion about its shape, so
- * these schemas are that opinion: unknown keys are rejected, and the column stays a
- * record rather than becoming a junk drawer.
- */
-const triggerActions = z
-  .object({
-    show_message: z.boolean().default(false),
-    message_content: z.string().max(2000).nullable().default(null),
-    localized_messages: z.record(z.string().max(10), z.string().max(2000)).default({}),
-    open_chatbox: z.boolean().default(false),
-    play_sound: z.boolean().default(false),
-    /**
-     * Start a bot flow instead of (or alongside) a canned message. The widget
-     * carries the trigger id into conversation creation and the SERVER resolves it
-     * to a flow — the widget never learns which flow, let alone its graph.
-     */
-    start_bot: z.string().uuid().nullable().default(null),
-  })
-  .strict();
-
-const triggerEvents = z
-  .object({
-    on_leave_intent: z.boolean().default(false),
-    on_click_link: z.boolean().default(false),
-    click_selectors: z.array(z.string().max(200)).max(20).default([]),
-    on_pages: z.boolean().default(false),
-    page_urls: z.array(z.string().max(500)).max(50).default([]),
-    on_url_parameters: z.boolean().default(false),
-    url_parameters: z.record(z.string().max(64), z.string().max(200)).default({}),
-    after_delay: z.boolean().default(false),
-    delay_seconds: z.number().int().min(0).max(3600).default(0),
-  })
-  .strict();
-
-const triggerBehaviors = z
-  .object({
-    show_as_website: z.boolean().default(false),
-    execute_if_online: z.boolean().default(false),
-    execute_on_first_visit: z.boolean().default(false),
-    execute_if_no_other_trigger: z.boolean().default(false),
-    country_restriction: z.array(z.string().length(2)).max(50).default([]),
-  })
-  .strict();
-
-const triggerPlatforms = z
-  .object({
-    desktop_enabled: z.boolean().default(true),
-    mobile_enabled: z.boolean().default(true),
-  })
-  .strict();
-
-const triggerBody = websiteScope.extend({
-  name: z.string().min(1).max(120),
-  identifier: z
-    .string()
-    .min(1)
-    .max(80)
-    .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, numbers and dashes'),
-  is_active: z.boolean().default(true),
-  priority: z.number().int().min(0).max(1000).default(0),
-  actions: triggerActions.default(triggerActions.parse({})),
-  events: triggerEvents.default(triggerEvents.parse({})),
-  behaviors: triggerBehaviors.default(triggerBehaviors.parse({})),
-  platforms: triggerPlatforms.default(triggerPlatforms.parse({})),
-});
 
 const routingBody = websiteScope.extend({
   name: z.string().min(1).max(120),
