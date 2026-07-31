@@ -8,6 +8,7 @@ import {
   listTriggers,
   updateTrigger,
   type Trigger,
+  type TriggerEvents,
 } from '../../../lib/api/automation';
 import { listWebsites } from '../../../lib/api/workspace';
 import { qk } from '../../../lib/queryKeys';
@@ -25,10 +26,54 @@ import { WebsiteScope } from '../../../ui/WebsiteScope';
 /**
  * Campaigns: say something without waiting to be asked.
  *
- * The event that fires a campaign is evaluated in the visitor's browser, because
- * the useful signals — time on page, scroll depth, leaving the tab — only exist
- * there. What it *does* is decided here.
+ * The event that fires a campaign is evaluated in the visitor's browser, because the
+ * useful signals — time on page, leaving the tab — only exist there. What it *does* is
+ * decided here.
+ *
+ * ── Every field on this screen is a field the browser engine actually reads ──────
+ *
+ * It has to be, and it was not. This screen used to invent its own vocabulary
+ * (`events.type: 'time_on_page'`, `actions: { type, message }`,
+ * `behaviors.once_per_session`, `platforms: { desktop, mobile }`) against a server schema
+ * that rejects unknown keys — so Save returned a 400 listing all four columns and no
+ * campaign could ever be created. The names below are the ones in
+ * `utils/triggerEngine.ts` and `server/src/routes/v1/automation.ts`.
+ *
+ * The lesson worth keeping: a control whose value nothing reads is worse than a missing
+ * control, because it reads as a configured campaign that simply never fires. Two of the
+ * old options were exactly that even before the 400 — a "scroll depth" event the engine
+ * has no scroll listener for, and a "once per visit" toggle for behaviour the engine
+ * already applies unconditionally (`markExecuted`, persisted in localStorage). Neither is
+ * offered here. Anything the engine supports but this screen does not expose — click
+ * selectors, URL parameters, country restriction, localized messages — is absent rather
+ * than faked.
  */
+
+/** The event kinds this screen offers, each mapping to real `events` flags. */
+type When = 'delay' | 'leave_intent' | 'page_view';
+
+function whenOf(events: TriggerEvents): When {
+  if (events.after_delay) return 'delay';
+  if (events.on_leave_intent) return 'leave_intent';
+  return 'page_view';
+}
+
+/**
+ * Set the event flags for one kind, clearing the others.
+ *
+ * Exclusive because the select is: leaving both `after_delay` and `on_leave_intent` set
+ * would arm two listeners for one campaign and whichever fired first would win, which is
+ * not something a dropdown can express.
+ */
+function withWhen(events: TriggerEvents, when: When): TriggerEvents {
+  return {
+    ...events,
+    after_delay: when === 'delay',
+    delay_seconds: when === 'delay' ? (events.delay_seconds ?? 30) : 0,
+    on_leave_intent: when === 'leave_intent',
+  };
+}
+
 export default function Campaigns() {
   const { workspace, can } = useWorkspace();
   const queryClient = useQueryClient();
@@ -77,10 +122,14 @@ export default function Campaigns() {
               setEditing({
                 is_active: false,
                 priority: 10,
-                events: { type: 'time_on_page', seconds: 30 },
-                actions: { type: 'message', message: '' },
-                behaviors: { once_per_session: true },
-                platforms: { desktop: true, mobile: true },
+                events: { after_delay: true, delay_seconds: 30 },
+                // `open_chatbox` defaults ON because a nudge is drawn INSIDE the panel
+                // (Widget.tsx renders it through Screen → Thread) and nothing badges the
+                // closed launcher for it. A message campaign that does not open the panel
+                // is invisible unless the visitor happens to open the chat themselves.
+                actions: { show_message: true, message_content: '', open_chatbox: true },
+                behaviors: {},
+                platforms: { desktop_enabled: true, mobile_enabled: true },
               })
             }
           >
@@ -174,12 +223,12 @@ function CampaignDialog({
   onClose: () => void;
   onSave: () => void;
 }) {
-  const events = (value.events ?? {}) as Record<string, unknown>;
-  const actions = (value.actions ?? {}) as Record<string, unknown>;
-  const behaviors = (value.behaviors ?? {}) as Record<string, unknown>;
+  const events = value.events ?? {};
+  const actions = value.actions ?? {};
+  const behaviors = value.behaviors ?? {};
 
-  const setEvents = (patch: Record<string, unknown>) =>
-    onChange({ ...value, events: { ...events, ...patch } });
+  const setEvents = (next: TriggerEvents) => onChange({ ...value, events: next });
+  const when = whenOf(events);
 
   return (
     <Modal
@@ -225,52 +274,50 @@ function CampaignDialog({
           {(a) => (
             <Select
               {...a}
-              value={String(events.type ?? 'time_on_page')}
-              onChange={(e) => setEvents({ type: e.target.value })}
+              value={when}
+              onChange={(e) => setEvents(withWhen(events, e.target.value as When))}
             >
-              <option value="time_on_page">After a while on a page</option>
-              <option value="scroll_depth">After scrolling down</option>
-              <option value="exit_intent">When they look like they are leaving</option>
+              <option value="delay">After a while on a page</option>
+              <option value="leave_intent">When they look like they are leaving</option>
               <option value="page_view">As soon as a page loads</option>
             </Select>
           )}
         </Field>
 
-        {events.type === 'time_on_page' && (
+        {when === 'delay' && (
           <Field label="After how many seconds?">
             {(a) => (
               <TextInput
                 {...a}
                 type="number"
                 min={1}
-                max={600}
-                value={Number(events.seconds ?? 30)}
-                onChange={(e) => setEvents({ seconds: Number(e.target.value) })}
-              />
-            )}
-          </Field>
-        )}
-        {events.type === 'scroll_depth' && (
-          <Field label="How far down? (percent)">
-            {(a) => (
-              <TextInput
-                {...a}
-                type="number"
-                min={1}
-                max={100}
-                value={Number(events.percent ?? 50)}
-                onChange={(e) => setEvents({ percent: Number(e.target.value) })}
+                max={3600}
+                value={events.delay_seconds ?? 30}
+                onChange={(e) => setEvents({ ...events, delay_seconds: Number(e.target.value) })}
               />
             )}
           </Field>
         )}
 
-        <Field label="Only on pages matching" hint="Leave blank for every page. * works as a wildcard.">
+        <Field
+          label="Only on pages matching"
+          hint="Leave blank for every page. * works as a wildcard."
+        >
           {(a) => (
             <TextInput
               {...a}
-              value={String(events.url_pattern ?? '')}
-              onChange={(e) => setEvents({ url_pattern: e.target.value })}
+              value={events.page_urls?.[0] ?? ''}
+              onChange={(e) => {
+                // `on_pages` is the flag the engine tests before it looks at the list, so
+                // an empty box has to clear BOTH. Leaving the flag on with no patterns
+                // would read as "restricted to nothing".
+                const pattern = e.target.value;
+                setEvents({
+                  ...events,
+                  on_pages: pattern.trim().length > 0,
+                  page_urls: pattern.trim().length > 0 ? [pattern] : [],
+                });
+              }}
               placeholder="/pricing*"
             />
           )}
@@ -281,9 +328,12 @@ function CampaignDialog({
             <TextArea
               {...a}
               rows={3}
-              value={String(actions.message ?? '')}
+              value={actions.message_content ?? ''}
               onChange={(e) =>
-                onChange({ ...value, actions: { ...actions, type: 'message', message: e.target.value } })
+                onChange({
+                  ...value,
+                  actions: { ...actions, show_message: true, message_content: e.target.value },
+                })
               }
               placeholder="Comparing plans? Happy to help you pick."
             />
@@ -291,10 +341,26 @@ function CampaignDialog({
         </Field>
 
         <Toggle
-          checked={Boolean(behaviors.once_per_session ?? true)}
-          onChange={(v) => onChange({ ...value, behaviors: { ...behaviors, once_per_session: v } })}
-          label="Only once per visit"
-          description="Off, and the same person sees it on every page they open."
+          checked={actions.open_chatbox ?? false}
+          onChange={(v) => onChange({ ...value, actions: { ...actions, open_chatbox: v } })}
+          label="Open the chat when it fires"
+          description="Off, and the message only appears if the visitor opens the chat themselves."
+        />
+
+        <Toggle
+          checked={behaviors.execute_if_online ?? false}
+          onChange={(v) => onChange({ ...value, behaviors: { ...behaviors, execute_if_online: v } })}
+          label="Only when someone is available"
+          description="Skip it if no agent is online, so nobody is invited into an empty room."
+        />
+
+        <Toggle
+          checked={behaviors.execute_on_first_visit ?? false}
+          onChange={(v) =>
+            onChange({ ...value, behaviors: { ...behaviors, execute_on_first_visit: v } })
+          }
+          label="Only on a first visit"
+          description="Every campaign already shows at most once per visitor; this narrows it to brand-new ones."
         />
 
         <WebsiteScope
@@ -308,20 +374,47 @@ function CampaignDialog({
 }
 
 function describe(trigger: Trigger): string {
-  const events = trigger.events as { type?: string; seconds?: number; percent?: number; url_pattern?: string };
-  const where = events.url_pattern ? ` on ${events.url_pattern}` : '';
-  switch (events.type) {
-    case 'time_on_page':
-      return `After ${events.seconds ?? 30}s${where}`;
-    case 'scroll_depth':
-      return `After scrolling ${events.percent ?? 50}%${where}`;
-    case 'exit_intent':
+  const events = trigger.events ?? {};
+  const pages = events.on_pages ? events.page_urls ?? [] : [];
+  const where = pages.length > 0 ? ` on ${pages.join(', ')}` : '';
+  switch (whenOf(events)) {
+    case 'delay':
+      return `After ${events.delay_seconds ?? 30}s${where}`;
+    case 'leave_intent':
       return `On exit intent${where}`;
     default:
       return `On page view${where}`;
   }
 }
 
+/**
+ * Name → identifier.
+ *
+ * DASHES, not underscores. The server's identifier is `/^[a-z0-9-]+$/`, so the old
+ * underscore separator made "Help on pricing" fail validation on its own — one of the five
+ * errors a Save produced, and the only one that would still have failed after the four
+ * column shapes were right.
+ *
+ * Accents are FOLDED rather than stripped, because stripping them is only invisible in
+ * English. "Fiyat sayfasında yardım" became `fiyat-sayfas-nda-yard-m` — a valid identifier
+ * and a nonsense one, printed nowhere the author could notice. NFD + combining-mark strip
+ * covers ü/ö/ç/ş/é; `ı` carries no mark and is mapped by hand.
+ *
+ * The fallback matters too: a name of "!!!" folds away to nothing, and an empty identifier
+ * is a 400 pointing at a field this screen does not even show.
+ */
 function slugify(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  const slug = value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ı/g, 'i')
+    .replace(/ğ/g, 'g')
+    .replace(/ş/g, 's')
+    .replace(/ç/g, 'c')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/, '');
+  return slug || 'campaign';
 }

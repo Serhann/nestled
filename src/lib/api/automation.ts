@@ -12,6 +12,58 @@ import { del, get, post, put } from '../http';
 const w = (workspaceId: string, path: string): string => `/api/v1/w/${workspaceId}${path}`;
 
 // ── Triggers (campaigns) ────────────────────────────────────────────────────
+
+/**
+ * The four JSONB columns, spelled out.
+ *
+ * These were `Record<string, unknown>` for all four, and that is precisely how the
+ * campaigns screen came to send `{ type: 'message', message }` where the server's strict
+ * schema wanted `{ show_message, message_content }` — four blobs of mismatched field
+ * names that no type ever checked, so the screen could never save anything and the
+ * compiler had nothing to say about it. The server rejects unknown keys; the client now
+ * names the same keys, so a rename on either side is a build failure rather than a 400
+ * somebody finds in the network tab.
+ *
+ * `src/types/chat.ts` declares a narrower version of the same columns for the widget —
+ * only the members the trigger engine reads. This is the full wire shape, matching
+ * `triggerBody` in server/src/routes/v1/automation.ts.
+ */
+export interface TriggerActions {
+  show_message?: boolean;
+  message_content?: string | null;
+  localized_messages?: Record<string, string>;
+  open_chatbox?: boolean;
+  play_sound?: boolean;
+  /** Start a bot flow instead of a canned message. Resolved server-side from the id. */
+  start_bot?: string | null;
+}
+
+export interface TriggerEvents {
+  on_leave_intent?: boolean;
+  on_click_link?: boolean;
+  click_selectors?: string[];
+  on_pages?: boolean;
+  page_urls?: string[];
+  on_url_parameters?: boolean;
+  url_parameters?: Record<string, string>;
+  after_delay?: boolean;
+  delay_seconds?: number;
+}
+
+export interface TriggerBehaviors {
+  show_as_website?: boolean;
+  execute_if_online?: boolean;
+  execute_on_first_visit?: boolean;
+  execute_if_no_other_trigger?: boolean;
+  /** Two-letter codes. The ENGINE fails closed on a non-empty list — see triggerEngine.ts. */
+  country_restriction?: string[];
+}
+
+export interface TriggerPlatforms {
+  desktop_enabled?: boolean;
+  mobile_enabled?: boolean;
+}
+
 export interface Trigger {
   id: string;
   website_id: string | null;
@@ -21,10 +73,10 @@ export interface Trigger {
   priority: number;
   fire_count: number;
   conversation_count: number;
-  actions: Record<string, unknown>;
-  events: Record<string, unknown>;
-  behaviors: Record<string, unknown>;
-  platforms: Record<string, unknown>;
+  actions: TriggerActions;
+  events: TriggerEvents;
+  behaviors: TriggerBehaviors;
+  platforms: TriggerPlatforms;
 }
 
 export const listTriggers = (id: string): Promise<{ items: Trigger[] }> => get(w(id, '/triggers'));
