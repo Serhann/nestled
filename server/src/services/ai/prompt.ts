@@ -1,5 +1,6 @@
 import type { AIReplyInput } from './types.js';
-import { buildContext, topRelevant } from './knowledge.js';
+import { buildContext, selectForPrompt } from './knowledge.js';
+import { retrievalQuery } from './history.js';
 import { HANDOFF_ONLY, actionContract, type EnabledActions } from './actions.js';
 
 /**
@@ -36,7 +37,17 @@ export const SCOPE_RULES = `- Only answer questions about this business and its 
  * Anti-hallucination rules. Generalized from the original order-specific wording:
  * the failure mode is inventing *any* account state, not orders specifically.
  */
-export const GROUNDING_RULES = `- Answer only from the knowledge base entries and the verified visitor facts above. Never invent or guess account state, order status, prices, dates, availability, refunds, cancellations or policies. If a fact is not stated above, say you'll check with the team rather than describing it.`;
+export const GROUNDING_RULES = `- Answer only from the instructions, knowledge base entries and verified visitor facts above. Never invent or guess account state, order status, prices, dates, availability, refunds, cancellations or policies. If a fact is not stated above, say you'll check with the team rather than describing it.`;
+
+/**
+ * Continuity. Fixed rather than editable, and new: the assistant used to be sent one
+ * message with no transcript, so every reply was a first reply. Now that the conversation
+ * is actually in the request (see history.ts), the model has to be told the obvious thing —
+ * that the earlier turns are the same chat and a two-word follow-up refers to them. Without
+ * this line a model handed a transcript still tends to answer the last line in isolation
+ * and re-ask for details the visitor already gave.
+ */
+export const CONTINUITY_RULES = `- The messages above are one continuous conversation with this visitor. Use what they have already told you instead of asking for it again, do not repeat a greeting or an answer you have already given, and read a short follow-up ("why?", "how much?", "what about the other one?") as being about what was just discussed.`;
 
 /**
  * Assemble the full system prompt.
@@ -49,8 +60,11 @@ export const GROUNDING_RULES = `- Answer only from the knowledge base entries an
  * about actions, and the behaviour every install had before they existed.
  */
 export function systemWithContext(input: AIReplyInput): string {
-  const relevant = topRelevant(input.message, input.knowledge, 5);
-  const knowledge = buildContext(relevant);
+  // Retrieval runs over the last few things the VISITOR said, not just the latest message.
+  // "peki iadesi?" retrieves nothing by itself; with its own subject alongside it, it
+  // retrieves what that subject retrieved. See history.ts.
+  const query = input.turns ? retrievalQuery(input.turns, input.message) : input.message;
+  const knowledge = buildContext(selectForPrompt(query, input.knowledge));
 
   return assemble({
     preamble: input.preamble,
@@ -107,7 +121,7 @@ function assemble(parts: {
     parts.knowledge,
     parts.visitorContext ?? '',
     parts.extraRules ?? '',
-    ['Rules:', SCOPE_RULES, GROUNDING_RULES].join('\n'),
+    ['Rules:', SCOPE_RULES, GROUNDING_RULES, CONTINUITY_RULES].join('\n'),
     actionContract(parts.actions ?? HANDOFF_ONLY),
   ]
     .filter((p) => p && p.trim().length > 0)

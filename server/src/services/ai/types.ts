@@ -19,10 +19,25 @@ export interface AISettings {
   ollama_model: string;
 }
 
+/** One side of the conversation, in the shape every provider's chat API expects. */
+export interface AITurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface AIReplyInput {
   message: string;
   settings: AISettings;
   knowledge: KnowledgeItem[];
+  /**
+   * The whole conversation to send, oldest first, ALWAYS ending with the user turn that
+   * carries `message`. Built once by `buildTurns` so the invariants every chat API needs
+   * (starts with a user turn, roles alternate) hold for all three adapters.
+   *
+   * Absent means "no transcript available" — the adapters then send `message` alone, which
+   * is what every reply used to do and the reason the assistant kept losing the thread.
+   */
+  turns?: AITurn[];
   /** OUR instructions, resolved per install/website and already rendered — the front of
    *  the prompt. See services/ai/preamble.ts. */
   preamble?: string;
