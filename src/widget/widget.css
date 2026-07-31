@@ -198,6 +198,28 @@ textarea {
   font-weight: 600;
 }
 
+/*
+ * A logo in the closed launcher, in place of the glyph.
+ *
+ * The bubble stays — this replaces what is drawn INSIDE it, so the launcher keeps the
+ * brand colour, the size, the shadow and the pulse it had.
+ *
+ * `object-fit: contain`, not `cover`: a wordmark or a non-square logo is the common case,
+ * and cropping one to fill its box cuts the ends off the customer's own brand. Slight
+ * rounding rather than a circle for the same reason — a square logo in a hard circular
+ * mask loses its corners.
+ *
+ * Deliberately NO width/height here. The component sets both as ATTRIBUTES so the button
+ * has its final size before the image data arrives; the host frame is measured from that
+ * box one animation frame after layout (see Widget.tsx), and a percentage rule here would
+ * hand the measurement an image with no intrinsic size yet.
+ */
+.n-launcher-logo {
+  object-fit: contain;
+  border-radius: 4px;
+  flex: none;
+}
+
 .n-badge {
   position: absolute;
   top: -2px;
