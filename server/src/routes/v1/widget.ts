@@ -25,6 +25,7 @@ import { routeConversation } from '../../services/routing.js';
 import { onCustomerMessage } from '../../services/responseTargets.js';
 import { notifyNewChat, notifyNewMessage } from '../../services/discord.js';
 import { pushNewConversation, pushVisitorMessage } from '../../services/push.js';
+import { maybeOfflineDataAlert } from '../../services/offlineAlerts/index.js';
 import { DEFAULT_COPY } from '../../lib/widgetCopy.js';
 import { isWithinBusinessHours } from '../../lib/businessHours.js';
 
@@ -539,6 +540,20 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
       void notifyNewChat(workspaceId, conv.id);
       void pushNewConversation(workspaceId, websiteId, conv.id, trustedName ?? body.visitor_name ?? null);
 
+      /**
+       * A pre-chat form is data the visitor typed before saying anything, so this is a
+       * collection point like any bot `collect` node.
+       *
+       * Guarded on there being a form: without the guard every conversation on every
+       * website would ask the alert service to re-read four tables, and a chat somebody is
+       * actively having is not what this feature is for. The service still makes its own
+       * decisions about whether anybody is online and whether there is anything to report.
+       */
+      const prechat = body.metadata?.prechat;
+      if (prechat && typeof prechat === 'object' && Object.keys(prechat).length > 0) {
+        void maybeOfflineDataAlert({ workspaceId, websiteId, conversationId: conv.id });
+      }
+
       return reply.code(201).send({ conversation_id: conv.id, visitor_token: token });
     },
   );
@@ -847,6 +862,13 @@ export async function widgetV1Routes(app: FastifyInstance): Promise<void> {
         conversationId: conv.id,
       });
       void notifyNewChat(session.ws, conv.id);
+      // The clearest case there is: an address and a question, left because nobody was
+      // there. The email/SMS alert is the only thing that reaches the team before morning.
+      void maybeOfflineDataAlert({
+        workspaceId: session.ws,
+        websiteId: session.wsite,
+        conversationId: conv.id,
+      });
       return reply.code(201).send({ conversation_id: conv.id, visitor_token: token });
     },
   );

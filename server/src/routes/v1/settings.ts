@@ -503,6 +503,12 @@ export async function settingsV1Routes(app: FastifyInstance): Promise<void> {
           has_discord_webhook: Boolean(row?.discord_webhook_url),
           discord_notify_new_chat: row?.discord_notify_new_chat ?? true,
           discord_notify_new_message: row?.discord_notify_new_message ?? false,
+          offline_alert_enabled: row?.offline_alert_enabled ?? false,
+          offline_alert_notify_agents: row?.offline_alert_notify_agents ?? true,
+          offline_alert_emails: row?.offline_alert_emails ?? [],
+          // Not a credential, unlike the webhook URL: these are the team's own numbers, and
+          // the screen has to show them to be editable at all.
+          offline_alert_phones: row?.offline_alert_phones ?? [],
         },
       });
     },
@@ -518,6 +524,19 @@ export async function settingsV1Routes(app: FastifyInstance): Promise<void> {
           discord_webhook_enabled: z.boolean().optional(),
           discord_notify_new_chat: z.boolean().optional(),
           discord_notify_new_message: z.boolean().optional(),
+          offline_alert_enabled: z.boolean().optional(),
+          offline_alert_notify_agents: z.boolean().optional(),
+          offline_alert_emails: z.array(z.string().email().max(200)).max(20).optional(),
+          /*
+            E.164, enforced here rather than left to Twilio. A number stored in a local
+            format is a 3am alert that silently does not arrive, and the only place anyone
+            would find out is a provider log nobody reads. Rejecting it at the point somebody
+            types it is the difference.
+          */
+          offline_alert_phones: z
+            .array(z.string().regex(/^\+[1-9]\d{6,14}$/, 'Use the international format, e.g. +905551234567'))
+            .max(20)
+            .optional(),
         }),
         req.body,
         reply,

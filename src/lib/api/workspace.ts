@@ -122,6 +122,18 @@ export interface Integrations {
   has_discord_webhook: boolean;
   discord_notify_new_chat: boolean;
   discord_notify_new_message: boolean;
+
+  /**
+   * Email/SMS when a visitor leaves details and nobody is online. Recipients are LISTS
+   * rather than the member table because we hold no phone numbers anywhere, and because
+   * "should all twenty agents be texted at 3am" is a question only the customer can answer.
+   */
+  offline_alert_enabled: boolean;
+  /** Email only: also send to every member who can see the website. */
+  offline_alert_notify_agents: boolean;
+  offline_alert_emails: string[];
+  /** E.164. The server rejects anything else — a local format is an alert that never lands. */
+  offline_alert_phones: string[];
 }
 
 export const getIntegrations = (id: string): Promise<{ integrations: Integrations }> =>
