@@ -188,9 +188,24 @@ async function pushToWorkspace(
   );
 }
 
-/** Deep link into the right workspace's inbox. */
-function inboxUrl(workspaceSlug: string, conversationId: string): string {
+/**
+ * Deep link into the right workspace's inbox. RELATIVE, because a push payload is resolved
+ * by the service worker against its own origin.
+ *
+ * Exported so the offline email/SMS alerts point at the same place. They need it absolute —
+ * an email cannot resolve a relative path — but the PATH must have one definition, or the
+ * day the inbox route changes only one of the two notification channels follows.
+ */
+export function inboxPath(workspaceSlug: string, conversationId: string): string {
   return `/w/${workspaceSlug}/inbox/${conversationId}`;
+}
+
+/** Same, prefixed with the install's app URL, for anything read outside the browser. */
+export async function absoluteInboxUrl(
+  workspaceId: string,
+  conversationId: string,
+): Promise<string> {
+  return `${settings().urls.app}${inboxPath(await slugOf(workspaceId), conversationId)}`;
 }
 
 async function slugOf(workspaceId: string): Promise<string> {
@@ -233,7 +248,7 @@ export async function pushNewConversation(
       conversationId,
       title: 'New conversation',
       body: visitorName ? `${visitorName} started a chat` : 'A visitor started a chat',
-      url: inboxUrl(await slugOf(workspaceId), conversationId),
+      url: inboxPath(await slugOf(workspaceId), conversationId),
     });
   });
 }
@@ -251,7 +266,7 @@ export async function pushVisitorMessage(
       conversationId,
       title: visitorName ?? 'Visitor',
       body: content.slice(0, 140),
-      url: inboxUrl(await slugOf(workspaceId), conversationId),
+      url: inboxPath(await slugOf(workspaceId), conversationId),
     });
   });
 }
@@ -268,7 +283,7 @@ export async function pushHandoff(
       conversationId,
       title: 'Handoff requested',
       body: summary?.slice(0, 140) ?? 'A visitor needs a human.',
-      url: inboxUrl(await slugOf(workspaceId), conversationId),
+      url: inboxPath(await slugOf(workspaceId), conversationId),
     });
   });
 }

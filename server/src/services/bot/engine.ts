@@ -8,6 +8,7 @@ import { isWithinBusinessHours } from '../../lib/businessHours.js';
 import { incrementUsage, usageState } from '../../lib/limits.js';
 import { publishToWorkspace } from '../../realtime/hub.js';
 import { generateAIReply } from '../ai/index.js';
+import { maybeOfflineDataAlert } from '../offlineAlerts/index.js';
 import { routeConversation } from '../routing.js';
 import { parseGraph } from './validate.js';
 import type { BotCondition, BotGraph, BotNode, BotStepHint } from './types.js';
@@ -675,12 +676,28 @@ export async function advanceBotRun(params: {
       conversationId: params.conversationId,
       runId: run.id,
     });
-    const result = await runTurn(graph, readState(run.state), io, {
+    const before = readState(run.state);
+    const result = await runTurn(graph, before, io, {
       startNodeId: run.current_node_id,
       input: params.input,
       runId: run.id,
     });
     await persist(run.id, result);
+
+    // The visitor just gave us something. If nobody is there to read it, the team is told
+    // off-platform — see services/offlineAlerts.ts.
+    //
+    // Gated on the field COUNT growing rather than fired on every turn: a flow walking
+    // through message nodes collects nothing, and asking the alert service to re-read four
+    // tables to conclude that is waste on a hot path. `void`, like every other notification
+    // here, because a Twilio outage must not fail the answer the visitor just sent.
+    if (Object.keys(result.state.collected).length > Object.keys(before.collected).length) {
+      void maybeOfflineDataAlert({
+        workspaceId: params.workspaceId,
+        websiteId: params.websiteId,
+        conversationId: params.conversationId,
+      });
+    }
     return true;
   } catch (err) {
     // eslint-disable-next-line no-console

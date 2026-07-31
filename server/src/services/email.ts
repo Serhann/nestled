@@ -25,7 +25,8 @@ export type EmailTemplate =
   | 'password_changed'
   | 'two_factor_changed'
   | 'workspace_invite'
-  | 'website_installed';
+  | 'website_installed'
+  | 'offline_data_alert';
 
 interface SendArgs {
   to: string;
@@ -165,6 +166,29 @@ function render(template: EmailTemplate, v: Record<string, string>): Rendered {
           { label: 'Open your inbox', url: v.url ?? settings().urls.app },
         ),
         text: `The Nestled widget is live on ${v.host}. Open your inbox: ${v.url ?? settings().urls.app}`,
+      };
+    /*
+      Someone left their details while nobody was there to read them.
+
+      The DETAILS are the message, so they lead — a subject and a body that only said
+      "you have a new conversation" would be a notification about a notification, and the
+      reader is on their phone deciding whether this is worth opening a laptop for.
+
+      `<pre>` for the block, not a table: the values come from a customer's own bot flow
+      and pre-chat form, so the field names and their number are unknown here. Preformatted
+      text renders any of them, in every mail client, without a layout to get wrong. It is
+      escaped like everything else — a visitor typed most of it.
+    */
+    case 'offline_data_alert':
+      return {
+        subject: `${v.who ?? 'A visitor'} left their details — ${v.websiteName ?? 'your website'}`,
+        html: layout(
+          `${esc(v.who ?? 'A visitor')} left their details`,
+          `<p>Nobody was online on <b>${esc(v.websiteName ?? 'your website')}</b>, so this is what they gave us:</p>
+           <pre style="margin:16px 0;padding:14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:#111827">${esc(v.details ?? '')}</pre>`,
+          { label: 'Open the conversation', url: v.url ?? settings().urls.app },
+        ),
+        text: `${v.who ?? 'A visitor'} left their details on ${v.websiteName ?? 'your website'} while nobody was online.\n\n${v.details ?? ''}\n\nOpen the conversation: ${v.url ?? settings().urls.app}`,
       };
   }
 }

@@ -543,6 +543,15 @@ model workspace_private_settings {
   discord_notify_new_chat    Boolean @default(true)
   discord_notify_new_message Boolean @default(false)
 
+  /// Email/SMS alerts when a visitor leaves details and nobody is there. See
+  /// services/offlineAlerts.ts, and migration 0015 for why the recipients are lists.
+  offline_alert_enabled       Boolean  @default(false)
+  /// Email only: also send to the members a web push would have reached.
+  offline_alert_notify_agents Boolean  @default(true)
+  offline_alert_emails        String[] @default([])
+  /// E.164. Required for SMS — we store no agent phone numbers anywhere.
+  offline_alert_phones        String[] @default([])
+
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   workspace workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
@@ -597,6 +606,10 @@ model conversations {
   response_due_at      DateTime? @db.Timestamptz(6)
   /// Stamped once, and KEPT after the reply lands so the report can count it.
   response_breached_at DateTime? @db.Timestamptz(6)
+  /// So the team is told ONCE that this visitor left details while nobody was there.
+  /// Data arrives a field at a time; without this a five-field flow is five alerts.
+  /// See services/offlineAlerts.ts.
+  offline_alert_at     DateTime? @db.Timestamptz(6)
   /// So the sweep escalates once rather than every minute.
   escalated_at         DateTime? @db.Timestamptz(6)
   /// Deliberately marked unread by an agent, so it cannot quietly fall off the list.
