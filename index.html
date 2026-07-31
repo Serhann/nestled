@@ -4,11 +4,42 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/icon-192.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Fonts, in the HEAD rather than via `@import` in index.css.
+
+      A CSS `@import` of a remote stylesheet is a request the browser cannot discover until
+      it has downloaded AND parsed our own CSS — so the critical path was
+      html → index.css → fonts.googleapis.com/css → the font files, four serial hops
+      before the first heading can paint. Declared here the font CSS is fetched in
+      parallel with ours, and `preconnect` gets the TLS handshake to the font host out of
+      the way at the same time. On the page people arrive on, that chain was the single
+      largest contributor to Largest Contentful Paint.
+
+      Two hosts, both needed: the stylesheet comes from fonts.googleapis.com and the font
+      files it references come from fonts.gstatic.com, so preconnecting only the first
+      leaves the expensive handshake in the path.
+
+      Self-hosting the two families would remove the third-party hop entirely and is the
+      next step; this change needs no new assets in the repository.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Caprasimo&family=Figtree:wght@400;500;600;700;800&display=swap"
+    />
     <title>Nestled — live chat for your website</title>
     <meta
       name="description"
       content="Live chat, live visitors and an AI assistant that answers from your own knowledge base. One snippet, and you are talking to your customers."
     />
+    <!--
+      Per-page head content is rewritten by scripts/prerender.mjs: the title and description
+      above, plus a canonical link, Open Graph and Twitter tags, and JSON-LD, are injected
+      before this marker. It is a comment rather than an element so that a page which somehow
+      skipped prerendering is still valid HTML.
+    -->
+    <!--seo-->
     <meta name="theme-color" content="#c67139" />
   </head>
   <body>

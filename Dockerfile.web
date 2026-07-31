@@ -17,4 +17,16 @@ RUN npm run build
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
+
+# Sitemap, robots' Sitemap line, and og:url — the SEO artifacts that need an absolute URL,
+# which the build cannot know because origins are resolved from the address bar at runtime.
+#
+# `/docker-entrypoint.d/*.sh` is run by the nginx image's own entrypoint before nginx starts,
+# in filename order. The 40- prefix puts this after the image's own 10-/20-/30- scripts, so
+# the envsubst templating those provide has already happened. Nothing here can keep nginx from
+# starting: the script writes files and exits, and given no domain it exits 0 having stripped
+# the placeholders. See scripts/seo-runtime.sh for why silence beats a guessed domain.
+COPY scripts/seo-runtime.sh /docker-entrypoint.d/40-seo.sh
+RUN chmod +x /docker-entrypoint.d/40-seo.sh
+
 EXPOSE 80

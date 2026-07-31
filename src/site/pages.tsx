@@ -107,13 +107,22 @@ export function renderPage(path: string): ReactNode {
   }
 }
 
+/**
+ * When the privacy and terms text below last changed. Edit it when you edit them.
+ *
+ * It was `new Date()`, evaluated during the prerender — so the date advanced on every deploy
+ * and the pages claimed to have been revised on days nobody touched them. That is wrong twice
+ * over: it is a freshness signal that is not true, which is the kind of signal a search engine
+ * learns to discount for a whole site; and on a legal page the "last updated" date is the thing
+ * a reader relies on to know whether the terms they agreed to have changed.
+ */
+const LEGAL_UPDATED = '2026-07-31';
+
 function Legal({ title, body }: { title: string; body: [string, string][] }) {
   return (
     <div className="max-w-2xl mx-auto px-5 py-16">
       <h1 className="font-display text-4xl">{title}</h1>
-      <p className="mt-2 text-sm text-gray-500">
-        Last updated {new Date().toISOString().slice(0, 10)}.
-      </p>
+      <p className="mt-2 text-sm text-gray-500">Last updated {LEGAL_UPDATED}.</p>
       <div className="mt-8 space-y-6">
         {body.map(([heading, text]) => (
           <section key={heading}>

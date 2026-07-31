@@ -34,12 +34,20 @@ async function main() {
     },
   });
 
-  const { render, PAGES } = await import(pathToFileURL(resolve(ssrOut, 'entry-server.js')).href);
+  const { render, PAGES, seoFor, RUNTIME_URL_PLACEHOLDER } = await import(
+    pathToFileURL(resolve(ssrOut, 'entry-server.js')).href
+  );
 
   // The client build's index.html already carries the hashed asset tags, so the
   // template is taken from there rather than reconstructed — otherwise every
   // cache-busting hash would have to be duplicated here and would go stale.
   const template = await readFile(resolve(root, 'dist/index.html'), 'utf8');
+
+  if (!template.includes(SEO_MARKER)) {
+    throw new Error(
+      `index.html has no ${SEO_MARKER} marker — every page would ship without a canonical URL or any structured data.`,
+    );
+  }
 
   for (const page of PAGES) {
     const html = render(page.path);
@@ -49,6 +57,7 @@ async function main() {
         /<meta\s+name="description"[\s\S]*?\/>/,
         `<meta name="description" content="${escapeHtml(page.description)}" />`,
       )
+      .replace(SEO_MARKER, seoHead(page, seoFor(page.path), RUNTIME_URL_PLACEHOLDER))
       .replace('<div id="site-root"></div>', `<div id="site-root">${html}</div>`);
 
     // A page with no island will never load React, so the modulepreload hints
@@ -76,6 +85,53 @@ async function main() {
   }
 
   await rm(ssrOut, { recursive: true, force: true });
+}
+
+/** Where in the template the per-page head content goes. */
+const SEO_MARKER = '<!--seo-->';
+
+/**
+ * The per-page head: canonical, Open Graph, Twitter, JSON-LD.
+ *
+ * ── Why the canonical is relative and og:url is a placeholder ────────────────
+ *
+ * The build does not know the domain. `src/lib/origins.ts` resolves every surface from the
+ * address bar at runtime so one image serves any host, and that is a decision worth keeping —
+ * but it means an absolute URL written here would be a guess. A canonical pointing at the
+ * wrong domain is not a missed opportunity, it is an instruction to Google that the real page
+ * is elsewhere, and the honest outcome is deindexing.
+ *
+ * So: the canonical is relative, which the spec permits and Google resolves against the
+ * document's own URL — correct on every host, with no configuration. The tags that CANNOT be
+ * relative (`og:url`, `og:image` — the social crawlers require absolute) are emitted carrying
+ * a placeholder, and `scripts/seo-runtime.sh` substitutes the real origin at container start.
+ * If the container is never told a domain, that script strips those tags rather than shipping
+ * a placeholder, because a broken og:url costs a link preview and a wrong one costs the page.
+ */
+function seoHead(page, seo, placeholder) {
+  const canonicalPath = seo.canonical === '/' ? '/' : seo.canonical;
+  const tags = [
+    `<link rel="canonical" href="${escapeHtml(canonicalPath)}" />`,
+    `<meta property="og:type" content="${escapeHtml(seo.ogType)}" />`,
+    `<meta property="og:site_name" content="Nestled" />`,
+    `<meta property="og:title" content="${escapeHtml(page.title)}" />`,
+    `<meta property="og:description" content="${escapeHtml(page.description)}" />`,
+    `<meta property="og:locale" content="en" />`,
+    // Substituted or stripped at container start — see the note above.
+    `<meta property="og:url" content="${placeholder}${escapeHtml(canonicalPath === '/' ? '' : canonicalPath)}" />`,
+    `<meta property="og:image" content="${placeholder}/icon-512.png" />`,
+    // `summary_large_image` needs a wide (1.91:1) card to be worth asking for, and the only
+    // image in the repository is a square icon. `summary` renders that correctly instead of
+    // asking X to letterbox a logo into a banner.
+    `<meta name="twitter:card" content="summary" />`,
+    `<meta name="twitter:title" content="${escapeHtml(page.title)}" />`,
+    `<meta name="twitter:description" content="${escapeHtml(page.description)}" />`,
+  ];
+
+  for (const block of seo.jsonLd) {
+    tags.push(`<script type="application/ld+json">${block}</script>`);
+  }
+  return tags.map((tag) => `    ${tag}`).join('\n').trimStart();
 }
 
 function escapeHtml(value) {
