@@ -55,10 +55,25 @@ export class TriggerEngine {
   private readonly firstVisit: boolean;
   private teardown: Array<() => void> = [];
 
-  constructor() {
-    this.executed = readSet(EXECUTED_KEY);
-    this.firstVisit = !localStorage.getItem(VISITED_KEY);
+  /**
+   * `reset` forgets which campaigns have already fired, and makes this load count as a
+   * first visit.
+   *
+   * Wired to the same `reset` marker as the conversation (`Nestled('reset')`, `?reset` on
+   * the widget URL), because without it a campaign is untestable. Firing at most once per
+   * visitor is the right product behaviour and it is persisted forever — so the FIRST time
+   * a customer previews their own campaign is also the last, and every subsequent reload
+   * shows nothing with no indication why. Editing the campaign does not help either: the
+   * record is keyed by trigger id, and an edit keeps the id.
+   *
+   * That is a real trap and not a hypothetical one: it is the state a campaign lands in
+   * after firing once invisibly, which every campaign on a default install used to do.
+   */
+  constructor(options: { reset?: boolean } = {}) {
+    this.executed = options.reset ? new Set() : readSet(EXECUTED_KEY);
+    this.firstVisit = options.reset || !localStorage.getItem(VISITED_KEY);
     try {
+      if (options.reset) localStorage.removeItem(EXECUTED_KEY);
       localStorage.setItem(VISITED_KEY, '1');
     } catch {
       // Storage blocked: treat every load as a first visit rather than none.

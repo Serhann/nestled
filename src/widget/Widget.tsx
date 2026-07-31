@@ -39,7 +39,8 @@ export function Widget({
 }) {
   const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
-  const [view, setView] = useState<View>('auto');
+  // `rawView` because a fired campaign can override it — see `view` below.
+  const [rawView, setView] = useState<View>('auto');
   const [intake, setIntake] = useState<Starter | null>(null);
   const [ratingSent, setRatingSent] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -268,23 +269,33 @@ export function Widget({
   }
 
   const starters = boot.starters ?? [];
-  const offline =
-    !chat.conversation && !availability.online && boot.behavior?.ai_enabled === false;
   /**
-   * The starter-chip home screen.
+   * A fired campaign outranks every other opening screen.
    *
-   * `!nudge` is load-bearing, and its absence is why campaigns did not appear to work. A
-   * fired campaign produces a nudge that only `Thread` draws, but `Screen` returns Home
-   * before it ever reaches Thread — so on any website with starters configured (the
-   * default) a campaign would fire, meter itself, open the panel, and show the visitor the
-   * ordinary starter chips. Indistinguishable from nothing having happened.
+   * This is why campaigns did not appear to work at all. A campaign produces a `nudge`, and
+   * the only screen that draws one is `Thread` — but `Screen` picks the FIRST matching
+   * screen, and three of them sit above Thread: the pre-chat form, the offline form, and
+   * the starter-chip home. `starters_enabled` defaults to true, so on a default install the
+   * home screen won. The campaign fired, metered itself, marked itself as shown, opened the
+   * panel — and the visitor got the ordinary starter chips. Indistinguishable from nothing
+   * having happened, which is exactly how it was reported.
    *
-   * A proactive message outranks the home screen because it IS the more specific thing to
-   * say: the campaign was written for this visitor on this page, and the chips are what we
-   * show when we have nothing particular to offer.
+   * The precedence is decided here, once, next to the other three flags, rather than as
+   * three separate `!nudge` guards inside Screen. A campaign was written for this visitor on
+   * this page; the chips are what we show when we have nothing particular to say, the
+   * pre-chat form asks for an email before we have said hello, and the offline form is for
+   * a visitor who arrived on their own. Answering the nudge creates a conversation, at which
+   * point all three of those conditions stop holding by themselves.
    */
+  const proactive = Boolean(nudge);
+  const view = proactive && rawView === 'prechat' ? 'auto' : rawView;
+  const offline =
+    !chat.conversation &&
+    !availability.online &&
+    boot.behavior?.ai_enabled === false &&
+    !proactive;
   const atHome =
-    !chat.conversation && chat.messages.length === 0 && !plainChat && !nudge && starters.length > 0;
+    !chat.conversation && chat.messages.length === 0 && !plainChat && !proactive && starters.length > 0;
   const wantsComposer = view === 'auto' && !offline && !atHome;
 
   const body = (

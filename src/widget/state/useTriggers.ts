@@ -44,7 +44,10 @@ export function useTriggers(opts: Options): TriggerNudge | null {
     if (triggers.length === 0) return;
     armed.current = true;
 
-    const engine = new TriggerEngine();
+    // `?reset` re-arms campaigns as well as clearing the conversation. Without it, the
+    // once-per-visitor record makes a campaign a one-shot per browser with no way back —
+    // see the constructor in triggerEngine.ts.
+    const engine = new TriggerEngine({ reset: latest.current.params.reset });
     engine.setTriggers(triggers);
 
     const fire = (trigger: Trigger) => {

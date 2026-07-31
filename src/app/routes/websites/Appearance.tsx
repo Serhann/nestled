@@ -214,11 +214,16 @@ export default function Appearance() {
                * "Your logo" with no logo set falls back to the chosen glyph, which is the
                * right thing for the visitor and invisible to the person configuring it —
                * they pick the option, the preview does not change, and there is nothing to
-               * tell them the picture field two sections down is the missing half.
+               * tell them the picture field further down is the missing half.
+               *
+               * The section name has to be the REAL one. It said "Branding", which is the
+               * section holding the “Powered by Nestled” toggle and nothing else — so the
+               * one person who followed the instruction went looking and found no such
+               * control.
                */
               <p className="sm:col-span-2 text-xs text-amber-800 bg-amber-50 rounded-xl px-3 py-2">
-                Add a picture under <strong>Branding</strong> below, or the launcher keeps
-                using the icon you picked.
+                Set <strong>Picture</strong> under <strong>The panel</strong> below, or the
+                launcher keeps using the icon you picked.
               </p>
             )}
             <Field label="Side">
