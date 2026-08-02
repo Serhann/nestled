@@ -1,4 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Caprasimo&family=Figtree:wght@400;500;600;700;800&display=swap');
+/*
+ * The webfont link lives in the HTML head now, not here.
+ *
+ * A remote `@import` cannot be discovered until this file has been downloaded and parsed, so
+ * it made the critical path html → index.css → the font stylesheet → the font files: four
+ * serial round trips before a heading could paint. See the comment in index.html — and note
+ * that app.html, ops.html and widget.html each need the same two `<link>` tags for their own
+ * documents, which is why the change is per-document rather than one line here.
+ */
 
 @tailwind base;
 @tailwind components;

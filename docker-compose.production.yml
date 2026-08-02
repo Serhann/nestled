@@ -65,6 +65,12 @@ services:
       # subdomain layout. This magic variable is how Coolify injects the value;
       # include the https:// scheme or no certificate is provisioned.
       - SERVICE_FQDN_WEB_80
+      # The public origin, used at container start to write sitemap.xml and the absolute
+      # og:url tags — the only SEO artifacts that cannot be relative. Optional: unset, the
+      # pages are still correct and still carry their canonical tags, they just have no
+      # sitemap. Set it to the marketing domain WITH the scheme. On Coolify the line above
+      # already carries it, so this is for anyone deploying by other means.
+      # - SITE_URL=https://example.com
     healthcheck:
       # 127.0.0.1 (not localhost) — localhost can resolve to ::1 while nginx
       # listens on IPv4, which makes the check fail and the proxy drop the site.

@@ -1,0 +1,44 @@
+# Nestled — crawl rules.
+#
+# The marketing pages are the only thing here worth indexing, and they are prerendered to
+# real HTML, so a crawler gets the words without executing anything.
+#
+# Everything disallowed below is either an application shell with no indexable content or a
+# machine endpoint. This is about crawl budget and about search results that are not
+# embarrassing — a result titled "Nestled" that lands a stranger on a login screen is worse
+# than no result. It is NOT a security boundary: robots.txt is a request, and every one of
+# these paths is protected by authentication regardless of what a crawler chooses to do.
+#
+# The `Sitemap:` line is appended at container start by scripts/seo-runtime.sh, which is the
+# only place that knows the domain — a sitemap URL has to be absolute, and this image is built
+# without knowing which host will serve it.
+
+User-agent: *
+
+# The customer dashboard and the ops panel: client-rendered shells behind a login.
+Disallow: /app
+Disallow: /ops
+
+# The chat widget document. It is meant to be loaded in an iframe on somebody else's page,
+# never to be a search result of its own.
+Disallow: /widget
+Disallow: /widget.html
+
+# API, realtime and health endpoints.
+Disallow: /api/
+Disallow: /ws/
+Disallow: /up
+Disallow: /healthz
+
+# The `.html` twins of the marketing pages. nginx serves both `/pricing` and `/pricing.html`
+# (`try_files $uri $uri.html`), and the clean path is the canonical one. The canonical tag on
+# each page is what actually consolidates them; this keeps the duplicates out of the crawl in
+# the first place.
+Disallow: /index.html
+Disallow: /features.html
+Disallow: /pricing.html
+Disallow: /compare.html
+Disallow: /privacy.html
+Disallow: /terms.html
+
+Allow: /
