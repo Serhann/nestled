@@ -116,9 +116,17 @@ export function renderPage(path: string): ReactNode {
  * learns to discount for a whole site; and on a legal page the "last updated" date is the thing
  * a reader relies on to know whether the terms they agreed to have changed.
  */
-const LEGAL_UPDATED = '2026-07-31';
+const LEGAL_UPDATED = '2026-08-19';
 
-function Legal({ title, body }: { title: string; body: [string, string][] }) {
+/**
+ * A legal page: a heading, a revision date, and a list of headed paragraphs.
+ *
+ * The body cells are `ReactNode` rather than `string` because one of them has to contain a
+ * button — consent has to be as easy to withdraw as it was to give, and the only honest place
+ * to put that control is inside the paragraph that explains what was consented to. Keep the
+ * nodes INLINE (text, links, buttons); each one is rendered inside a `<p>`.
+ */
+function Legal({ title, body }: { title: string; body: [string, ReactNode][] }) {
   return (
     <div className="max-w-2xl mx-auto px-5 py-16">
       <h1 className="font-display text-4xl">{title}</h1>
@@ -135,7 +143,61 @@ function Legal({ title, body }: { title: string; body: [string, string][] }) {
   );
 }
 
-const PRIVACY: [string, string][] = [
+/**
+ * The control that brings the cookie banner back.
+ *
+ * Rendered hidden, and revealed by public/consent.js — which is only present in an
+ * environment that actually has a Google tag (see scripts/analytics-runtime.sh). So on
+ * staging, where nothing is tracked and no cookie is set, this sentence and its button are
+ * simply absent rather than offering to withdraw a consent that was never asked for.
+ *
+ * It is a real `<button>`, not a link: it changes state on this page and navigates nowhere.
+ */
+function ConsentControl() {
+  return (
+    <span hidden data-consent-reopen>
+      {' '}
+      <button
+        type="button"
+        className="underline text-blue-700 hover:text-blue-800 font-medium"
+      >
+        Change your choice
+      </button>
+      .
+    </span>
+  );
+}
+
+const PRIVACY: [string, ReactNode][] = [
+  [
+    'This website, as distinct from the product',
+    <>
+      Everything below describes what Nestled stores on behalf of a customer whose website runs
+      the chat widget. This first section is narrower and easier: it is about you, reading this
+      page, on nestled.chat.
+    </>,
+  ],
+  [
+    'Cookies on this website',
+    <>
+      One, and only if you say yes. We use Google Analytics to count visits to our own
+      marketing pages — which pages people read, roughly where they came from — so we know
+      what is worth writing. It sets a cookie, so we ask first: nothing is stored and no
+      analytics request identifies you until you accept, and declining leaves the site working
+      exactly as it does now. We do not run advertising and the advertising signals in that tag
+      are switched off unconditionally. There is no tracking of any kind on the sign-in or
+      application screens.
+      <ConsentControl />
+    </>,
+  ],
+  [
+    'The chat widget carries none of this',
+    <>
+      The widget our customers embed in their own sites has no analytics in it. It is a
+      deliberate line: adding our own third-party tracker to somebody else's website, past
+      their visitors, is not a decision that is ours to take.
+    </>,
+  ],
   [
     'What we store',
     'Conversations and their messages, the pages a visitor viewed while the widget was loaded, their IP address and a coarse location derived from it, and any details you or your own server chose to send us about them.',
@@ -158,7 +220,7 @@ const PRIVACY: [string, string][] = [
   ],
 ];
 
-const TERMS: [string, string][] = [
+const TERMS: [string, ReactNode][] = [
   [
     'The service',
     'Nestled provides live chat software you embed on websites you control. You are responsible for what you and your team say through it and for having the right to install it where you install it.',

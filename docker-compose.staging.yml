@@ -14,8 +14,16 @@ services:
       context: .
       dockerfile: Dockerfile.web
     restart: unless-stopped
-    depends_on:
-      - app
+    # No `depends_on: app`. nginx is built to boot without the backend — it resolves
+    # `app` at REQUEST time through Docker's DNS and reaches it through a variable
+    # `proxy_pass` (see nginx.conf), precisely so a missing backend cannot stop it.
+    #
+    # Declaring the dependency threw that away where it matters most: it held the ONLY
+    # container serving the domain behind `db` becoming healthy, `migrate` exiting, and
+    # `app` clearing its 40s start period. The marketing pages and every static asset
+    # were unavailable for that whole chain even though nginx needed none of it. Without
+    # the line nginx answers immediately and the API is briefly 502 instead of the site
+    # being wholly gone.
     expose:
       - '80'
     environment:
@@ -28,6 +36,12 @@ services:
       # sitemap. Set it to the marketing domain WITH the scheme. On Coolify the line above
       # already carries it, so this is for anyone deploying by other means.
       # - SITE_URL=https://example.com
+      # No GA_MEASUREMENT_ID here, on purpose. Staging is a full copy of the marketing site;
+      # pointed at the production property it would inflate every number with our own
+      # clicks, and analytics nobody trusts is worse than none. scripts/analytics-runtime.sh
+      # ships untagged pages when the variable is absent, so this needs no counter-measure —
+      # only the discipline of not adding the line. If staging ever needs its own numbers,
+      # give it its own GA4 property, never the production one.
     healthcheck:
       # 127.0.0.1 (not localhost) — localhost can resolve to ::1 while nginx
       # listens on IPv4, which makes the check fail and the proxy drop the site.

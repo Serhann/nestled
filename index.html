@@ -41,6 +41,23 @@
     -->
     <!--seo-->
     <meta name="theme-color" content="#c67139" />
+    <!--
+      Where the Google tag goes. Injected at container start by
+      scripts/analytics-runtime.sh when GA_MEASUREMENT_ID is set, which is production only —
+      staging deliberately has no such variable, so it cannot report into the same property.
+
+      A comment rather than an element, for the same reason as the marker above: a build that
+      was never tagged is still valid HTML.
+
+      Below the font stylesheet on purpose. The tag loads `async` wherever it sits, so its
+      position barely changes when it EXECUTES — but it does change when the browser discovers
+      it, and the stylesheet above should win the race for the first connections. That
+      stylesheet is on the LCP path (see the note at the top of this file); analytics is not.
+
+      This marker is also what scopes the tag: it lives in this template only, so the six
+      prerendered marketing pages get it and app.html, ops.html and widget.html cannot.
+    -->
+    <!--analytics-->
   </head>
   <body>
     <!--

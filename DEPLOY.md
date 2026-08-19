@@ -134,6 +134,32 @@ not do that encoding for you.
 | `ALLOWED_ORIGINS` | The **private** origins: app, ops, widget, marketing. Deployment topology, not a setting. Customer domains do NOT belong here — where a widget may run is per-website, in `websites.allowed_domains`. **Leaving out the widget origin makes every widget call fail in the browser with a CORS error that looks like the API is down.** The public URLs used in outbound email are derived from this list unless you set them in the ops panel. |
 | `CLIENT_IP_HEADER` | Behind Cloudflare, set to `cf-connecting-ip` (the compose files default to it). Read the section below before you do. |
 
+### Two more, on `web` rather than `app`
+
+Both are optional, both are read once at container start, and both are absent by
+default because the wrong value costs more than no value.
+
+| Variable | Notes |
+|---|---|
+| `SITE_URL` | The public marketing origin, **with the scheme** — `https://nestled.chat`. Writes `sitemap.xml`, the `Sitemap:` line in `robots.txt`, and the absolute `og:url` / `og:image` tags. Unset, `scripts/seo-runtime.sh` writes none of them and strips the placeholders rather than guessing a domain: a canonical or a sitemap pointing at the wrong host tells Google the real page is elsewhere, and the outcome of that is deindexing. On Coolify `SERVICE_FQDN_WEB_80` supplies it — but **only reliably with one domain**. In the four-subdomain layout the magic variable may carry `app.` instead of the marketing host, so set `SITE_URL` explicitly and let it win. |
+| `GA_MEASUREMENT_ID` | GA4 measurement ID (`G-XXXXXXXXXX`). Injected by `scripts/analytics-runtime.sh` into the six prerendered marketing pages only — never `app.html`, `ops.html` or `widget.html`; that scoping is the `<!--analytics-->` marker's position in `index.html`, and the script's header explains why the widget in particular must never carry it. Declared in `docker-compose.production.yml` and deliberately **not** in the staging file, so staging cannot report into the production property. A malformed value is refused with a log line and no tag, never a failed start. |
+
+**This is not academic.** Neither variable was documented here, and production ran
+for the whole of a release with no `sitemap.xml` at all: `scripts/seo-runtime.sh`
+took its no-domain branch, exited 0, and said so in a log nobody was reading. The
+symptom is quiet by design. Check it, rather than assuming:
+
+```bash
+curl -s https://your-host/sitemap.xml | head -3    # <urlset>, not <!doctype html>
+curl -s https://your-host/robots.txt | grep Sitemap
+curl -s https://your-host/ | grep -c og:url        # 1
+curl -s https://your-host/ | grep -c gtag          # 1 in production, 0 in staging
+curl -s https://your-host/widget.html | grep -c gtag   # 0, in every environment
+```
+
+A `/sitemap.xml` that returns `200 text/html` is the tell: nginx's `try_files`
+fell through to the SPA shell because the file was never written.
+
 ### Behind Cloudflare: `CLIENT_IP_HEADER`
 
 With a CDN in front, the socket peer is one of its edges and so is most of what
@@ -222,6 +248,58 @@ curl https://your-host/healthz                # {"status":"ok","db":"up"}
 curl -s https://your-host/ | grep -c '<h1'    # the landing page is real HTML
 docker compose logs migrate                   # "All migrations have been successfully applied"
 ```
+
+### Why a deploy is not yet zero-downtime
+
+Coolify deploys a Docker Compose resource as one unit, so a change to a stylesheet
+recreates the database. Nothing in this file can fix that — the shape of the
+resource is the problem — but one thing made it far worse than it needed to be, and
+that is fixed.
+
+`web` used to declare `depends_on: app`. Read the chain that created:
+
+```
+db recreated → pg_isready (interval 5s, up to 10 retries)
+             → migrate runs to completion
+             → app: waits db healthy AND migrate exited 0, healthcheck interval 15s
+             → web starts        ← the ONLY container serving the domain, last in line
+```
+
+Sixty to ninety seconds during which the marketing pages and every static asset
+were unavailable, none of which `web` needed. And `nginx.conf` is written for
+exactly the opposite: it resolves `app` at request time through Docker's DNS and
+reaches it through a variable `proxy_pass` **so that it boots without a backend**.
+The `depends_on` line threw that away where it mattered most. It is gone from both
+compose files; nginx now answers within seconds of starting and `/api` returns 502
+for the remainder instead of the site being wholly absent.
+
+Both realtime clients survive the rest. `src/lib/realtime.ts` and
+`src/widget/realtime.ts` reconnect with jittered exponential backoff, and the agent
+socket resumes from its last `seq` — so an `app` restart drops connections that come
+back and catch up, rather than losing events.
+
+**What actually finishes the job** — neither step is done, and they are independent:
+
+1. **Move `web` into its own Coolify resource** (Dockerfile.web, attached to this
+   stack's network, holding the domains). A frontend-only change then redeploys
+   nginx alone and never touches `app` or `db`, and Coolify's healthcheck-based swap
+   for Dockerfile resources makes it genuinely zero-downtime — `/up` already exists
+   for that, answered by nginx with no dependency on the backend. One code change is
+   required: `set $nestled_app app:4000` in `nginx.conf` is a fixed hostname, and it
+   would need to come from the environment (the nginx image's own
+   `20-envsubst-on-templates.sh` is the intended mechanism). No data is moved, so
+   this is the low-risk half and it is the half that answers "why does a CSS change
+   restart Postgres".
+
+2. **Move `db` to a managed Coolify PostgreSQL resource.** Takes the database out of
+   the deploy path entirely and replaces the manual "back up the volume on a
+   schedule" note in the compose header with native backups. Costs a `pg_dump`,
+   a restore, and a maintenance window on the existing production data — which is
+   why it is second.
+
+Until then, Cloudflare Cache Rules on `/`, `/features`, `/pricing`, `/compare`,
+`/privacy`, `/terms` and `/assets/*` would hide the `web` swap from marketing
+visitors for free. They do nothing for `/api` or `/ws`, which cannot be cached.
 
 ## 3. First run
 
