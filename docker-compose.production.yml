@@ -55,8 +55,16 @@ services:
       context: .
       dockerfile: Dockerfile.web
     restart: unless-stopped
-    depends_on:
-      - app
+    # No `depends_on: app`. nginx is built to boot without the backend — it resolves
+    # `app` at REQUEST time through Docker's DNS and reaches it through a variable
+    # `proxy_pass` (see nginx.conf), precisely so a missing backend cannot stop it.
+    #
+    # Declaring the dependency threw that away where it matters most: it held the ONLY
+    # container serving the domain behind `db` becoming healthy, `migrate` exiting, and
+    # `app` clearing its 40s start period. The marketing pages and every static asset
+    # were unavailable for that whole chain even though nginx needed none of it. Without
+    # the line nginx answers immediately and the API is briefly 502 instead of the site
+    # being wholly gone.
     expose:
       - '80'
     environment:
@@ -71,6 +79,18 @@ services:
       # sitemap. Set it to the marketing domain WITH the scheme. On Coolify the line above
       # already carries it, so this is for anyone deploying by other means.
       # - SITE_URL=https://example.com
+      # Google Analytics 4, injected into the six prerendered marketing pages at container
+      # start by scripts/analytics-runtime.sh. NOT into app.html, ops.html or widget.html —
+      # that scoping is explained in the script.
+      #
+      # This variable is declared in THIS file and nowhere else: docker-compose.staging.yml
+      # has no such line, so staging cannot report into the production property even if
+      # somebody sets the variable on that resource by accident. Structural, not procedural.
+      #
+      # The ID is not a secret — it ships in the HTML of every public page — so it sits here
+      # as a default rather than as one more thing to remember in the Coolify UI. Override it
+      # per-deployment by setting GA_MEASUREMENT_ID; leave it empty to ship untagged pages.
+      - GA_MEASUREMENT_ID=${GA_MEASUREMENT_ID:-G-4D0XHTGLQQ}
     healthcheck:
       # 127.0.0.1 (not localhost) — localhost can resolve to ::1 while nginx
       # listens on IPv4, which makes the check fail and the proxy drop the site.

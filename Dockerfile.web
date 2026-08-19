@@ -29,4 +29,12 @@ COPY --from=build /app/dist /usr/share/nginx/html
 COPY scripts/seo-runtime.sh /docker-entrypoint.d/40-seo.sh
 RUN chmod +x /docker-entrypoint.d/40-seo.sh
 
+# The Google tag, for the environments that want one. Same reasoning as above — the image is
+# shared between staging and production, so the measurement ID arrives as GA_MEASUREMENT_ID at
+# start rather than baked into the build, and an environment that does not set it ships
+# untagged pages. 45- rather than 40-: it runs after the SEO script, which rewrites the same
+# documents, so the two never race over one file. See scripts/analytics-runtime.sh.
+COPY scripts/analytics-runtime.sh /docker-entrypoint.d/45-analytics.sh
+RUN chmod +x /docker-entrypoint.d/45-analytics.sh
+
 EXPOSE 80
