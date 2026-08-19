@@ -9,6 +9,10 @@
  * cookie notice on a site that sets no cookies is theatre, and asking for permission you do
  * not need teaches people to click through the ones that matter.
  *
+ * The banner names the purpose but not the provider; /privacy names the provider outright.
+ * That split is intentional, and it only holds while the link in the banner text survives —
+ * see the note beside the copy below.
+ *
  * ── Why plain JS in public/ rather than a React island ────────────────────────
  *
  * Five of the six marketing pages never load React. scripts/prerender.mjs even strips the
@@ -141,18 +145,28 @@
     inner.className = 'nc-in';
 
     var text = document.createElement('p');
-    /* Kept to two sentences deliberately. At five lines it covered a quarter of a phone
-       screen, and a wall of text in front of a decision is how people learn to click the
-       nearest button without reading. The full explanation is on the page linked below. */
+    /* Two sentences, deliberately. At five lines it covered a quarter of a phone screen, and a
+       wall of text in front of a decision is how people learn to click the nearest button
+       without reading it.
+
+       The provider is not named here, by decision. What IS here is everything that changes
+       the answer: that it is one cookie, what it is for, that no advertising is involved, and
+       that declining costs the visitor nothing. Who supplies it is named in full on /privacy,
+       one click away.
+
+       Which makes that link load-bearing rather than decorative. It is the route to the
+       disclosure the banner does not spell out, so it must stay visible, stay underlined, and
+       stay in this sentence — if a future edit drops it, the notice stops being informed
+       consent and starts being a cookie wall with a friendly font. */
     text.appendChild(
       document.createTextNode(
-        'We count visits to this website with Google Analytics, which sets one cookie. ' +
-          'Nothing is used for advertising, and declining changes nothing. ',
+        'We would like to set one cookie so we can see which pages get read. Nothing is used ' +
+          'for advertising, and declining changes nothing. ',
       ),
     );
     var link = document.createElement('a');
     link.href = '/privacy';
-    link.textContent = 'What we collect';
+    link.textContent = 'What we collect, and who provides it';
     text.appendChild(link);
     text.appendChild(document.createTextNode('.'));
 

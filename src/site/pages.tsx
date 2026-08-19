@@ -180,13 +180,20 @@ const PRIVACY: [string, ReactNode][] = [
   [
     'Cookies on this website',
     <>
-      One, and only if you say yes. We use Google Analytics to count visits to our own
-      marketing pages — which pages people read, roughly where they came from — so we know
-      what is worth writing. It sets a cookie, so we ask first: nothing is stored and no
-      analytics request identifies you until you accept, and declining leaves the site working
-      exactly as it does now. We do not run advertising and the advertising signals in that tag
-      are switched off unconditionally. There is no tracking of any kind on the sign-in or
-      application screens.
+      One, and only if you say yes. The banner asks about a single analytics cookie without
+      naming the tool, to keep it short enough to actually read; this is the section that names
+      it. It is <strong className="font-semibold">Google Analytics</strong>, so the page views
+      it measures are shared with Google as a third party, and the cookie it sets is Google’s.
+      We use it to see which of our own marketing pages get read and roughly where readers came
+      from, so we know what is worth writing.
+      <br />
+      <br />
+      Nothing is stored and no analytics request is sent until you accept. Declining leaves the
+      site working exactly as it does now — there is no feature behind that cookie. We run no
+      advertising, and the advertising and personalisation signals in that tag are switched off
+      unconditionally rather than left to a default. There is no tracking of any kind on the
+      sign-in screens or anywhere inside the application, and none at all in the chat widget
+      (see below).
       <ConsentControl />
     </>,
   ],
